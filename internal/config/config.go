@@ -1,32 +1,60 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v3"
 )
 
-type Repo struct {
-	URL		string	`yaml:"url"`
-}
-
-type Packages struct {
-	Manager	string		`yaml:"manager"`
-	Repos	[]Repo		`yaml:"repos"`
-	Install	[]string	`yaml:"install"`
-}
-
+// top level config
 type Config struct {
-	Name		string   	`yaml:"name"`
-	Tag     	string   	`yaml:"string"`
-	Packages	[]string 	`yaml:"packages"`
-	Arch		[]string 	`yaml:"arch"`
-	Cmds		[]string 	`yaml:"cmds"`
+	Meta  Meta  `yaml:"meta"`
+	Layer Layer `yaml:"layer"`
 }
 
-func LoadConfig(path string) (Config, error) {
+// meta info on layer
+type Meta struct {
+	Name string `yaml:"name"`
+	From string `yaml:"from"`
+	Tag  string `yaml:"tag"`
+}
+
+// layer specifics
+type Layer struct {
+	Manager string  `yaml:"manager"`
+	Files   []File  `yaml:"files"`
+	Actions Actions `yaml:"actions"`
+}
+
+// File to add to layer
+type File struct {
+	Path    string `yaml:"path"`
+	Content string `yaml:"content"`
+	Src     string `yaml:"src"`
+}
+
+// Actions on a layer
+type Actions struct {
+	Install  Install  `yaml:"install"`
+	Commands []string `yaml:"commands"`
+}
+
+// install stuff bro
+type Install struct {
+	Packages []string `yaml:"packages"`
+	Groups   []string `yaml:"groups"`
+	Modules  []Module `yaml:"modules"`
+}
+
+// fucking dnf
+type Module struct {
+	Name   string `yaml:"name"`
+	Stream string `yaml:"stream"`
+	Action string `yaml:"action"` // enable, install, disable etc
+}
+
+func LoadConfig(path string) (*Config, error) {
 	c, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -36,6 +64,19 @@ func LoadConfig(path string) (Config, error) {
 	if err := yaml.Unmarshal(c, &cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
 
-	return cfg
+	return &cfg, nil
+}
+
+func (c *Config) Validate() error {
+	if c.Meta.Name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if c.Layer.Manager == "" {
+		return fmt.Errorf("packages.manager is required")
+	}
+	return nil
 }

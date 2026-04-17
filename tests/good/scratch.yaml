@@ -1,0 +1,28 @@
+meta:
+  name: rocky-base
+  tag: "9.5"
+  from: scratch
+
+layer:
+  manager: dnf
+  files:
+    - path: /etc/yum.repos.d/rocky-baseos.repo
+      content: |
+        [rocky-baseos]
+        name=rocky-baseos
+        baseurl=http://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os
+        enabled=1
+        gpgcheck=0
+  actions:
+    install:
+      packages:
+        - kernel
+        - systemd
+      groups:
+        - Minimal Install
+      modules:
+        - name: nvidia
+          stream: latest
+          action: enable
+    commands:
+      - systemctl disable firewalld
