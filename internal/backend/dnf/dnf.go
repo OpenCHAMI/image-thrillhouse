@@ -16,13 +16,23 @@ func (d *DnfBackend) InstallCommands(install config.Install) [][]string {
 	var cmds [][]string
 
 	if len(install.Packages) > 0 {
-		cmds = append(cmds, append([]string{"dnf", "install", "-y"}, install.Packages...))
+		cmd := make([]string, 0, 3+len(install.Packages))
+		cmd = append(cmd, "dnf", "install", "-y")
+		cmd = append(cmd, install.Packages...)
+		cmds = append(cmds, cmd)
 	}
+
 	if len(install.Groups) > 0 {
-		cmds = append(cmds, append([]string{"dnf", "groupinstall", "-y"}, install.Groups...))
+		cmd := make([]string, 0, 3+len(install.Groups))
+		cmd = append(cmd, "dnf", "groupinstall", "-y")
+		cmd = append(cmd, install.Groups...)
+		cmds = append(cmds, cmd)
 	}
+
 	for _, mod := range install.Modules {
-		cmds = append(cmds, []string{"dnf", "module", mod.Action, fmt.Sprintf("%s:%s", mod.Name, mod.Stream)})
+		cmd := make([]string, 0, 4)
+		cmd = append(cmd, "dnf", "module", mod.Action, fmt.Sprintf("%s:%s", mod.Name, mod.Stream))
+		cmds = append(cmds, cmd)
 	}
 
 	return cmds
