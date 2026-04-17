@@ -8,46 +8,67 @@ import (
 )
 
 type Builder struct {
-	cfg     *config.Config
-	backend backend.Backend
+	cfg          *config.Config
+	backend      backend.Backend
+	newContainer func(string) (container, error)
 }
 
 func New(cfg *config.Config, b backend.Backend) *Builder {
 	return &Builder{
 		cfg:     cfg,
 		backend: b,
+		newContainer: func(from string) (container, error) {
+			return newFakeContainer(from)
+		},
 	}
 }
 
 func (b *Builder) Build() error {
-	// placeholder for now, real buildah calls will go here
-	var installRoot bool
-	mountPath := "/var/lib/containers/storage/overlay/XXXYYY"
+	c, err := b.newContainer(b.cfg.Meta.From)
+	if err != nil {
+		return fmt.Errorf("create container: %w", err)
+	}
+	defer c.Delete()
 
-	if b.cfg.Meta.From == "scratch" {
-		// mount the container, get installRoot path
-		installRoot = true
-	} else {
-		// pull/reuse the parent image as a working container
-		installRoot = false
+	if err := b.writeFiles(c); err != nil {
+		return fmt.Errorf("write files: %w", err)
 	}
 
+	if err := b.runInstall(c); err != nil {
+		return fmt.Errorf("install: %w", err)
+	}
+
+	if err := b.runCommands(c); err != nil {
+		return fmt.Errorf("run commands: %w", err)
+	}
+
+	return c.Commit(b.cfg.Meta.Name, b.cfg.Meta.Tag)
+}
+
+func (b *Builder) writeFiles(c container) error {
 	for _, file := range b.cfg.Layer.Files {
-		filePath := mountPath + file.Path
-		fmt.Printf("%s\n", filePath)
+		if err := c.WriteFile(file); err != nil {
+			return fmt.Errorf("write file %s: %w", file.Path, err)
+		}
 	}
+	return nil
+}
 
+func (b *Builder) runInstall(c container) error {
 	cmds := b.backend.InstallCommands(b.cfg.Layer.Actions.Install)
-	if installRoot {
-		for _, cmd := range cmds {
-			cmd = append(cmd, "--installroot", mountPath)
-			fmt.Printf("%s\n", cmd)
-		}
-	} else {
-		for _, cmd := range cmds {
-			fmt.Printf("%s\n", cmd)
+	for _, cmd := range cmds {
+		if err := c.Run(cmd); err != nil {
+			return fmt.Errorf("run %v: %w", cmd, err)
 		}
 	}
+	return nil
+}
 
+func (b *Builder) runCommands(c container) error {
+	for _, cmd := range b.cfg.Layer.Actions.Commands {
+		if err := c.Run([]string{cmd}); err != nil {
+			return fmt.Errorf("run command %s: %w", cmd, err)
+		}
+	}
 	return nil
 }

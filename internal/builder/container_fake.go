@@ -1,0 +1,42 @@
+// internal/builder/container_fake.go
+package builder
+
+import (
+	"fmt"
+
+	"github.com/travisbcotton/image-build/internal/config"
+)
+
+type fakeContainer struct {
+	fromScratch bool
+	mountPath   string
+}
+
+func newFakeContainer(from string) (container, error) {
+	return &fakeContainer{
+		fromScratch: from == "scratch",
+		mountPath:   "/fake/mountpath",
+	}, nil
+}
+
+func (c *fakeContainer) Run(cmd []string) error {
+	if c.fromScratch {
+		cmd = append(cmd, "--installroot", c.mountPath)
+	}
+	fmt.Printf("run: %v\n", cmd)
+	return nil
+}
+
+func (c *fakeContainer) WriteFile(file config.File) error {
+	fmt.Printf("write: %s\n", file.Path)
+	return nil
+}
+
+func (c *fakeContainer) Commit(name, tag string) error {
+	fmt.Printf("commit: %s:%s\n", name, tag)
+	return nil
+}
+
+func (c *fakeContainer) Delete() {
+	fmt.Println("delete container")
+}
