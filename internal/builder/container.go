@@ -21,16 +21,11 @@ type Container struct {
 	Name        string
 	fromScratch bool
 	mountPath   string
-	ctx         context.Context
 	Builder     *buildah.Builder
 	Store       storage.Store
 }
 
-func newContainer(name string, from string) (container, error) {
-
-	// start context
-	ctx := context.Background()
-
+func newContainer(ctx context.Context, name string, from string) (container, error) {
 	// get container store
 	store, err := openStore()
 	if err != nil {
@@ -60,7 +55,6 @@ func newContainer(name string, from string) (container, error) {
 		Name:        name,
 		fromScratch: from == "scratch",
 		mountPath:   mountPath,
-		ctx:         ctx,
 		Builder:     builder,
 		Store:       store,
 	}, nil
@@ -93,11 +87,5 @@ func openStore() (storage.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("default store opts: %w", err)
 	}
-
-	opts.GraphRoot = "/home/builder/.local/share/containers/storage"
-	opts.RunRoot = "/var/tmp/storage-run-1000/containers"
-	opts.GraphDriverName = "overlay"
-	opts.RootlessStoragePath = ""
-
 	return storage.GetStore(opts)
 }

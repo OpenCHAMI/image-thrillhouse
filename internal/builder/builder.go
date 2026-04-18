@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/travisbcotton/image-build/internal/backend"
@@ -10,21 +11,21 @@ import (
 type Builder struct {
 	cfg          *config.Config
 	backend      backend.Backend
-	newContainer func(string, string) (container, error)
+	newContainer func(context.Context, string, string) (container, error)
 }
 
-func New(cfg *config.Config, b backend.Backend) *Builder {
+func New(ctx context.Context, cfg *config.Config, b backend.Backend) *Builder {
 	return &Builder{
 		cfg:     cfg,
 		backend: b,
-		newContainer: func(name string, from string) (container, error) {
-			return newContainer(name, from)
+		newContainer: func(ctx context.Context, name string, from string) (container, error) {
+			return newContainer(ctx, name, from)
 		},
 	}
 }
 
-func (b *Builder) Build() error {
-	c, err := b.newContainer(b.cfg.Meta.Name, b.cfg.Meta.From)
+func (b *Builder) Build(ctx context.Context) error {
+	c, err := b.newContainer(ctx, b.cfg.Meta.Name, b.cfg.Meta.From)
 	if err != nil {
 		return fmt.Errorf("create container: %w", err)
 	}

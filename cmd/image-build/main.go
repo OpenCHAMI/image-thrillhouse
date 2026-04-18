@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 
@@ -10,6 +11,9 @@ import (
 )
 
 func main() {
+
+	ctx := context.Background()
+
 	cfgPath := flag.String("config", "./test.yaml", "path to YAML config (or '-' for stdin)")
 	flag.Parse()
 
@@ -18,8 +22,8 @@ func main() {
 		log.Fatalf("%v", err)
 	}
 
-	b := builder.New(cfg, dnf.New())
-	if err := b.Build(); err != nil {
+	b := builder.New(ctx, cfg, dnf.New())
+	if err := b.Build(ctx); err != nil {
 		log.Fatalf("build: %v", err)
 	}
 }
