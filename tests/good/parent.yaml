@@ -1,7 +1,7 @@
 meta:
   name: rocky-base
   tag: "9.5"
-  from: docker.io/rhel:9.5
+  from: docker.io/almalinux:9
 
 layer:
   manager: dnf
