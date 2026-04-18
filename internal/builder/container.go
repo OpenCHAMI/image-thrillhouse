@@ -71,6 +71,9 @@ func (c *Container) Run(cmd []string) error {
 	} else {
 		err := c.Builder.Run(cmd, buildah.RunOptions{
 			ConfigureNetwork: define.NetworkEnabled,
+			Isolation:        define.IsolationOCIRootless,
+			Stdout:           os.Stdout,
+			Stderr:           os.Stderr,
 		})
 		if err != nil {
 			return fmt.Errorf("run %v: %w", cmd, err)
