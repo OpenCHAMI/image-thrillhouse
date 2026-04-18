@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/containers/buildah"
+	"github.com/containers/buildah/define"
 	"go.podman.io/storage"
 
 	"github.com/travisbcotton/image-build/internal/config"
@@ -68,7 +69,9 @@ func (c *Container) Run(cmd []string) error {
 	if c.fromScratch {
 		cmd = append(cmd, "--installroot", c.mountPath)
 	} else {
-		err := c.Builder.Run(cmd, buildah.RunOptions{})
+		err := c.Builder.Run(cmd, buildah.RunOptions{
+			ConfigureNetwork: define.NetworkEnabled,
+		})
 		if err != nil {
 			return fmt.Errorf("run %v: %w", cmd, err)
 		}
