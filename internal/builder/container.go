@@ -80,6 +80,8 @@ func (c *Container) Commit(name, tag string) error {
 
 func (c *Container) Delete() {
 	fmt.Println("delete container")
+	c.Builder.Delete()
+	c.Store.Shutdown(false)
 }
 
 func openStore() (storage.Store, error) {
