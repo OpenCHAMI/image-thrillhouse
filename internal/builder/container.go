@@ -74,6 +74,10 @@ func (c *Container) Run(cmd []string) error {
 			Isolation:        define.IsolationOCIRootless,
 			Stdout:           os.Stdout,
 			Stderr:           os.Stderr,
+			AddCapabilities: []string{
+				"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_FSETID", "CAP_KILL",
+				"CAP_NET_BIND_SERVICE", "CAP_SETFCAP", "CAP_SETGID", "CAP_SETPCAP", "CAP_SETUID", "CAP_SYS_CHROOT",
+			},
 		})
 		if err != nil {
 			return fmt.Errorf("run %v: %w", cmd, err)
