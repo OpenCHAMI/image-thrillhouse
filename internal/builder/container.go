@@ -64,10 +64,15 @@ func newContainer(ctx context.Context, name string, from string) (container, err
 }
 
 func (c *Container) Run(cmd []string) error {
+	fmt.Printf("run: %v\n", cmd)
 	if c.fromScratch {
 		cmd = append(cmd, "--installroot", c.mountPath)
+	} else {
+		err := c.Builder.Run(cmd, buildah.RunOptions{})
+		if err != nil {
+			return fmt.Errorf("run %v: %w", cmd, err)
+		}
 	}
-	fmt.Printf("run: %v\n", cmd)
 	return nil
 }
 
