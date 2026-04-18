@@ -10,21 +10,21 @@ import (
 type Builder struct {
 	cfg          *config.Config
 	backend      backend.Backend
-	newContainer func(string) (container, error)
+	newContainer func(string, string) (container, error)
 }
 
 func New(cfg *config.Config, b backend.Backend) *Builder {
 	return &Builder{
 		cfg:     cfg,
 		backend: b,
-		newContainer: func(from string) (container, error) {
-			return newFakeContainer(from)
+		newContainer: func(name string, from string) (container, error) {
+			return newContainer(name, from)
 		},
 	}
 }
 
 func (b *Builder) Build() error {
-	c, err := b.newContainer(b.cfg.Meta.From)
+	c, err := b.newContainer(b.cfg.Meta.Name, b.cfg.Meta.From)
 	if err != nil {
 		return fmt.Errorf("create container: %w", err)
 	}

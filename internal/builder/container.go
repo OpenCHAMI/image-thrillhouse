@@ -1,10 +1,107 @@
 package builder
 
-import "github.com/travisbcotton/image-build/internal/config"
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/containers/buildah"
+	"go.podman.io/storage"
+
+	"github.com/travisbcotton/image-build/internal/config"
+)
 
 type container interface {
 	Run(cmd []string) error
 	WriteFile(file config.File) error
 	Commit(name, tag string) error
 	Delete()
+}
+
+type Container struct {
+	Name        string
+	fromScratch bool
+	mountPath   string
+	ctx         context.Context
+	Builder     *buildah.Builder
+	Store       storage.Store
+}
+
+func newContainer(name string, from string) (container, error) {
+
+	// start context
+	ctx := context.Background()
+
+	// get container store
+	store, err := openStore()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// create new builder
+	builder, err := buildah.NewBuilder(ctx, store, buildah.BuilderOptions{
+		FromImage: from,
+	})
+	if err != nil {
+		log.Fatalf("new builder: %v", err)
+		return nil, err
+	}
+
+	// if from == scratch, mount container and assign
+	var mountPath string
+	if from == "scratch" {
+		mountPath, err = builder.Mount("")
+		if err != nil {
+			log.Fatalf("mount: %v", err)
+			return nil, err
+		}
+	} else {
+		mountPath = ""
+	}
+
+	return &Container{
+		Name:        name,
+		fromScratch: from == "scratch",
+		mountPath:   mountPath,
+		ctx:         ctx,
+		Builder:     builder,
+		Store:       store,
+	}, nil
+}
+
+func (c *Container) Run(cmd []string) error {
+	if c.fromScratch {
+		cmd = append(cmd, "--installroot", c.mountPath)
+	}
+	fmt.Printf("run: %v\n", cmd)
+	return nil
+}
+
+func (c *Container) WriteFile(file config.File) error {
+	fmt.Printf("write: %s\n", file.Path)
+	return nil
+}
+
+func (c *Container) Commit(name, tag string) error {
+	fmt.Printf("commit: %s:%s\n", name, tag)
+	return nil
+}
+
+func (c *Container) Delete() {
+	fmt.Println("delete container")
+}
+
+func openStore() (storage.Store, error) {
+	opts, err := storage.DefaultStoreOptions()
+	if err != nil {
+		log.Fatalf("default store opts: %v", err)
+		return nil, err
+	}
+
+	opts.GraphRoot = "/home/builder/.local/share/containers/storage"
+	opts.RunRoot = "/var/tmp/storage-run-1000/containers"
+	opts.GraphDriverName = "overlay"
+	opts.RootlessStoragePath = ""
+
+	return storage.GetStore(opts)
 }
