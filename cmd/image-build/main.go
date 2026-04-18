@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
+	"os"
 
 	"github.com/containers/buildah"
 	"go.podman.io/storage/pkg/reexec"
@@ -15,15 +17,18 @@ import (
 )
 
 func main() {
-   	if reexec.Init() {
-       		 return
-    	}
+	if reexec.Init() {
+		return
+	}
 
-   	 if buildah.InitReexec() {
-       		 return
-    	}
+	if buildah.InitReexec() {
+		return
+	}
 
 	unshare.MaybeReexecUsingUserNamespace(false)
+
+	fmt.Printf("uid: %d, euid: %d\n", os.Getuid(), os.Geteuid())
+	fmt.Printf("inside user ns: %v\n", os.Getenv("_CONTAINERS_USERNS_CONFIGURED"))
 
 	ctx := context.Background()
 
