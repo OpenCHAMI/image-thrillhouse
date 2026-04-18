@@ -52,6 +52,8 @@ func newContainer(ctx context.Context, name string, from string) (container, err
 		mountPath = ""
 	}
 
+	fmt.Printf("container id: %s\n", builder.ContainerID)
+
 	return &Container{
 		Name:        name,
 		fromScratch: from == "scratch",
