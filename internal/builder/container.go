@@ -14,7 +14,7 @@ import (
 type container interface {
 	Run(cmd []string) error
 	WriteFile(file config.File) error
-	Commit(name, tag string) error
+	Commit(ctx context.Context, name, tag string) error
 	Delete()
 }
 
@@ -112,8 +112,16 @@ func (c *Container) WriteFile(file config.File) error {
 	return nil
 }
 
-func (c *Container) Commit(name, tag string) error {
+func (c *Container) Commit(ctx context.Context, name, tag string) error {
 	fmt.Printf("commit: %s:%s\n", name, tag)
+	options := buildah.CommitOptions{
+		AdditionalTags: []string{fmt.Sprintf("localhost/%s:%s", name, tag)},
+	}
+	_, _, _, err := c.Builder.Commit(ctx, nil, options)
+	if err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	fmt.Printf("committed image localhost/%s:%s\n", name, tag)
 	return nil
 }
 

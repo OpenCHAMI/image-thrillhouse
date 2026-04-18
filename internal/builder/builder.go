@@ -43,7 +43,7 @@ func (b *Builder) Build(ctx context.Context) error {
 		return fmt.Errorf("run commands: %w", err)
 	}
 
-	return c.Commit(b.cfg.Meta.Name, b.cfg.Meta.Tag)
+	return c.Commit(ctx, b.cfg.Meta.Name, b.cfg.Meta.Tag)
 }
 
 func (b *Builder) writeFiles(c container) error {

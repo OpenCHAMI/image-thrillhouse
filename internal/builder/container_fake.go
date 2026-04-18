@@ -2,6 +2,7 @@
 package builder
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/travisbcotton/image-build/internal/config"
@@ -32,7 +33,7 @@ func (c *fakeContainer) WriteFile(file config.File) error {
 	return nil
 }
 
-func (c *fakeContainer) Commit(name, tag string) error {
+func (c *fakeContainer) Commit(ctx context.Context, name, tag string) error {
 	fmt.Printf("commit: %s:%s\n", name, tag)
 	return nil
 }
