@@ -3,7 +3,6 @@ package builder
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/containers/buildah"
 	"go.podman.io/storage"
@@ -35,7 +34,7 @@ func newContainer(name string, from string) (container, error) {
 	// get container store
 	store, err := openStore()
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("Container Store: %w", err)
 	}
 
 	// create new builder
@@ -43,8 +42,7 @@ func newContainer(name string, from string) (container, error) {
 		FromImage: from,
 	})
 	if err != nil {
-		log.Fatalf("new builder: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("new builder: %w", err)
 	}
 
 	// if from == scratch, mount container and assign
@@ -52,8 +50,7 @@ func newContainer(name string, from string) (container, error) {
 	if from == "scratch" {
 		mountPath, err = builder.Mount("")
 		if err != nil {
-			log.Fatalf("mount: %v", err)
-			return nil, err
+			return nil, fmt.Errorf("mount: %w", err)
 		}
 	} else {
 		mountPath = ""
@@ -94,8 +91,7 @@ func (c *Container) Delete() {
 func openStore() (storage.Store, error) {
 	opts, err := storage.DefaultStoreOptions()
 	if err != nil {
-		log.Fatalf("default store opts: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("default store opts: %w", err)
 	}
 
 	opts.GraphRoot = "/home/builder/.local/share/containers/storage"
