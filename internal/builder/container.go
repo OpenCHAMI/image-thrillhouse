@@ -79,29 +79,28 @@ func newContainer(ctx context.Context, name string, from string) (container, err
 }
 
 func (c *Container) Run(ctx context.Context, cmd []string, mode RunMode) error {
-	fmt.Printf("run: %v\n", cmd)
 	if c.fromScratch {
-		// exec directly on host, dnf --installroot handles the isolation
-		command := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
-		command.Stdout = os.Stdout
-		command.Stderr = os.Stderr
-		if err := command.Run(); err != nil {
-			return fmt.Errorf("run %v: %w", cmd, err)
+		switch mode {
+		case RunModeHost:
+			// exec directly, used for dnf --installroot
+			command := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
+			command.Stdout = os.Stdout
+			command.Stderr = os.Stderr
+			return command.Run()
+		case RunModeContainer:
+			// chroot into mountpath, rootfs must have a shell
+			return c.Builder.Run(cmd, buildah.RunOptions{
+				Isolation: define.IsolationOCIRootless,
+				Stdout:    os.Stdout,
+				Stderr:    os.Stderr,
+			})
 		}
 	} else {
-		err := c.Builder.Run(cmd, buildah.RunOptions{
-			ConfigureNetwork: define.NetworkEnabled,
-			Isolation:        define.IsolationOCIRootless,
-			Stdout:           os.Stdout,
-			Stderr:           os.Stderr,
-			AddCapabilities: []string{
-				"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_FSETID", "CAP_KILL",
-				"CAP_NET_BIND_SERVICE", "CAP_SETFCAP", "CAP_SETGID", "CAP_SETPCAP", "CAP_SETUID", "CAP_SYS_CHROOT",
-			},
+		return c.Builder.Run(cmd, buildah.RunOptions{
+			Isolation: define.IsolationOCIRootless,
+			Stdout:    os.Stdout,
+			Stderr:    os.Stderr,
 		})
-		if err != nil {
-			return fmt.Errorf("run %v: %w", cmd, err)
-		}
 	}
 	return nil
 }
