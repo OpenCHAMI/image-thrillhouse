@@ -60,14 +60,14 @@ func (b *Builder) runInstall(ctx context.Context, c container) error {
 	if b.cfg.Meta.From == "scratch" {
 		cmds := b.backend.InstallRootCommands(b.cfg.Layer.Actions.Install, c.MountPath())
 		for _, cmd := range cmds {
-			if err := c.Run(ctx, cmd); err != nil {
+			if err := c.Run(ctx, cmd, RunModeHost); err != nil {
 				return fmt.Errorf("run root %v: %w", cmd, err)
 			}
 		}
 	} else {
 		cmds := b.backend.InstallCommands(b.cfg.Layer.Actions.Install)
 		for _, cmd := range cmds {
-			if err := c.Run(ctx, cmd); err != nil {
+			if err := c.Run(ctx, cmd, RunModeContainer); err != nil {
 				return fmt.Errorf("run %v: %w", cmd, err)
 			}
 		}
@@ -80,7 +80,7 @@ func (b *Builder) runCommands(ctx context.Context, c container) error {
 		switch cmd.Type() {
 		case config.CommandRun:
 			parts := strings.Fields(cmd.Run)
-			if err := c.Run(ctx, parts); err != nil {
+			if err := c.Run(ctx, parts, RunModeContainer); err != nil {
 				return fmt.Errorf("run %s: %w", cmd.Run, err)
 			}
 		case config.CommandScript:

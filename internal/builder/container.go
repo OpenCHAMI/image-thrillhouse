@@ -16,8 +16,16 @@ import (
 	"github.com/travisbcotton/image-build/internal/config"
 )
 
+type RunMode int
+
+const (
+	RunModeAuto      RunMode = iota // builder decides based on context
+	RunModeHost                     // always exec on host (for package managers)
+	RunModeContainer                // always run in container/chroot
+)
+
 type container interface {
-	Run(ctx context.Context, cmd []string) error
+	Run(ctx context.Context, cmd []string, mode RunMode) error
 	RunScript(ctx context.Context, script string) error
 	WriteFile(file config.File) error
 	Commit(ctx context.Context, name, tag string) error
@@ -70,7 +78,7 @@ func newContainer(ctx context.Context, name string, from string) (container, err
 	}, nil
 }
 
-func (c *Container) Run(ctx context.Context, cmd []string) error {
+func (c *Container) Run(ctx context.Context, cmd []string, mode RunMode) error {
 	fmt.Printf("run: %v\n", cmd)
 	if c.fromScratch {
 		// exec directly on host, dnf --installroot handles the isolation
@@ -110,21 +118,21 @@ func (c *Container) RunScript(ctx context.Context, script string) error {
 	}
 
 	// make executable and run
-	if err := c.Run(ctx, []string{"ls", "-ltr", "/tmp/"}); err != nil {
+	if err := c.Run(ctx, []string{"ls", "-ltr", "/tmp/"}, RunModeContainer); err != nil {
 		return fmt.Errorf("list: %w", err)
 	}
 
 	// make executable and run
-	if err := c.Run(ctx, []string{"chmod", "+x", tmpPath}); err != nil {
+	if err := c.Run(ctx, []string{"chmod", "+x", tmpPath}, RunModeContainer); err != nil {
 		return fmt.Errorf("chmod script: %w", err)
 	}
 
-	if err := c.Run(ctx, []string{tmpPath}); err != nil {
+	if err := c.Run(ctx, []string{tmpPath}, RunModeContainer); err != nil {
 		return fmt.Errorf("exec script: %w", err)
 	}
 
 	// cleanup
-	if err := c.Run(ctx, []string{"rm", tmpPath}); err != nil {
+	if err := c.Run(ctx, []string{"rm", tmpPath}, RunModeContainer); err != nil {
 		return fmt.Errorf("cleanup script: %w", err)
 	}
 

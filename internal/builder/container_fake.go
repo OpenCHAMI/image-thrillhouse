@@ -20,7 +20,7 @@ func newFakeContainer(from string) (container, error) {
 	}, nil
 }
 
-func (c *fakeContainer) Run(ctx context.Context, cmd []string) error {
+func (c *fakeContainer) Run(ctx context.Context, cmd []string, mode RunMode) error {
 	if c.fromScratch {
 		cmd = append(cmd, "--installroot", c.mountPath)
 	}
