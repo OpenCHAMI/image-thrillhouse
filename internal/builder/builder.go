@@ -32,6 +32,14 @@ func (b *Builder) Build(ctx context.Context) error {
 	}
 	defer c.Delete()
 
+	if err := b.applyManagerConfig(c); err != nil {
+		return fmt.Errorf("write manager config: %w", err)
+	}
+
+	if err := b.writeRepos(c); err != nil {
+		return fmt.Errorf("write repos: %w", err)
+	}
+
 	if err := b.writeFiles(c); err != nil {
 		return fmt.Errorf("write files: %w", err)
 	}
