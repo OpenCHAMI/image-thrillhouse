@@ -51,6 +51,7 @@ func (b *Builder) applyManagerConfig(c container) error {
 	if b.cfg.Layer.Manager.Config == "" {
 		return nil
 	}
+	fmt.Printf("Writing configfile %v\n", b.cfg.Layer.Manager.Config)
 	return c.WriteFile(config.File{
 		Path:    b.backend.ConfigFilePath(),
 		Content: b.cfg.Layer.Manager.Config,
@@ -59,6 +60,7 @@ func (b *Builder) applyManagerConfig(c container) error {
 
 func (b *Builder) writeRepos(c container) error {
 	for _, repo := range b.cfg.Layer.Repos {
+		fmt.Printf("writing repos %v\n", repo.Path)
 		file := config.File{
 			Path:    repo.Path,
 			Content: repo.Content,
