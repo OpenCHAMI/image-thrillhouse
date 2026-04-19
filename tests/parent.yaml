@@ -1,0 +1,12 @@
+meta:
+  name: rocky-compute
+  tag: "9.5"
+  from: localhost/rocky-base:9.5
+
+layer:
+  manager: dnf
+  files: []
+  actions:
+    install:
+      groups:
+        - Development Tools

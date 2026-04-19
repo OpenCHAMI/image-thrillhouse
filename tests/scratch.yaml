@@ -1,0 +1,37 @@
+meta:
+  name: rocky-base
+  tag: "9.5"
+  from: scratch
+
+layer:
+  manager: dnf
+  files:
+    - path: /etc/yum.repos.d/rocky-baseos.repo
+      content: |
+        [rocky-baseos]
+        name=rocky-baseos
+        baseurl=https://dl.rockylinux.org/pub/rocky/9/BaseOS/aarch64/os
+        enabled=1
+        gpgcheck=1
+        gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9
+    - path: /etc/yum/repos.d/rocky-appstream.repo
+      content: |
+        [rocky-appstream]
+        name=rocky-appstream
+        baseurl=https://dl.rockylinux.org/pub/rocky/9/AppStream/aarch64/os/
+        enabled=1
+        gpgcheck=1
+        gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9
+  actions:
+    install:
+      packages:
+        - kernel
+        - systemd
+      groups:
+        - Minimal Install
+    commands:
+      - run: systemctl disable firewalld
+      - script: |
+          #!/bin/bash
+          echo hello
+          dnf clean all
