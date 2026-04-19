@@ -101,3 +101,13 @@ func (m *Module) Validate() error {
 	}
 	return nil
 }
+
+func (c *Command) Validate() error {
+	if c.Run != "" && c.Script != "" {
+		return fmt.Errorf("command: only one of run or script may be set")
+	}
+	if c.Run == "" && c.Script == "" {
+		return fmt.Errorf("command: one of run or script is required")
+	}
+	return nil
+}
