@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/containers/buildah"
 	"github.com/containers/buildah/define"
@@ -13,10 +14,11 @@ import (
 )
 
 type container interface {
-	Run(cmd []string) error
+	Run(ctx context.Context, cmd []string) error
 	WriteFile(file config.File) error
 	Commit(ctx context.Context, name, tag string) error
 	Delete()
+	MountPath() string
 }
 
 type Container struct {
@@ -64,10 +66,16 @@ func newContainer(ctx context.Context, name string, from string) (container, err
 	}, nil
 }
 
-func (c *Container) Run(cmd []string) error {
+func (c *Container) Run(ctx context.Context, cmd []string) error {
 	fmt.Printf("run: %v\n", cmd)
 	if c.fromScratch {
-		cmd = append(cmd, "--installroot", c.mountPath)
+		// exec directly on host, dnf --installroot handles the isolation
+		command := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
+		command.Stdout = os.Stdout
+		command.Stderr = os.Stderr
+		if err := command.Run(); err != nil {
+			return fmt.Errorf("run %v: %w", cmd, err)
+		}
 	} else {
 		err := c.Builder.Run(cmd, buildah.RunOptions{
 			ConfigureNetwork: define.NetworkEnabled,
@@ -144,6 +152,10 @@ func (c *Container) Delete() {
 	fmt.Println("delete container")
 	c.Builder.Delete()
 	c.Store.Shutdown(false)
+}
+
+func (c *Container) MountPath() string {
+	return c.mountPath
 }
 
 func openStore() (storage.Store, error) {

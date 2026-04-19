@@ -6,4 +6,5 @@ import (
 
 type Backend interface {
 	InstallCommands(install config.Install) [][]string
+	InstallRootCommands(install config.Install, rootPath string) [][]string
 }

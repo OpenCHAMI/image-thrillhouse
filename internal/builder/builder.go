@@ -35,11 +35,11 @@ func (b *Builder) Build(ctx context.Context) error {
 		return fmt.Errorf("write files: %w", err)
 	}
 
-	if err := b.runInstall(c); err != nil {
+	if err := b.runInstall(ctx, c); err != nil {
 		return fmt.Errorf("install: %w", err)
 	}
 
-	if err := b.runCommands(c); err != nil {
+	if err := b.runCommands(ctx, c); err != nil {
 		return fmt.Errorf("run commands: %w", err)
 	}
 
@@ -55,19 +55,28 @@ func (b *Builder) writeFiles(c container) error {
 	return nil
 }
 
-func (b *Builder) runInstall(c container) error {
-	cmds := b.backend.InstallCommands(b.cfg.Layer.Actions.Install)
-	for _, cmd := range cmds {
-		if err := c.Run(cmd); err != nil {
-			return fmt.Errorf("run %v: %w", cmd, err)
+func (b *Builder) runInstall(ctx context.Context, c container) error {
+	if b.cfg.Meta.From == "scratch" {
+		cmds := b.backend.InstallRootCommands(b.cfg.Layer.Actions.Install, c.MountPath())
+		for _, cmd := range cmds {
+			if err := c.Run(ctx, cmd); err != nil {
+				return fmt.Errorf("run root %v: %w", cmd, err)
+			}
+		}
+	} else {
+		cmds := b.backend.InstallCommands(b.cfg.Layer.Actions.Install)
+		for _, cmd := range cmds {
+			if err := c.Run(ctx, cmd); err != nil {
+				return fmt.Errorf("run %v: %w", cmd, err)
+			}
 		}
 	}
 	return nil
 }
 
-func (b *Builder) runCommands(c container) error {
+func (b *Builder) runCommands(ctx context.Context, c container) error {
 	for _, cmd := range b.cfg.Layer.Actions.Commands {
-		if err := c.Run([]string{cmd}); err != nil {
+		if err := c.Run(ctx, []string{cmd}); err != nil {
 			return fmt.Errorf("run command %s: %w", cmd, err)
 		}
 	}

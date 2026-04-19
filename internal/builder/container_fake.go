@@ -20,7 +20,7 @@ func newFakeContainer(from string) (container, error) {
 	}, nil
 }
 
-func (c *fakeContainer) Run(cmd []string) error {
+func (c *fakeContainer) Run(ctx context.Context, cmd []string) error {
 	if c.fromScratch {
 		cmd = append(cmd, "--installroot", c.mountPath)
 	}
@@ -40,4 +40,8 @@ func (c *fakeContainer) Commit(ctx context.Context, name, tag string) error {
 
 func (c *fakeContainer) Delete() {
 	fmt.Println("delete container")
+}
+
+func (c *fakeContainer) MountPath() string {
+	return c.mountPath
 }
