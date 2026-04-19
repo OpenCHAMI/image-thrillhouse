@@ -71,13 +71,3 @@ func LoadConfig(path string) (*Config, error) {
 
 	return &cfg, nil
 }
-
-func (c *Config) Validate() error {
-	if c.Meta.Name == "" {
-		return fmt.Errorf("name is required")
-	}
-	if c.Layer.Manager == "" {
-		return fmt.Errorf("packages.manager is required")
-	}
-	return nil
-}
