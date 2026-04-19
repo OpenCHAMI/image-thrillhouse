@@ -32,6 +32,7 @@ type File struct {
 	Path    string `yaml:"path"`
 	Content string `yaml:"content"`
 	Src     string `yaml:"src"`
+	URL     string `yaml:"url"`
 }
 
 // Actions on a layer

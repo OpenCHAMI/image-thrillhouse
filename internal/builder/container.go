@@ -3,6 +3,8 @@ package builder
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 
@@ -106,12 +108,30 @@ func (c *Container) WriteFile(file config.File) error {
 		return fmt.Errorf("file %s: content and src are mutually exclusive", file.Path)
 	}
 
+	// content is a yaml scalar block or string
 	if file.Content != "" {
 		content = []byte(file.Content)
+		// content is a file on the host
 	} else if file.Src != "" {
 		content, err = os.ReadFile(file.Src)
 		if err != nil {
 			return fmt.Errorf("read src %s: %w", file.Src, err)
+		}
+		// content is at a remote url
+	} else if file.URL != "" {
+		resp, err := http.Get(file.URL)
+		if err != nil {
+			return fmt.Errorf("fetch %s: %w", file.URL, err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("fetch %s: status %d", file.URL, resp.StatusCode)
+		}
+
+		content, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", file.URL, err)
 		}
 	}
 
