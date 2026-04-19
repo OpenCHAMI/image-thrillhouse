@@ -4,9 +4,18 @@ meta:
   from: scratch
 
 layer:
-  manager: dnf
-  files:
-    - path: /etc/yum.repos.d/rocky-baseos.repo
+  manager:
+    name: dnf
+    config: |
+      [main]
+      gpgcheck=1
+      installonly_limit=3
+      clean_requirements_on_remove=True
+      best=True
+      skip_if_unavailable=False
+      reposdir=/etc/image-build/yum.repos.d
+  repos: 
+    - path: /etc/image-build/yum.repos.d/rocky-baseos.repo
       content: |
         [rocky-baseos]
         name=rocky-baseos
@@ -14,7 +23,7 @@ layer:
         enabled=1
         gpgcheck=1
         gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9
-    - path: /etc/yum/repos.d/rocky-appstream.repo
+    - path: /etc/image-build/yum.repos.d/rocky-appstream.repo
       content: |
         [rocky-appstream]
         name=rocky-appstream
@@ -22,6 +31,7 @@ layer:
         enabled=1
         gpgcheck=1
         gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9
+  files: []
   actions:
     install:
       packages:
