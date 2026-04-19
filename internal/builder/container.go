@@ -101,13 +101,6 @@ func (c *Container) WriteFile(file config.File) error {
 	var content []byte
 	var err error
 
-	if file.Content != "" && file.Src != "" {
-		return fmt.Errorf("file %s: content and src are mutually exclusive", file.Path)
-	}
-	if file.Content == "" && file.Src == "" {
-		return fmt.Errorf("file %s: content and src are mutually exclusive", file.Path)
-	}
-
 	// content is a yaml scalar block or string
 	if file.Content != "" {
 		content = []byte(file.Content)
