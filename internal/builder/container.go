@@ -90,16 +90,18 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode RunMode) error {
 		case RunModeContainer:
 			// chroot into mountpath, rootfs must have a shell
 			return c.Builder.Run(cmd, buildah.RunOptions{
-				Isolation: define.IsolationOCIRootless,
-				Stdout:    os.Stdout,
-				Stderr:    os.Stderr,
+				ConfigureNetwork: define.NetworkEnabled,
+				Isolation:        define.IsolationOCIRootless,
+				Stdout:           os.Stdout,
+				Stderr:           os.Stderr,
 			})
 		}
 	} else {
 		return c.Builder.Run(cmd, buildah.RunOptions{
-			Isolation: define.IsolationOCIRootless,
-			Stdout:    os.Stdout,
-			Stderr:    os.Stderr,
+			ConfigureNetwork: define.NetworkEnabled,
+			Isolation:        define.IsolationOCIRootless,
+			Stdout:           os.Stdout,
+			Stderr:           os.Stderr,
 		})
 	}
 	return nil
