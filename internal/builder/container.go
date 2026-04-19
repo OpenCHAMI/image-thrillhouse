@@ -110,6 +110,11 @@ func (c *Container) RunScript(ctx context.Context, script string) error {
 	}
 
 	// make executable and run
+	if err := c.Run(ctx, []string{"ls", "-ltr", "/tmp/"}); err != nil {
+		return fmt.Errorf("list: %w", err)
+	}
+
+	// make executable and run
 	if err := c.Run(ctx, []string{"chmod", "+x", tmpPath}); err != nil {
 		return fmt.Errorf("chmod script: %w", err)
 	}
