@@ -6,20 +6,15 @@ meta:
 layer:
   manager: dnf
   files:
-    - path: /etc/yum.repos.d/rocky-baseos.repo
-      content: |
-        [rocky-baseos]
-        name=rocky-baseos
-        baseurl=http://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os
-        enabled=1
-        gpgcheck=0
+    - path: /opt/imgbuild
+      src: /home/travisbcotton/go1.26.2.linux-arm64.tar.gz
   actions:
     install:
       packages:
         - kernel
         - systemd
       groups:
-        - Minimal Install
+        - Development Tools
       modules:
         - name: nvidia
           stream: latest
