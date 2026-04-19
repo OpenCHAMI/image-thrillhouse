@@ -43,7 +43,7 @@ type File struct {
 
 // Repos
 type Repo struct {
-	Path    string `yaml:"name"`
+	Path    string `yaml:"path"`
 	Content string `yaml:"content"`
 	URL     string `yaml:"url"`
 	Src     string `yaml:"src"`
