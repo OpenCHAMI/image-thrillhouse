@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/containers/buildah"
 	"github.com/containers/buildah/define"
@@ -17,6 +18,7 @@ import (
 
 type container interface {
 	Run(ctx context.Context, cmd []string) error
+	RunScript(ctx context.Context, script string) error
 	WriteFile(file config.File) error
 	Commit(ctx context.Context, name, tag string) error
 	Delete()
@@ -93,6 +95,34 @@ func (c *Container) Run(ctx context.Context, cmd []string) error {
 			return fmt.Errorf("run %v: %w", cmd, err)
 		}
 	}
+	return nil
+}
+
+func (c *Container) RunScript(ctx context.Context, script string) error {
+	// write script to temp file in container
+	tmpPath := fmt.Sprintf("/tmp/image-build-script-%d.sh", time.Now().UnixNano())
+
+	if err := c.WriteFile(config.File{
+		Path:    tmpPath,
+		Content: script,
+	}); err != nil {
+		return fmt.Errorf("write script: %w", err)
+	}
+
+	// make executable and run
+	if err := c.Run(ctx, []string{"chmod", "+x", tmpPath}); err != nil {
+		return fmt.Errorf("chmod script: %w", err)
+	}
+
+	if err := c.Run(ctx, []string{tmpPath}); err != nil {
+		return fmt.Errorf("exec script: %w", err)
+	}
+
+	// cleanup
+	if err := c.Run(ctx, []string{"rm", tmpPath}); err != nil {
+		return fmt.Errorf("cleanup script: %w", err)
+	}
+
 	return nil
 }
 

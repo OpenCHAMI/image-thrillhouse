@@ -3,6 +3,7 @@ package builder
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/travisbcotton/image-build/internal/backend"
 	"github.com/travisbcotton/image-build/internal/config"
@@ -76,8 +77,15 @@ func (b *Builder) runInstall(ctx context.Context, c container) error {
 
 func (b *Builder) runCommands(ctx context.Context, c container) error {
 	for _, cmd := range b.cfg.Layer.Actions.Commands {
-		if err := c.Run(ctx, []string{cmd}); err != nil {
-			return fmt.Errorf("run command %s: %w", cmd, err)
+		if cmd.Run != "" {
+			parts := strings.Fields(cmd.Run)
+			if err := c.Run(ctx, parts); err != nil {
+				return fmt.Errorf("run %s: %w", cmd.Run, err)
+			}
+		} else {
+			if err := c.RunScript(ctx, cmd.Script); err != nil {
+				return fmt.Errorf("run script: %w", err)
+			}
 		}
 	}
 	return nil

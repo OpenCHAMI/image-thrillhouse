@@ -37,8 +37,8 @@ type File struct {
 
 // Actions on a layer
 type Actions struct {
-	Install  Install  `yaml:"install"`
-	Commands []string `yaml:"commands"`
+	Install  Install   `yaml:"install"`
+	Commands []Command `yaml:"commands"`
 }
 
 // install stuff bro
@@ -53,6 +53,12 @@ type Module struct {
 	Name   string `yaml:"name"`
 	Stream string `yaml:"stream"`
 	Action string `yaml:"action"` // enable, install, disable etc
+}
+
+// Commands to run
+type Command struct {
+	Run    string `yaml:"run"`
+	Script string `yaml:"script"`
 }
 
 func LoadConfig(path string) (*Config, error) {

@@ -28,6 +28,11 @@ func (c *fakeContainer) Run(ctx context.Context, cmd []string) error {
 	return nil
 }
 
+func (c *fakeContainer) RunScript(ctx context.Context, script string) error {
+	fmt.Printf("run: %v\n", script)
+	return nil
+}
+
 func (c *fakeContainer) WriteFile(file config.File) error {
 	fmt.Printf("write: %s\n", file.Path)
 	return nil
