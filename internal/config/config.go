@@ -61,6 +61,21 @@ type Command struct {
 	Script string `yaml:"script"`
 }
 
+// Used for switch-case so I can make things easier add in the future
+type CommandType int
+
+const (
+	CommandRun CommandType = iota
+	CommandScript
+)
+
+func (c *Command) Type() CommandType {
+	if c.Script != "" {
+		return CommandScript
+	}
+	return CommandRun
+}
+
 func LoadConfig(path string) (*Config, error) {
 	c, err := os.ReadFile(path)
 	if err != nil {

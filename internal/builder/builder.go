@@ -77,15 +77,18 @@ func (b *Builder) runInstall(ctx context.Context, c container) error {
 
 func (b *Builder) runCommands(ctx context.Context, c container) error {
 	for _, cmd := range b.cfg.Layer.Actions.Commands {
-		if cmd.Run != "" {
+		switch cmd.Type() {
+		case config.CommandRun:
 			parts := strings.Fields(cmd.Run)
 			if err := c.Run(ctx, parts); err != nil {
 				return fmt.Errorf("run %s: %w", cmd.Run, err)
 			}
-		} else {
+		case config.CommandScript:
 			if err := c.RunScript(ctx, cmd.Script); err != nil {
 				return fmt.Errorf("run script: %w", err)
 			}
+		default:
+			return fmt.Errorf("command has no run or script")
 		}
 	}
 	return nil
