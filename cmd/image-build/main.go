@@ -11,10 +11,20 @@ import (
 	"go.podman.io/storage/pkg/reexec"
 	"go.podman.io/storage/pkg/unshare"
 
+	"github.com/travisbcotton/image-build/internal/backend"
 	"github.com/travisbcotton/image-build/internal/backend/dnf"
 	"github.com/travisbcotton/image-build/internal/builder"
 	"github.com/travisbcotton/image-build/internal/config"
 )
+
+func newBackend(manager string) (backend.Backend, error) {
+	switch manager {
+	case "dnf":
+		return dnf.New(), nil
+	default:
+		return nil, fmt.Errorf("unsupported package manager: %s", manager)
+	}
+}
 
 func main() {
 	if reexec.Init() {
@@ -40,8 +50,12 @@ func main() {
 		log.Fatalf("%v", err)
 	}
 
-	b := builder.New(ctx, cfg, dnf.New())
-	if err := b.Build(ctx); err != nil {
+	b, err := newBackend(cfg.Layer.Manager)
+	if err != nil {
+		log.Fatalf("backend: %v", err)
+	}
+	builder := builder.New(ctx, cfg, b)
+	if err := builder.Build(ctx); err != nil {
 		log.Fatalf("build: %v", err)
 	}
 }
