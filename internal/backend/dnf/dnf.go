@@ -12,6 +12,10 @@ func New() *DnfBackend {
 	return &DnfBackend{}
 }
 
+func (d *DnfBackend) ConfigFilePath() string {
+	return "/etc/dnf/dnf.conf"
+}
+
 func (d *DnfBackend) InstallCommands(install config.Install) [][]string {
 	var cmds [][]string
 

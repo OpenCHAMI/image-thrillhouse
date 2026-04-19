@@ -50,7 +50,7 @@ func main() {
 		log.Fatalf("%v", err)
 	}
 
-	b, err := newBackend(cfg.Layer.Manager)
+	b, err := newBackend(cfg.Layer.Manager.Name)
 	if err != nil {
 		log.Fatalf("backend: %v", err)
 	}

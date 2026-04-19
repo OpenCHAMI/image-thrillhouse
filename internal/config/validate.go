@@ -24,13 +24,13 @@ func (m *Meta) Validate() error {
 }
 
 func (l *Layer) Validate() error {
-	if l.Manager == "" {
+	if l.Manager.Name == "" {
 		return fmt.Errorf("layer.manager is required")
 	}
 	validManagers := map[string]bool{
 		"dnf": true,
 	}
-	if !validManagers[l.Manager] {
+	if !validManagers[l.Manager.Name] {
 		return fmt.Errorf("layer.manager %q is not supported", l.Manager)
 	}
 	for _, f := range l.Files {

@@ -47,6 +47,31 @@ func (b *Builder) Build(ctx context.Context) error {
 	return c.Commit(ctx, b.cfg.Meta.Name, b.cfg.Meta.Tag)
 }
 
+func (b *Builder) applyManagerConfig(c container) error {
+	if b.cfg.Layer.Manager.Config == "" {
+		return nil
+	}
+	return c.WriteFile(config.File{
+		Path:    b.backend.ConfigFilePath(),
+		Content: b.cfg.Layer.Manager.Config,
+	})
+}
+
+func (b *Builder) writeRepos(c container) error {
+	for _, repo := range b.cfg.Layer.Repos {
+		file := config.File{
+			Path:    repo.Path,
+			Content: repo.Content,
+			URL:     repo.URL,
+			Src:     repo.Src,
+		}
+		if err := c.WriteFile(file); err != nil {
+			return fmt.Errorf("write repo %s: %w", repo.Path, err)
+		}
+	}
+	return nil
+}
+
 func (b *Builder) writeFiles(c container) error {
 	for _, file := range b.cfg.Layer.Files {
 		if err := c.WriteFile(file); err != nil {

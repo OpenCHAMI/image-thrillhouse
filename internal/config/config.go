@@ -22,9 +22,15 @@ type Meta struct {
 
 // layer specifics
 type Layer struct {
-	Manager string  `yaml:"manager"`
+	Manager Manager `yaml:"manager"`
+	Repos   []Repo  `yaml:"repos"`
 	Files   []File  `yaml:"files"`
 	Actions Actions `yaml:"actions"`
+}
+
+type Manager struct {
+	Name   string `yaml:"name"`
+	Config string `yaml:"config"`
 }
 
 // File to add to layer
@@ -33,6 +39,14 @@ type File struct {
 	Content string `yaml:"content"`
 	Src     string `yaml:"src"`
 	URL     string `yaml:"url"`
+}
+
+// Repos
+type Repo struct {
+	Path    string `yaml:"name"`
+	Content string `yaml:"content"`
+	URL     string `yaml:"url"`
+	Src     string `yaml:"src"`
 }
 
 // Actions on a layer
