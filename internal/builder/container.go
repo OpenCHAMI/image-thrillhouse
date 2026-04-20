@@ -185,7 +185,7 @@ func (c *Container) Commit(ctx context.Context, name, tag string) (string, error
 }
 
 func (c *Container) Delete() {
-	fmt.Println("Deleting container %v\n", c.Builder.ContainerID)
+	fmt.Printf("Deleting container %s\n", c.Builder.ContainerID)
 	c.Builder.Unmount()
 	c.Builder.Delete()
 	c.Store.Shutdown(false)
