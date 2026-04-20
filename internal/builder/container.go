@@ -56,37 +56,57 @@ func newContainer(ctx context.Context, name string, from string) (container.Cont
 }
 
 func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMode) error {
+	stdout := &bufLogWriter{key: "stdout"}
+	stderr := &bufLogWriter{key: "stderr"}
 	if c.fromScratch {
 		switch mode {
 		case container.RunModeHost:
 			// exec directly, used for dnf --installroot
 			command := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
-			command.Stdout = os.Stdout
-			command.Stderr = os.Stderr
-			return command.Run()
+			command.Stdout = stdout
+			command.Stderr = stderr
+			err := command.Run()
+			if err != nil {
+				// flush buffered output at error level so you can see what went wrong
+				stdout.Flush(slog.LevelError)
+				stderr.Flush(slog.LevelError)
+			}
+			return fmt.Errorf("run %v: %w", cmd, err)
 		case container.RunModeContainer:
 			// chroot into mountpath, rootfs must have a shell
-			return c.Builder.Run(cmd, buildah.RunOptions{
+			err := c.Builder.Run(cmd, buildah.RunOptions{
 				Isolation: define.IsolationOCIRootless,
-				Stdout:    os.Stdout,
-				Stderr:    os.Stderr,
+				Stdout:    stdout,
+				Stderr:    stderr,
 				AddCapabilities: []string{
 					"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_FSETID", "CAP_KILL",
 					"CAP_NET_BIND_SERVICE", "CAP_SETFCAP", "CAP_SETGID", "CAP_SETPCAP", "CAP_SETUID", "CAP_SYS_CHROOT",
 				},
 			})
+			if err != nil {
+				stdout.Flush(slog.LevelError)
+				stderr.Flush(slog.LevelError)
+				return fmt.Errorf("run %v: %w", cmd, err)
+			}
 		}
 	} else {
-		return c.Builder.Run(cmd, buildah.RunOptions{
+		err := c.Builder.Run(cmd, buildah.RunOptions{
 			Isolation: define.IsolationOCIRootless,
-			Stdout:    os.Stdout,
-			Stderr:    os.Stderr,
+			Stdout:    stdout,
+			Stderr:    stderr,
 			AddCapabilities: []string{
 				"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_FSETID", "CAP_KILL",
 				"CAP_NET_BIND_SERVICE", "CAP_SETFCAP", "CAP_SETGID", "CAP_SETPCAP", "CAP_SETUID", "CAP_SYS_CHROOT",
 			},
 		})
+		if err != nil {
+			stdout.Flush(slog.LevelError)
+			stderr.Flush(slog.LevelError)
+			return fmt.Errorf("run %v: %w", cmd, err)
+		}
 	}
+	stdout.Flush(slog.LevelDebug)
+	stderr.Flush(slog.LevelDebug)
 	return nil
 }
 
@@ -148,7 +168,7 @@ func (c *Container) WriteFile(file config.File) error {
 			return fmt.Errorf("read %s: %w", file.URL, err)
 		}
 	}
-	slog.Debug("Wrtie File", file.Path, "content", content)
+	slog.Debug("Wrtie File", "path", file.Path)
 
 	// write to temp file
 	tmp, err := os.CreateTemp("", "image-build-*")
@@ -179,7 +199,7 @@ func (c *Container) Commit(ctx context.Context, name, tag string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("commit: %w", err)
 	}
-	return "", nil
+	return c.GetID(), nil
 }
 
 func (c *Container) Delete() {
