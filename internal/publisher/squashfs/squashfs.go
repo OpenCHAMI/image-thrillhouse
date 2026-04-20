@@ -3,6 +3,7 @@ package squashfs
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 
@@ -28,12 +29,12 @@ func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, 
 		return fmt.Errorf("mksquashfs not found: install squashfs-tools")
 	}
 
-	cmd := exec.CommandContext(ctx, "mksquashfs", c.MountPath(), output, "-noappend")
+	cmd := exec.CommandContext(ctx, "mksquashfs", c.MountPath(), output, "-noappend", "-no-progress")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("mksquashfs: %w", err)
 	}
-	fmt.Printf("published squashfs: %s\n", output)
+	slog.Debug("Published squashfs", "squash", output)
 	return nil
 }

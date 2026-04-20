@@ -3,6 +3,7 @@ package builder
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/travisbcotton/image-build/internal/backend"
@@ -31,6 +32,7 @@ func New(ctx context.Context, cfg *config.Config, b backend.Backend, p []publish
 
 func (b *Builder) Build(ctx context.Context) error {
 	c, err := b.newContainer(ctx, b.cfg.Meta.Name, b.cfg.Meta.From)
+	slog.Info("Creating container", "id", c.GetID(), "name", c.GetName())
 	if err != nil {
 		return fmt.Errorf("create container: %w", err)
 	}
@@ -69,7 +71,7 @@ func (b *Builder) applyManagerConfig(c container.Container) error {
 	if b.cfg.Layer.Manager.Config == "" {
 		return nil
 	}
-	fmt.Printf("Writing configfile %v\n", b.cfg.Layer.Manager.Config)
+	slog.Info("Writing configfile", "config", b.cfg.Layer.Manager.Config)
 	return c.WriteFile(config.File{
 		Path:    b.backend.ConfigFilePath(),
 		Content: b.cfg.Layer.Manager.Config,
@@ -78,7 +80,7 @@ func (b *Builder) applyManagerConfig(c container.Container) error {
 
 func (b *Builder) writeRepos(c container.Container) error {
 	for _, repo := range b.cfg.Layer.Repos {
-		fmt.Printf("writing repos %v\n", repo.Path)
+		slog.Info("writing repos:", "repo", repo.Path)
 		file := config.File{
 			Path:    repo.Path,
 			Content: repo.Content,
@@ -94,6 +96,7 @@ func (b *Builder) writeRepos(c container.Container) error {
 
 func (b *Builder) writeFiles(c container.Container) error {
 	for _, file := range b.cfg.Layer.Files {
+		slog.Info("Writing Files:", "file", file.Path)
 		if err := c.WriteFile(file); err != nil {
 			return fmt.Errorf("write file %s: %w", file.Path, err)
 		}
@@ -102,6 +105,7 @@ func (b *Builder) writeFiles(c container.Container) error {
 }
 
 func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
+	slog.Info("Running install commands:", "install", b.cfg.Layer.Actions.Install)
 	if b.cfg.Meta.From == "scratch" {
 		cmds := b.backend.InstallRootCommands(b.cfg.Layer.Actions.Install, c.MountPath())
 		for _, cmd := range cmds {
@@ -121,6 +125,7 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 }
 
 func (b *Builder) runCommands(ctx context.Context, c container.Container) error {
+	slog.Info("Running Commands:", "commands", b.cfg.Layer.Actions.Commands)
 	for _, cmd := range b.cfg.Layer.Actions.Commands {
 		switch cmd.Type() {
 		case config.CommandRun:

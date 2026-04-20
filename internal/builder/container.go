@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -44,8 +45,6 @@ func newContainer(ctx context.Context, name string, from string) (container.Cont
 	if err != nil {
 		return nil, fmt.Errorf("mount: %w", err)
 	}
-
-	fmt.Printf("container id: %s\n", builder.ContainerID)
 
 	return &Container{
 		Name:        name,
@@ -120,7 +119,6 @@ func (c *Container) RunScript(ctx context.Context, script string) error {
 }
 
 func (c *Container) WriteFile(file config.File) error {
-	fmt.Printf("write: %s\n", file.Path)
 	var content []byte
 	var err error
 
@@ -150,6 +148,7 @@ func (c *Container) WriteFile(file config.File) error {
 			return fmt.Errorf("read %s: %w", file.URL, err)
 		}
 	}
+	slog.Debug("Wrtie File", file.Path, "content", content)
 
 	// write to temp file
 	tmp, err := os.CreateTemp("", "image-build-*")
@@ -172,7 +171,7 @@ func (c *Container) WriteFile(file config.File) error {
 }
 
 func (c *Container) Commit(ctx context.Context, name, tag string) (string, error) {
-	fmt.Printf("commit: %s:%s\n", name, tag)
+	slog.Debug("Commit Container", "ID", c.GetID(), "Name", c.GetName(), "as", name, ":", tag)
 	options := buildah.CommitOptions{
 		AdditionalTags: []string{fmt.Sprintf("localhost/%s:%s", name, tag)},
 	}
@@ -180,12 +179,11 @@ func (c *Container) Commit(ctx context.Context, name, tag string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("commit: %w", err)
 	}
-	fmt.Printf("committed image localhost/%s:%s\n", name, tag)
 	return "", nil
 }
 
 func (c *Container) Delete() {
-	fmt.Printf("Deleting container %s\n", c.Builder.ContainerID)
+	slog.Debug("Deleting Container", "ID", c.GetID(), "Name", c.GetName())
 	c.Builder.Unmount()
 	c.Builder.Delete()
 	c.Store.Shutdown(false)
@@ -195,9 +193,14 @@ func (c *Container) MountPath() string {
 	return c.mountPath
 }
 
-func (c *Container) ID() string {
+func (c *Container) GetID() string {
 
 	return c.Builder.ContainerID
+}
+
+func (c *Container) GetName() string {
+
+	return c.Builder.Container
 }
 
 func openStore() (storage.Store, error) {

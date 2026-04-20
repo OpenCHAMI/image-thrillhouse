@@ -19,7 +19,8 @@ type Container interface {
 	RunScript(ctx context.Context, script string) error
 	WriteFile(file config.File) error
 	Commit(ctx context.Context, name, tag string) (string, error)
-	ID() string
+	GetID() string
+	GetName() string
 	Delete()
 	MountPath() string
 }

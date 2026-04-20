@@ -52,6 +52,10 @@ func (c *fakeContainer) MountPath() string {
 	return c.mountPath
 }
 
-func (c *fakeContainer) ID() string {
+func (c *fakeContainer) GetID() string {
+	return ""
+}
+
+func (c *fakeContainer) GetName() string {
 	return ""
 }

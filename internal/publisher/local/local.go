@@ -3,6 +3,7 @@ package local
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/travisbcotton/image-build/internal/container"
 )
@@ -18,6 +19,6 @@ func (l *LocalPublisher) Publish(ctx context.Context, c container.Container, nam
 	if err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	fmt.Printf("published local: localhost/%s:%s (%s)\n", name, tag, id)
+	slog.Debug("Published Local", "Image", "localhost", "Name", name, "Tag", tag, "ID", id)
 	return nil
 }
