@@ -109,7 +109,7 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 	if b.cfg.Meta.From == "scratch" {
 		cmds := b.backend.InstallRootCommands(b.cfg.Layer.Actions.Install, c.MountPath())
 		for _, cmd := range cmds {
-			slog.Debug("Installing", cmd)
+			slog.Debug("Installing", "action", cmd)
 			if err := c.Run(ctx, cmd, container.RunModeHost); err != nil {
 				return fmt.Errorf("run root %v: %w", cmd, err)
 			}
@@ -117,7 +117,7 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 	} else {
 		cmds := b.backend.InstallCommands(b.cfg.Layer.Actions.Install)
 		for _, cmd := range cmds {
-			slog.Debug("Installing", cmd)
+			slog.Debug("Installing", "action", cmd)
 			if err := c.Run(ctx, cmd, container.RunModeContainer); err != nil {
 				return fmt.Errorf("run %v: %w", cmd, err)
 			}
@@ -130,7 +130,7 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 func (b *Builder) runCommands(ctx context.Context, c container.Container) error {
 	slog.Info("Running Commands:", "commands", b.cfg.Layer.Actions.Commands)
 	for _, cmd := range b.cfg.Layer.Actions.Commands {
-		slog.Debug("Running", cmd)
+		slog.Debug("Running", "command", cmd)
 		switch cmd.Type() {
 		case config.CommandRun:
 			parts := strings.Fields(cmd.Run)
