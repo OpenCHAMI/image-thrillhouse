@@ -20,7 +20,7 @@ func New(path string) *SquashfsPublisher {
 
 func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, name, tag string) error {
 	output := fmt.Sprintf("%s/%s-%s.squashfs", s.path, name, tag)
-
+	slog.Info("Creating squashfs", "squashfs", output, "source", c.MountPath())
 	if err := os.MkdirAll(s.path, 0755); err != nil {
 		return fmt.Errorf("create output directory %s: %w", s.path, err)
 	}
@@ -30,11 +30,11 @@ func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, 
 	}
 
 	cmd := exec.CommandContext(ctx, "mksquashfs", c.MountPath(), output, "-noappend", "-no-progress")
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = nil
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("mksquashfs: %w", err)
 	}
-	slog.Debug("Published squashfs", "squash", output)
+	slog.Info("Published squashfs", "squash", output)
 	return nil
 }
