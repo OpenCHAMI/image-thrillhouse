@@ -123,6 +123,7 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 			}
 		}
 	}
+	slog.Info("Done installing commands:", "install", b.cfg.Layer.Actions.Install)
 	return nil
 }
 
