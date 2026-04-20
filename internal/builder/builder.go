@@ -7,21 +7,25 @@ import (
 
 	"github.com/travisbcotton/image-build/internal/backend"
 	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-build/internal/publisher"
 )
 
 type Builder struct {
 	cfg          *config.Config
 	backend      backend.Backend
-	newContainer func(context.Context, string, string) (container, error)
+	newContainer func(context.Context, string, string) (container.Container, error)
+	publishers   []publisher.Publisher
 }
 
-func New(ctx context.Context, cfg *config.Config, b backend.Backend) *Builder {
+func New(ctx context.Context, cfg *config.Config, b backend.Backend, p []publisher.Publisher) *Builder {
 	return &Builder{
 		cfg:     cfg,
 		backend: b,
-		newContainer: func(ctx context.Context, name string, from string) (container, error) {
+		newContainer: func(ctx context.Context, name string, from string) (container.Container, error) {
 			return newContainer(ctx, name, from)
 		},
+		publishers: p,
 	}
 }
 
@@ -52,10 +56,16 @@ func (b *Builder) Build(ctx context.Context) error {
 		return fmt.Errorf("run commands: %w", err)
 	}
 
-	return c.Commit(ctx, b.cfg.Meta.Name, b.cfg.Meta.Tag)
+	for _, p := range b.publishers {
+		if err := p.Publish(ctx, c, b.cfg.Meta.Name, b.cfg.Meta.Tag); err != nil {
+			return fmt.Errorf("publish %T: %w", p, err)
+		}
+	}
+
+	return nil
 }
 
-func (b *Builder) applyManagerConfig(c container) error {
+func (b *Builder) applyManagerConfig(c container.Container) error {
 	if b.cfg.Layer.Manager.Config == "" {
 		return nil
 	}
@@ -66,7 +76,7 @@ func (b *Builder) applyManagerConfig(c container) error {
 	})
 }
 
-func (b *Builder) writeRepos(c container) error {
+func (b *Builder) writeRepos(c container.Container) error {
 	for _, repo := range b.cfg.Layer.Repos {
 		fmt.Printf("writing repos %v\n", repo.Path)
 		file := config.File{
@@ -82,7 +92,7 @@ func (b *Builder) writeRepos(c container) error {
 	return nil
 }
 
-func (b *Builder) writeFiles(c container) error {
+func (b *Builder) writeFiles(c container.Container) error {
 	for _, file := range b.cfg.Layer.Files {
 		if err := c.WriteFile(file); err != nil {
 			return fmt.Errorf("write file %s: %w", file.Path, err)
@@ -91,18 +101,18 @@ func (b *Builder) writeFiles(c container) error {
 	return nil
 }
 
-func (b *Builder) runInstall(ctx context.Context, c container) error {
+func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 	if b.cfg.Meta.From == "scratch" {
 		cmds := b.backend.InstallRootCommands(b.cfg.Layer.Actions.Install, c.MountPath())
 		for _, cmd := range cmds {
-			if err := c.Run(ctx, cmd, RunModeHost); err != nil {
+			if err := c.Run(ctx, cmd, container.RunModeHost); err != nil {
 				return fmt.Errorf("run root %v: %w", cmd, err)
 			}
 		}
 	} else {
 		cmds := b.backend.InstallCommands(b.cfg.Layer.Actions.Install)
 		for _, cmd := range cmds {
-			if err := c.Run(ctx, cmd, RunModeContainer); err != nil {
+			if err := c.Run(ctx, cmd, container.RunModeContainer); err != nil {
 				return fmt.Errorf("run %v: %w", cmd, err)
 			}
 		}
@@ -110,12 +120,12 @@ func (b *Builder) runInstall(ctx context.Context, c container) error {
 	return nil
 }
 
-func (b *Builder) runCommands(ctx context.Context, c container) error {
+func (b *Builder) runCommands(ctx context.Context, c container.Container) error {
 	for _, cmd := range b.cfg.Layer.Actions.Commands {
 		switch cmd.Type() {
 		case config.CommandRun:
 			parts := strings.Fields(cmd.Run)
-			if err := c.Run(ctx, parts, RunModeContainer); err != nil {
+			if err := c.Run(ctx, parts, container.RunModeContainer); err != nil {
 				return fmt.Errorf("run %s: %w", cmd.Run, err)
 			}
 		case config.CommandScript:

@@ -14,24 +14,8 @@ import (
 	"go.podman.io/storage"
 
 	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-build/internal/container"
 )
-
-type RunMode int
-
-const (
-	RunModeAuto      RunMode = iota // builder decides based on context
-	RunModeHost                     // always exec on host (for package managers)
-	RunModeContainer                // always run in container/chroot
-)
-
-type container interface {
-	Run(ctx context.Context, cmd []string, mode RunMode) error
-	RunScript(ctx context.Context, script string) error
-	WriteFile(file config.File) error
-	Commit(ctx context.Context, name, tag string) error
-	Delete()
-	MountPath() string
-}
 
 type Container struct {
 	Name        string
@@ -41,7 +25,7 @@ type Container struct {
 	Store       storage.Store
 }
 
-func newContainer(ctx context.Context, name string, from string) (container, error) {
+func newContainer(ctx context.Context, name string, from string) (container.Container, error) {
 	// get container store
 	store, err := openStore()
 	if err != nil {
@@ -56,15 +40,9 @@ func newContainer(ctx context.Context, name string, from string) (container, err
 		return nil, fmt.Errorf("new builder: %w", err)
 	}
 
-	// if from == scratch, mount container and assign
-	var mountPath string
-	if from == "scratch" {
-		mountPath, err = builder.Mount("")
-		if err != nil {
-			return nil, fmt.Errorf("mount: %w", err)
-		}
-	} else {
-		mountPath = ""
+	mountPath, err := builder.Mount("")
+	if err != nil {
+		return nil, fmt.Errorf("mount: %w", err)
 	}
 
 	fmt.Printf("container id: %s\n", builder.ContainerID)
@@ -78,16 +56,16 @@ func newContainer(ctx context.Context, name string, from string) (container, err
 	}, nil
 }
 
-func (c *Container) Run(ctx context.Context, cmd []string, mode RunMode) error {
+func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMode) error {
 	if c.fromScratch {
 		switch mode {
-		case RunModeHost:
+		case container.RunModeHost:
 			// exec directly, used for dnf --installroot
 			command := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
 			command.Stdout = os.Stdout
 			command.Stderr = os.Stderr
 			return command.Run()
-		case RunModeContainer:
+		case container.RunModeContainer:
 			// chroot into mountpath, rootfs must have a shell
 			return c.Builder.Run(cmd, buildah.RunOptions{
 				Isolation: define.IsolationOCIRootless,
@@ -125,16 +103,16 @@ func (c *Container) RunScript(ctx context.Context, script string) error {
 	}
 
 	// make executable and run
-	if err := c.Run(ctx, []string{"chmod", "+x", tmpPath}, RunModeContainer); err != nil {
+	if err := c.Run(ctx, []string{"chmod", "+x", tmpPath}, container.RunModeContainer); err != nil {
 		return fmt.Errorf("chmod script: %w", err)
 	}
 
-	if err := c.Run(ctx, []string{tmpPath}, RunModeContainer); err != nil {
+	if err := c.Run(ctx, []string{tmpPath}, container.RunModeContainer); err != nil {
 		return fmt.Errorf("exec script: %w", err)
 	}
 
 	// cleanup
-	if err := c.Run(ctx, []string{"rm", tmpPath}, RunModeContainer); err != nil {
+	if err := c.Run(ctx, []string{"rm", tmpPath}, container.RunModeContainer); err != nil {
 		return fmt.Errorf("cleanup script: %w", err)
 	}
 
@@ -193,27 +171,33 @@ func (c *Container) WriteFile(file config.File) error {
 	return nil
 }
 
-func (c *Container) Commit(ctx context.Context, name, tag string) error {
+func (c *Container) Commit(ctx context.Context, name, tag string) (string, error) {
 	fmt.Printf("commit: %s:%s\n", name, tag)
 	options := buildah.CommitOptions{
 		AdditionalTags: []string{fmt.Sprintf("localhost/%s:%s", name, tag)},
 	}
 	_, _, _, err := c.Builder.Commit(ctx, nil, options)
 	if err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return "", fmt.Errorf("commit: %w", err)
 	}
 	fmt.Printf("committed image localhost/%s:%s\n", name, tag)
-	return nil
+	return "", nil
 }
 
 func (c *Container) Delete() {
-	fmt.Println("delete container")
+	fmt.Println("Deleting container %v\n", c.Builder.ContainerID)
+	c.Builder.Unmount()
 	c.Builder.Delete()
 	c.Store.Shutdown(false)
 }
 
 func (c *Container) MountPath() string {
 	return c.mountPath
+}
+
+func (c *Container) ID() string {
+
+	return c.Builder.ContainerID
 }
 
 func openStore() (storage.Store, error) {

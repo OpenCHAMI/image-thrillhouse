@@ -15,6 +15,9 @@ import (
 	"github.com/travisbcotton/image-build/internal/backend/dnf"
 	"github.com/travisbcotton/image-build/internal/builder"
 	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-build/internal/publisher"
+	"github.com/travisbcotton/image-build/internal/publisher/local"
+	"github.com/travisbcotton/image-build/internal/publisher/squashfs"
 )
 
 func newBackend(manager string) (backend.Backend, error) {
@@ -24,6 +27,28 @@ func newBackend(manager string) (backend.Backend, error) {
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", manager)
 	}
+}
+
+func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
+	if len(publishes) == 0 {
+		return []publisher.Publisher{local.New()}, nil
+	}
+
+	var publishers []publisher.Publisher
+	for _, p := range publishes {
+		switch p.Type {
+		case "local":
+			publishers = append(publishers, local.New())
+		case "squashfs":
+			if p.Path == "" {
+				return nil, fmt.Errorf("squashfs publisher requires path")
+			}
+			publishers = append(publishers, squashfs.New(p.Path))
+		default:
+			return nil, fmt.Errorf("unsupported publisher type: %s", p.Type)
+		}
+	}
+	return publishers, nil
 }
 
 func main() {
@@ -54,7 +79,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("backend: %v", err)
 	}
-	builder := builder.New(ctx, cfg, b)
+
+	p, err := newPublishers(cfg.Publish)
+	if err != nil {
+		log.Fatalf("publishers: %v", err)
+	}
+
+	builder := builder.New(ctx, cfg, b, p)
 	if err := builder.Build(ctx); err != nil {
 		log.Fatalf("build: %v", err)
 	}

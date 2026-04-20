@@ -9,9 +9,9 @@ import (
 
 // top level config
 type Config struct {
-	Meta    Meta    `yaml:"meta"`
-	Layer   Layer   `yaml:"layer"`
-	Publish Publish `yaml:"publish"`
+	Meta    Meta      `yaml:"meta"`
+	Layer   Layer     `yaml:"layer"`
+	Publish []Publish `yaml:"publish"`
 }
 
 // meta info on layer
