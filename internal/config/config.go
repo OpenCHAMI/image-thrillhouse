@@ -9,8 +9,9 @@ import (
 
 // top level config
 type Config struct {
-	Meta  Meta  `yaml:"meta"`
-	Layer Layer `yaml:"layer"`
+	Meta    Meta    `yaml:"meta"`
+	Layer   Layer   `yaml:"layer"`
+	Publish Publish `yaml:"publish"`
 }
 
 // meta info on layer
@@ -73,6 +74,15 @@ type Module struct {
 type Command struct {
 	Run    string `yaml:"run"`
 	Script string `yaml:"script"`
+}
+
+// publish types
+type Publish struct {
+	Type   string `yaml:"type"`
+	URL    string `yaml:"url"`
+	Bucket string `yaml:"bucket"`
+	Prefix string `yaml:"prefix"`
+	Path   string `yaml:"path"`
 }
 
 // Used for switch-case so I can make things easier add in the future
