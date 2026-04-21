@@ -35,7 +35,7 @@ func New(ctx context.Context, cfg *config.Config, b backend.Backend, p []publish
 func (b *Builder) Build(ctx context.Context) error {
 	c, err := b.newContainer(ctx, b.cfg.Meta.Name, b.cfg.Meta.From)
 	log := slog.With("component", "builder")
-	log.Info("Creating container", "id", c.GetID(), "name", c.GetName())
+	log.Debug("Created container", "id", c.GetID(), "name", c.GetName(), "mountPath", c.MountPath())
 	if err != nil {
 		return fmt.Errorf("create container: %w", err)
 	}

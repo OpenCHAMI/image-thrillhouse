@@ -87,7 +87,7 @@ func (w *dnfLogWriter) Flush(err error) {
 			installed = append(installed, line)
 		case strings.HasPrefix(line, "Unable to detect release version"):
 			warnings = append(warnings, line)
-		case strings.HasPrefix(line, "Error"):
+		case strings.HasPrefix(line, "Error:"):
 			errors = append(errors, line)
 			inInstalled = false
 		}
