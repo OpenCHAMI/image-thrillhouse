@@ -141,7 +141,7 @@ func (c *Container) RunScript(ctx context.Context, script string) error {
 func (c *Container) WriteFile(file config.File) error {
 	var content []byte
 	var err error
-	log := slog.With("component", "builder")
+	log := slog.With("component", "container")
 	// content is a yaml scalar block or string
 	if file.Content != "" {
 		content = []byte(file.Content)
@@ -191,7 +191,7 @@ func (c *Container) WriteFile(file config.File) error {
 }
 
 func (c *Container) Commit(ctx context.Context, name, tag string) (string, error) {
-	log := slog.With("component", "builder")
+	log := slog.With("component", "container")
 	log.Debug("Commit Container", "ID", c.GetID(), "Name", c.GetName(), "as", name, ":", tag)
 	options := buildah.CommitOptions{
 		AdditionalTags: []string{fmt.Sprintf("localhost/%s:%s", name, tag)},
@@ -204,7 +204,7 @@ func (c *Container) Commit(ctx context.Context, name, tag string) (string, error
 }
 
 func (c *Container) Delete() {
-	log := slog.With("component", "builder")
+	log := slog.With("component", "container")
 	log.Debug("Deleting Container", "ID", c.GetID(), "Name", c.GetName())
 	c.Builder.Unmount()
 	c.Builder.Delete()
