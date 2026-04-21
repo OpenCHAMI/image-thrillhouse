@@ -70,8 +70,8 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 				// flush buffered output at error level so you can see what went wrong
 				stdout.Flush(slog.LevelError)
 				stderr.Flush(slog.LevelError)
+				return fmt.Errorf("run %v: %w", cmd, err)
 			}
-			return fmt.Errorf("run %v: %w", cmd, err)
 		case container.RunModeContainer:
 			// chroot into mountpath, rootfs must have a shell
 			err := c.Builder.Run(cmd, buildah.RunOptions{
