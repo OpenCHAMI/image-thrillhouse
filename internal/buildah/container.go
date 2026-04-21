@@ -1,4 +1,4 @@
-package builder
+package buildah
 
 import (
 	"context"
@@ -26,7 +26,7 @@ type Container struct {
 	Store       storage.Store
 }
 
-func newContainer(ctx context.Context, name string, from string) (container.Container, error) {
+func NewContainer(ctx context.Context, name string, from string) (container.Container, error) {
 	// get container store
 	store, err := openStore()
 	if err != nil {
@@ -223,12 +223,4 @@ func (c *Container) GetID() string {
 func (c *Container) GetName() string {
 
 	return c.Builder.Container
-}
-
-func openStore() (storage.Store, error) {
-	opts, err := storage.DefaultStoreOptions()
-	if err != nil {
-		return nil, fmt.Errorf("default store opts: %w", err)
-	}
-	return storage.GetStore(opts)
 }

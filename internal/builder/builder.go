@@ -10,6 +10,8 @@ import (
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
 	"github.com/travisbcotton/image-build/internal/publisher"
+
+	ibuildah "github.com/travisbcotton/image-build/internal/buildah"
 )
 
 type Builder struct {
@@ -24,7 +26,7 @@ func New(ctx context.Context, cfg *config.Config, b backend.Backend, p []publish
 		cfg:     cfg,
 		backend: b,
 		newContainer: func(ctx context.Context, name string, from string) (container.Container, error) {
-			return newContainer(ctx, name, from)
+			return ibuildah.NewContainer(ctx, name, from)
 		},
 		publishers: p,
 	}
