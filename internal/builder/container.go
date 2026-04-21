@@ -141,7 +141,7 @@ func (c *Container) RunScript(ctx context.Context, script string) error {
 func (c *Container) WriteFile(file config.File) error {
 	var content []byte
 	var err error
-
+	log := slog.With("component", "builder")
 	// content is a yaml scalar block or string
 	if file.Content != "" {
 		content = []byte(file.Content)
@@ -168,7 +168,7 @@ func (c *Container) WriteFile(file config.File) error {
 			return fmt.Errorf("read %s: %w", file.URL, err)
 		}
 	}
-	slog.Debug("Wrtie File", "path", file.Path)
+	log.Debug("Wrtie File", "path", file.Path)
 
 	// write to temp file
 	tmp, err := os.CreateTemp("", "image-build-*")
@@ -191,7 +191,8 @@ func (c *Container) WriteFile(file config.File) error {
 }
 
 func (c *Container) Commit(ctx context.Context, name, tag string) (string, error) {
-	slog.Debug("Commit Container", "ID", c.GetID(), "Name", c.GetName(), "as", name, ":", tag)
+	log := slog.With("component", "builder")
+	log.Debug("Commit Container", "ID", c.GetID(), "Name", c.GetName(), "as", name, ":", tag)
 	options := buildah.CommitOptions{
 		AdditionalTags: []string{fmt.Sprintf("localhost/%s:%s", name, tag)},
 	}
@@ -203,7 +204,8 @@ func (c *Container) Commit(ctx context.Context, name, tag string) (string, error
 }
 
 func (c *Container) Delete() {
-	slog.Debug("Deleting Container", "ID", c.GetID(), "Name", c.GetName())
+	log := slog.With("component", "builder")
+	log.Debug("Deleting Container", "ID", c.GetID(), "Name", c.GetName())
 	c.Builder.Unmount()
 	c.Builder.Delete()
 	c.Store.Shutdown(false)

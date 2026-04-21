@@ -15,11 +15,12 @@ func New() *LocalPublisher {
 }
 
 func (l *LocalPublisher) Publish(ctx context.Context, c container.Container, name, tag string) error {
+	log := slog.With("component", "publisher")
 	id, err := c.Commit(ctx, name, tag)
-	slog.Info("Committing locally", "ContainerID", id, "Image", fmt.Sprintf("localhost/%s:%s", name, tag))
+	log.Info("Committing locally", "ContainerID", id, "Image", fmt.Sprintf("localhost/%s:%s", name, tag))
 	if err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	slog.Info("Committed locally", "ContainerID", id, "Image", fmt.Sprintf("localhost/%s:%s", name, tag))
+	log.Info("Committed locally", "ContainerID", id, "Image", fmt.Sprintf("localhost/%s:%s", name, tag))
 	return nil
 }
