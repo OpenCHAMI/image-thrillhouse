@@ -5,9 +5,14 @@ meta:
 
 layer:
   manager: 
-    - name: dnf
+    name: dnf
   files: []
   actions:
     install:
       groups:
         - Development Tools
+
+publish:
+  - type: squashfs
+    path: /home/travisbcotton/images/rocky-base.squashfs
+  - type: local
