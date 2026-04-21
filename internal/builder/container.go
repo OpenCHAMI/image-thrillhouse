@@ -58,18 +58,19 @@ func newContainer(ctx context.Context, name string, from string) (container.Cont
 func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMode) error {
 	stdout := &bufLogWriter{key: "stdout"}
 	stderr := &bufLogWriter{key: "stderr"}
+	dnfOut := &dnfLogWriter{}
 	if c.fromScratch {
 		switch mode {
 		case container.RunModeHost:
 			// exec directly, used for dnf --installroot
 			command := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
-			command.Stdout = stdout
-			command.Stderr = stderr
+			command.Stdout = dnfOut
+			command.Stderr = dnfOut
 			err := command.Run()
 			if err != nil {
 				// flush buffered output at error level so you can see what went wrong
-				stdout.Flush(slog.LevelError)
-				stderr.Flush(slog.LevelError)
+				dnfOut.Flush(err)
+				dnfOut.Flush(err)
 				return fmt.Errorf("run %v: %w", cmd, err)
 			}
 		case container.RunModeContainer:
