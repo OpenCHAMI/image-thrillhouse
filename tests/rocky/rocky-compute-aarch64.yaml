@@ -1,0 +1,18 @@
+meta:
+  name: rocky-compute
+  tag: "aarch64-9.5"
+  from: localhost/rocky-base:aarch64-9.5
+
+layer:
+  manager: 
+    name: dnf
+  files: []
+  actions:
+    install:
+      groups:
+        - Development Tools
+
+publish:
+  - type: squashfs
+    path: /opt/images/rocky-base-aarch64.squashfs
+  - type: local
