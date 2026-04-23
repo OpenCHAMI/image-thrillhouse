@@ -1,0 +1,18 @@
+meta:
+  name: debian-compute
+  tag: bookworm
+  from: debian-base:bookworm
+
+layer:
+  manager:
+    name: apt 
+  repos:
+    - path: /etc/apt/sources.list.d/debian.list
+      content: |
+        deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://deb.debian.org/debian bookworm main
+  actions:
+    install:
+      packages:
+        - systemd
+publish:
+  - type: local
