@@ -31,6 +31,7 @@ func (l *Layer) Validate() error {
 		"dnf":        true,
 		"mmdebstrap": true,
 		"apt":        true,
+		"zypper":     true,
 	}
 	if !validManagers[l.Manager.Name] {
 		return fmt.Errorf("layer.manager %q is not supported", l.Manager)

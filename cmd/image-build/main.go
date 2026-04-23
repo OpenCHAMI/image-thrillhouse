@@ -13,6 +13,7 @@ import (
 	"go.podman.io/storage/pkg/unshare"
 
 	"github.com/travisbcotton/image-build/internal/backend"
+	"github.com/travisbcotton/image-build/internal/backend/apt"
 	"github.com/travisbcotton/image-build/internal/backend/dnf"
 	"github.com/travisbcotton/image-build/internal/backend/mmdebstrap"
 	"github.com/travisbcotton/image-build/internal/builder"
@@ -28,6 +29,8 @@ func newBackend(manager config.Manager) (backend.Backend, error) {
 		return dnf.New(manager.Options), nil
 	case "mmdebstrap":
 		return mmdebstrap.New(manager.Options), nil
+	case "apt":
+		return apt.New(manager.Options), nil
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", manager.Name)
 	}
