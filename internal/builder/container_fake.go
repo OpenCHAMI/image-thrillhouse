@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/containers/buildah/define"
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
 )
@@ -58,4 +59,8 @@ func (c *fakeContainer) GetID() string {
 
 func (c *fakeContainer) GetName() string {
 	return ""
+}
+
+func (c *fakeContainer) GetIsolation() define.Isolation {
+	return define.IsolationChroot
 }

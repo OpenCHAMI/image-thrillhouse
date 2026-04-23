@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 
+	"github.com/containers/buildah/define"
 	"github.com/travisbcotton/image-build/internal/config"
 )
 
@@ -23,4 +24,5 @@ type Container interface {
 	GetName() string
 	Delete()
 	MountPath() string
+	GetIsolation() define.Isolation
 }

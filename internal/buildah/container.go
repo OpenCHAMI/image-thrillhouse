@@ -75,7 +75,7 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 		case container.RunModeContainer:
 			// chroot into mountpath, rootfs must have a shell
 			err := c.Builder.Run(cmd, buildah.RunOptions{
-				Isolation: define.IsolationOCIRootless,
+				Isolation: c.GetIsolation(),
 				Stdout:    stdout,
 				Stderr:    stderr,
 				AddCapabilities: []string{
@@ -91,7 +91,7 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 		}
 	} else {
 		err := c.Builder.Run(cmd, buildah.RunOptions{
-			Isolation: define.IsolationOCIRootless,
+			Isolation: c.GetIsolation(),
 			Stdout:    stdout,
 			Stderr:    stderr,
 			AddCapabilities: []string{
@@ -223,4 +223,18 @@ func (c *Container) GetID() string {
 func (c *Container) GetName() string {
 
 	return c.Builder.Container
+}
+
+func (c *Container) GetIsolation() define.Isolation {
+	if iso := os.Getenv("BUILDAH_ISOLATION"); iso != "" {
+		switch iso {
+		case "chroot":
+			return define.IsolationChroot
+		case "rootless":
+			return define.IsolationOCIRootless
+		case "oci":
+			return define.IsolationOCI
+		}
+	}
+	return define.IsolationDefault
 }
