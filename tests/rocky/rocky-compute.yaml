@@ -9,10 +9,11 @@ layer:
   files: []
   actions:
     install:
-      groups:
-        - Development Tools
+      packages: 
+        - vim
+        - systemd
+    commands:
+      - run: "echo hello"
 
 publish:
-  - type: squashfs
-    path: /home/travisbcotton/images/rocky-base.squashfs
   - type: local

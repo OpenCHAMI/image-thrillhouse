@@ -40,7 +40,7 @@ layer:
       groups:
         - Minimal Install
     commands:
-      - run: systemctl disable firewalld
+      - run: echo hello
       - script: |
           #!/bin/bash
           echo hello
