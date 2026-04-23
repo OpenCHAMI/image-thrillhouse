@@ -78,5 +78,5 @@ func (d *MmdebstrapBackend) SupportsParentInstall() bool {
 }
 
 func (d *MmdebstrapBackend) OutputWriter() container.OutputWriter {
-	return &dnfLogWriter{}
+	return &mmdebstrapLogWriter{}
 }
