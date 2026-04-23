@@ -28,7 +28,9 @@ func (l *Layer) Validate() error {
 		return fmt.Errorf("layer.manager is required")
 	}
 	validManagers := map[string]bool{
-		"dnf": true,
+		"dnf":        true,
+		"mmdebstrap": true,
+		"apt":        true,
 	}
 	if !validManagers[l.Manager.Name] {
 		return fmt.Errorf("layer.manager %q is not supported", l.Manager)

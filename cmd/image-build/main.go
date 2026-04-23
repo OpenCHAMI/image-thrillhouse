@@ -14,6 +14,7 @@ import (
 
 	"github.com/travisbcotton/image-build/internal/backend"
 	"github.com/travisbcotton/image-build/internal/backend/dnf"
+	"github.com/travisbcotton/image-build/internal/backend/mmdebstrap"
 	"github.com/travisbcotton/image-build/internal/builder"
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/publisher"
@@ -21,12 +22,14 @@ import (
 	"github.com/travisbcotton/image-build/internal/publisher/squashfs"
 )
 
-func newBackend(manager string) (backend.Backend, error) {
-	switch manager {
+func newBackend(manager config.Manager) (backend.Backend, error) {
+	switch manager.Name {
 	case "dnf":
-		return dnf.New(), nil
+		return dnf.New(manager.Options), nil
+	case "mmdebstrap":
+		return mmdebstrap.New(manager.Options), nil
 	default:
-		return nil, fmt.Errorf("unsupported package manager: %s", manager)
+		return nil, fmt.Errorf("unsupported package manager: %s", manager.Name)
 	}
 }
 
@@ -104,9 +107,23 @@ func main() {
 		log.Fatalf("%v", err)
 	}
 
-	b, err := newBackend(cfg.Layer.Manager.Name)
+	// Create new backend
+	b, err := newBackend(cfg.Layer.Manager)
 	if err != nil {
 		log.Fatalf("backend: %v", err)
+	}
+
+	// check if backend supports installroot
+	if cfg.Meta.From == "scratch" && !b.SupportsInstallRoot() {
+		log.Fatalf("backend %s does not support scratch builds", cfg.Layer.Manager.Name)
+	}
+	// check if backend supports container installs
+	if cfg.Meta.From != "scratch" && !b.SupportsParentInstall() {
+		log.Fatalf("backend %s does not support parent image builds", cfg.Layer.Manager.Name)
+	}
+
+	if err := b.ValidateOptions(cfg.Layer.Manager.Options); err != nil {
+		log.Fatalf("invalid options: %v", err)
 	}
 
 	p, err := newPublishers(cfg.Publish)

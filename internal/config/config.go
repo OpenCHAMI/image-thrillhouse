@@ -30,8 +30,9 @@ type Layer struct {
 }
 
 type Manager struct {
-	Name   string `yaml:"name"`
-	Config string `yaml:"config"`
+	Name    string            `yaml:"name"`
+	Config  string            `yaml:"config"`
+	Options map[string]string `yaml:"options"`
 }
 
 // File to add to layer

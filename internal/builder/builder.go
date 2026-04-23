@@ -114,6 +114,9 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	log.Info("Starting install commands:", "install", b.cfg.Layer.Actions.Install)
 	if b.cfg.Meta.From == "scratch" {
+		if !b.backend.SupportsInstallRoot() {
+			return fmt.Errorf("backend %s does not support scratch builds", b.cfg.Layer.Manager.Name)
+		}
 		cmds := b.backend.InstallRootCommands(b.cfg.Layer.Actions.Install, c.MountPath())
 		for _, cmd := range cmds {
 			log.Debug("Install", "action", cmd)
@@ -122,6 +125,9 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 			}
 		}
 	} else {
+		if !b.backend.SupportsParentInstall() {
+			return fmt.Errorf("backend %s does not support parent image builds, use apt instead", b.cfg.Layer.Manager.Name)
+		}
 		cmds := b.backend.InstallCommands(b.cfg.Layer.Actions.Install)
 		for _, cmd := range cmds {
 			log.Debug("Install", "action", cmd)

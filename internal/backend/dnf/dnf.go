@@ -8,7 +8,7 @@ import (
 
 type DnfBackend struct{}
 
-func New() *DnfBackend {
+func New(options map[string]string) *DnfBackend {
 	return &DnfBackend{}
 }
 
@@ -66,4 +66,15 @@ func (d *DnfBackend) InstallRootCommands(install config.Install, rootPath string
 	}
 
 	return cmds
+}
+
+func (d *DnfBackend) ValidateOptions(options map[string]string) error {
+	return nil
+}
+
+func (d *DnfBackend) SupportsInstallRoot() bool {
+
+}
+func (d *DnfBackend) SupportsParentInstall() bool {
+
 }
