@@ -52,5 +52,5 @@ func (a *AptBackend) InstallRootCommands(install config.Install, rootPath string
 }
 
 func (a *AptBackend) OutputWriter() container.OutputWriter {
-	return container.NewBufLogWriter("apt")
+	return &aptLogWriter{}
 }
