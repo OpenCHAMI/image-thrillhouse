@@ -73,8 +73,8 @@ func (d *DnfBackend) ValidateOptions(options map[string]string) error {
 }
 
 func (d *DnfBackend) SupportsInstallRoot() bool {
-
+	return true
 }
 func (d *DnfBackend) SupportsParentInstall() bool {
-
+	return true
 }

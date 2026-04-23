@@ -35,6 +35,7 @@ func (l *Layer) Validate() error {
 	if !validManagers[l.Manager.Name] {
 		return fmt.Errorf("layer.manager %q is not supported", l.Manager)
 	}
+
 	for _, f := range l.Files {
 		if err := f.Validate(); err != nil {
 			return err
