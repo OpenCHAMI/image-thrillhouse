@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-build/internal/container"
 )
 
 type MmdebstrapBackend struct {
@@ -74,4 +75,8 @@ func (d *MmdebstrapBackend) SupportsInstallRoot() bool {
 }
 func (d *MmdebstrapBackend) SupportsParentInstall() bool {
 	return true
+}
+
+func (d *MmdebstrapBackend) OutputWriter() container.OutputWriter {
+	return &dnfLogWriter{}
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-build/internal/container"
 )
 
 type DnfBackend struct{}
@@ -77,4 +78,8 @@ func (d *DnfBackend) SupportsInstallRoot() bool {
 }
 func (d *DnfBackend) SupportsParentInstall() bool {
 	return true
+}
+
+func (d *DnfBackend) OutputWriter() container.OutputWriter {
+	return &dnfLogWriter{}
 }

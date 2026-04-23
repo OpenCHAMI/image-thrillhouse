@@ -113,6 +113,8 @@ func (b *Builder) writeFiles(c container.Container) error {
 func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	log.Info("Starting install commands:", "install", b.cfg.Layer.Actions.Install)
+
+	out := b.backend.OutputWriter()
 	if b.cfg.Meta.From == "scratch" {
 		if !b.backend.SupportsInstallRoot() {
 			return fmt.Errorf("backend %s does not support scratch builds", b.cfg.Layer.Manager.Name)
@@ -120,7 +122,7 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 		cmds := b.backend.InstallRootCommands(b.cfg.Layer.Actions.Install, c.MountPath())
 		for _, cmd := range cmds {
 			log.Debug("Install", "action", cmd)
-			if err := c.Run(ctx, cmd, container.RunModeHost); err != nil {
+			if err := c.Run(ctx, cmd, container.RunModeHost, out); err != nil {
 				return fmt.Errorf("run root %v: %w", cmd, err)
 			}
 		}
@@ -131,7 +133,7 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 		cmds := b.backend.InstallCommands(b.cfg.Layer.Actions.Install)
 		for _, cmd := range cmds {
 			log.Debug("Install", "action", cmd)
-			if err := c.Run(ctx, cmd, container.RunModeContainer); err != nil {
+			if err := c.Run(ctx, cmd, container.RunModeContainer, out); err != nil {
 				return fmt.Errorf("run %v: %w", cmd, err)
 			}
 		}
@@ -141,6 +143,7 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 }
 
 func (b *Builder) runCommands(ctx context.Context, c container.Container) error {
+	out := container.NewBufLogWriter("stdout")
 	log := slog.With("component", "builder")
 	log.Info("Starting Run Commands:", "commands", b.cfg.Layer.Actions.Commands)
 	for _, cmd := range b.cfg.Layer.Actions.Commands {
@@ -148,11 +151,11 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 		switch cmd.Type() {
 		case config.CommandRun:
 			parts := strings.Fields(cmd.Run)
-			if err := c.Run(ctx, parts, container.RunModeContainer); err != nil {
+			if err := c.Run(ctx, parts, container.RunModeContainer, out); err != nil {
 				return fmt.Errorf("run %s: %w", cmd.Run, err)
 			}
 		case config.CommandScript:
-			if err := c.RunScript(ctx, cmd.Script); err != nil {
+			if err := c.RunScript(ctx, cmd.Script, out); err != nil {
 				return fmt.Errorf("run script: %w", err)
 			}
 		default:

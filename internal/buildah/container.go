@@ -55,22 +55,18 @@ func NewContainer(ctx context.Context, name string, from string) (container.Cont
 	}, nil
 }
 
-func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMode) error {
-	stdout := &bufLogWriter{key: "stdout"}
-	stderr := &bufLogWriter{key: "stderr"}
-	//dnfOut := &dnfLogWriter{}
+func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMode, out container.OutputWriter) error {
 	if c.fromScratch {
 		switch mode {
 		case container.RunModeHost:
 			// exec directly, used for dnf --installroot
 			command := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
-			command.Stdout = os.Stdout
-			command.Stderr = os.Stderr
+			command.Stdout = out
+			command.Stderr = out
 			err := command.Run()
+			out.Flush(err)
 			//dnfOut.Flush(err)
 			if err != nil {
-				stdout.Flush(slog.LevelError)
-				stderr.Flush(slog.LevelError)
 				return fmt.Errorf("run %v: %w", cmd, err)
 			}
 			return nil
@@ -78,41 +74,38 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 			// chroot into mountpath, rootfs must have a shell
 			err := c.Builder.Run(cmd, buildah.RunOptions{
 				Isolation: c.GetIsolation(),
-				Stdout:    stdout,
-				Stderr:    stderr,
+				Stdout:    out,
+				Stderr:    out,
 				AddCapabilities: []string{
 					"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_FSETID", "CAP_KILL",
 					"CAP_NET_BIND_SERVICE", "CAP_SETFCAP", "CAP_SETGID", "CAP_SETPCAP", "CAP_SETUID", "CAP_SYS_CHROOT",
 				},
 			})
+			out.Flush(err)
 			if err != nil {
-				stdout.Flush(slog.LevelError)
-				stderr.Flush(slog.LevelError)
 				return fmt.Errorf("run %v: %w", cmd, err)
 			}
+			return nil
 		}
 	} else {
 		err := c.Builder.Run(cmd, buildah.RunOptions{
 			Isolation: c.GetIsolation(),
-			Stdout:    stdout,
-			Stderr:    stderr,
+			Stdout:    out,
+			Stderr:    out,
 			AddCapabilities: []string{
 				"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_FSETID", "CAP_KILL",
 				"CAP_NET_BIND_SERVICE", "CAP_SETFCAP", "CAP_SETGID", "CAP_SETPCAP", "CAP_SETUID", "CAP_SYS_CHROOT",
 			},
 		})
+		out.Flush(err)
 		if err != nil {
-			stdout.Flush(slog.LevelError)
-			stderr.Flush(slog.LevelError)
 			return fmt.Errorf("run %v: %w", cmd, err)
 		}
 	}
-	stdout.Flush(slog.LevelDebug)
-	stderr.Flush(slog.LevelDebug)
 	return nil
 }
 
-func (c *Container) RunScript(ctx context.Context, script string) error {
+func (c *Container) RunScript(ctx context.Context, script string, out container.OutputWriter) error {
 	// write script to temp file in container
 	tmpPath := fmt.Sprintf("/tmp/image-build-script-%d.sh", time.Now().UnixNano())
 
@@ -124,16 +117,16 @@ func (c *Container) RunScript(ctx context.Context, script string) error {
 	}
 
 	// make executable and run
-	if err := c.Run(ctx, []string{"chmod", "+x", tmpPath}, container.RunModeContainer); err != nil {
+	if err := c.Run(ctx, []string{"chmod", "+x", tmpPath}, container.RunModeContainer, out); err != nil {
 		return fmt.Errorf("chmod script: %w", err)
 	}
 
-	if err := c.Run(ctx, []string{tmpPath}, container.RunModeContainer); err != nil {
+	if err := c.Run(ctx, []string{tmpPath}, container.RunModeContainer, out); err != nil {
 		return fmt.Errorf("exec script: %w", err)
 	}
 
 	// cleanup
-	if err := c.Run(ctx, []string{"rm", tmpPath}, container.RunModeContainer); err != nil {
+	if err := c.Run(ctx, []string{"rm", tmpPath}, container.RunModeContainer, out); err != nil {
 		return fmt.Errorf("cleanup script: %w", err)
 	}
 

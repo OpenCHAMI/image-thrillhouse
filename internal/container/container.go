@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"io"
 
 	"github.com/containers/buildah/define"
 	"github.com/travisbcotton/image-build/internal/config"
@@ -16,8 +17,8 @@ const (
 )
 
 type Container interface {
-	Run(ctx context.Context, cmd []string, mode RunMode) error
-	RunScript(ctx context.Context, script string) error
+	Run(ctx context.Context, cmd []string, mode RunMode, out OutputWriter) error
+	RunScript(ctx context.Context, script string, out OutputWriter) error
 	WriteFile(file config.File) error
 	Commit(ctx context.Context, name, tag string) (string, error)
 	GetID() string
@@ -25,4 +26,9 @@ type Container interface {
 	Delete()
 	MountPath() string
 	GetIsolation() define.Isolation
+}
+
+type OutputWriter interface {
+	io.Writer
+	Flush(err error)
 }
