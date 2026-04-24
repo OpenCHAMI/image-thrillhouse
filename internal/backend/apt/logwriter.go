@@ -28,30 +28,38 @@ func (w *aptLogWriter) Flush(err error) {
 	inAdditional := false
 
 	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			inNewPackages = false
-			inAdditional = false
-			continue
+		trimmed := strings.TrimSpace(line)
+
+		// stop collecting package names when we hit a non-indented line
+		// or a line that doesn't look like package names
+		if inNewPackages || inAdditional {
+			if trimmed == "" || !strings.HasPrefix(line, " ") {
+				inNewPackages = false
+				inAdditional = false
+			}
 		}
 
 		switch {
-		case line == "The following NEW packages will be installed:":
+		case trimmed == "The following NEW packages will be installed:":
 			inNewPackages = true
 			inAdditional = false
-		case line == "The following additional packages will be installed:":
+			continue
+		case trimmed == "The following additional packages will be installed:":
 			inAdditional = true
 			inNewPackages = false
+			continue
 		case inNewPackages:
-			newPackages = append(newPackages, strings.Fields(line)...)
+			newPackages = append(newPackages, strings.Fields(trimmed)...)
+			continue
 		case inAdditional:
-			additionalPackages = append(additionalPackages, strings.Fields(line)...)
-		case strings.HasPrefix(line, "invoke-rc.d: WARNING"):
-			warnings = append(warnings, line)
-		case strings.HasPrefix(line, "W:"):
-			warnings = append(warnings, strings.TrimPrefix(line, "W: "))
-		case strings.HasPrefix(line, "E:"):
-			errors = append(errors, strings.TrimPrefix(line, "E: "))
+			additionalPackages = append(additionalPackages, strings.Fields(trimmed)...)
+			continue
+		case strings.Contains(trimmed, "invoke-rc.d: WARNING"):
+			warnings = append(warnings, trimmed)
+		case strings.HasPrefix(trimmed, "W:"):
+			warnings = append(warnings, strings.TrimPrefix(trimmed, "W: "))
+		case strings.HasPrefix(trimmed, "E:"):
+			errors = append(errors, strings.TrimPrefix(trimmed, "E: "))
 		}
 	}
 
