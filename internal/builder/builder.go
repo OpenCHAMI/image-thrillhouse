@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 
+	"github.com/mattn/go-shellwords"
 	"github.com/travisbcotton/image-build/internal/backend"
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
@@ -34,12 +34,12 @@ func New(ctx context.Context, cfg *config.Config, b backend.Backend, p []publish
 
 func (b *Builder) Build(ctx context.Context) error {
 	c, err := b.newContainer(ctx, b.cfg.Meta.Name, b.cfg.Meta.From)
-	log := slog.With("component", "builder")
-	log.Debug("Created container", "id", c.GetID(), "name", c.GetName(), "mountPath", c.MountPath())
 	if err != nil {
 		return fmt.Errorf("create container: %w", err)
 	}
 	defer c.Delete()
+	log := slog.With("component", "builder")
+	log.Debug("Created container", "id", c.GetID(), "name", c.GetName(), "mountPath", c.MountPath())
 
 	if err := b.applyManagerConfig(c); err != nil {
 		return fmt.Errorf("write manager config: %w", err)
@@ -150,7 +150,10 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 		log.Debug("Executing", "command", cmd)
 		switch cmd.Type() {
 		case config.CommandRun:
-			parts := strings.Fields(cmd.Run)
+			parts, err := shellwords.Parse(cmd.Run)
+			if err != nil {
+				return fmt.Errorf("parse command %q: %w", cmd.Run, err)
+			}
 			out := container.NewBufLogWriter("stdout")
 			if err := c.Run(ctx, parts, container.RunModeContainer, out); err != nil {
 				return fmt.Errorf("run %s: %w", cmd.Run, err)
