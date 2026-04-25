@@ -58,14 +58,14 @@ func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath str
 
 	if len(install.Packages) > 0 {
 		cmd := make([]string, 0, 4+len(install.Packages))
-		cmd = append(cmd, "zypper", "-q", "--installroot", rootPath, "--reposd-dir", z.repoPath, "--gpg-auto-import-keys", "install", "-y")
+		cmd = append(cmd, "zypper", "-q", "--installroot", rootPath, "--reposd-dir", rootPath+z.repoPath, "--gpg-auto-import-keys", "install", "-y")
 		cmd = append(cmd, install.Packages...)
 		cmds = append(cmds, cmd)
 	}
 
 	if len(install.Groups) > 0 {
 		cmd := make([]string, 0, 4+len(install.Groups))
-		cmd = append(cmd, "zypper", "-q", "--installroot", rootPath, "--reposd-dir", z.repoPath, "--gpg-auto-import-keys", "install", "-y", "-t")
+		cmd = append(cmd, "zypper", "-q", "--installroot", rootPath, "--reposd-dir", rootPath+z.repoPath, "--gpg-auto-import-keys", "install", "-y", "-t")
 		cmd = append(cmd, install.Groups...)
 		cmds = append(cmds, cmd)
 	}
