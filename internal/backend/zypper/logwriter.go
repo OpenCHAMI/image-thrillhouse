@@ -1,3 +1,4 @@
+// internal/backend/zypper/logwriter.go
 package zypper
 
 import (
@@ -6,52 +7,66 @@ import (
 	"strings"
 )
 
-type ZypperLogWriter struct {
+type zypperLogWriter struct {
 	buf bytes.Buffer
 }
 
-func (w *ZypperLogWriter) Write(p []byte) (n int, err error) {
+func (w *zypperLogWriter) Write(p []byte) (n int, err error) {
 	return w.buf.Write(p)
 }
 
-func (w *ZypperLogWriter) Flush(err error) {
+func (w *zypperLogWriter) Flush(err error) {
 	output := w.buf.String()
 	w.buf.Reset()
 
-	var installed []string
-	var warnings []string
+	var newPackages []string
 	var errors []string
 
-	inInstalled := false
+	inNewPackages := false
+	inOther := false
+
 	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			inNewPackages = false
+			inOther = false
 			continue
 		}
+
 		switch {
-		case line == "Installed:":
-			inInstalled = true
-		case line == "Upgraded:" || line == "Removed:" || line == "Failed:":
-			inInstalled = false
-		case inInstalled:
-			installed = append(installed, line)
-		case strings.HasPrefix(line, "Unable to detect release version"):
-			warnings = append(warnings, line)
-		case strings.HasPrefix(line, "Error:"):
-			errors = append(errors, line)
-			inInstalled = false
+		case strings.Contains(trimmed, "NEW packages are going to be installed"):
+			inNewPackages = true
+			inOther = false
+			continue
+		case strings.Contains(trimmed, "recommended packages were automatically selected"):
+			inNewPackages = false
+			inOther = true
+			continue
+		case strings.Contains(trimmed, "packages are suggested"):
+			inNewPackages = false
+			inOther = true
+			continue
+		case inNewPackages && strings.HasPrefix(line, " "):
+			newPackages = append(newPackages, strings.Fields(trimmed)...)
+			continue
+		case inOther && strings.HasPrefix(line, " "):
+			continue
+		case strings.HasPrefix(trimmed, "No provider of"):
+			errors = append(errors, trimmed)
+		case strings.HasPrefix(trimmed, "Overall download size:"):
+			slog.Info("zypper", "msg", trimmed)
+		case strings.HasPrefix(trimmed, "Continue?"):
+			// suppress
+			continue
 		}
 	}
 
-	if len(installed) > 0 {
-		slog.Info("packages installed", "packages", installed)
-	}
-	for _, w := range warnings {
-		slog.Warn("dnf warning", "msg", w)
+	if len(newPackages) > 0 {
+		slog.Info("packages installed", "packages", newPackages)
 	}
 	if err != nil {
 		for _, e := range errors {
-			slog.Error("dnf error", "msg", e)
+			slog.Error("zypper error", "msg", e)
 		}
 	}
 }

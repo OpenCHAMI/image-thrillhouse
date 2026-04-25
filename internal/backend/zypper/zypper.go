@@ -85,5 +85,5 @@ func (z *ZypperBackend) SupportsParentInstall() bool {
 }
 
 func (z *ZypperBackend) OutputWriter() container.OutputWriter {
-	return &ZypperLogWriter{}
+	return &zypperLogWriter{}
 }
