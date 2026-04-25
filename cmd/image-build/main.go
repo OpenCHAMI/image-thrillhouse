@@ -16,6 +16,7 @@ import (
 	"github.com/travisbcotton/image-build/internal/backend/apt"
 	"github.com/travisbcotton/image-build/internal/backend/dnf"
 	"github.com/travisbcotton/image-build/internal/backend/mmdebstrap"
+	"github.com/travisbcotton/image-build/internal/backend/zypper"
 	"github.com/travisbcotton/image-build/internal/builder"
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/publisher"
@@ -63,6 +64,8 @@ func newBackend(manager config.Manager) (backend.Backend, error) {
 		return mmdebstrap.New(manager.Options), nil
 	case "apt":
 		return apt.New(manager.Options), nil
+	case "zypper":
+		return zypper.New(manager.Options), nil
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", manager.Name)
 	}
