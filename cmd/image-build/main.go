@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"log/slog"
 	"os"
 
 	"github.com/containers/buildah"
+	"github.com/spf13/cobra"
 	"go.podman.io/storage/pkg/reexec"
 	"go.podman.io/storage/pkg/unshare"
 
@@ -22,6 +22,38 @@ import (
 	"github.com/travisbcotton/image-build/internal/publisher/local"
 	"github.com/travisbcotton/image-build/internal/publisher/squashfs"
 )
+
+var (
+	cfgPath   string
+	logLevel  string
+	logFormat string
+)
+
+var rootCmd = &cobra.Command{
+	Use:          "image-build",
+	Short:        "Build OS images for multiple distros",
+	SilenceUsage: true,
+}
+
+var buildCmd = &cobra.Command{
+	Use:   "build",
+	Short: "Build an image layer from a config file",
+	RunE:  runBuild,
+}
+
+var validateCmd = &cobra.Command{
+	Use:   "validate",
+	Short: "Validate a config file without building",
+	RunE:  runValidate,
+}
+
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print version information",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("image-build v0.1.0")
+	},
+}
 
 func newBackend(manager config.Manager) (backend.Backend, error) {
 	switch manager.Name {
@@ -80,6 +112,64 @@ func setupLogger(level, format string) error {
 	return nil
 }
 
+func init() {
+	// persistent flags apply to all subcommands
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (debug, info, warn, error)")
+	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "json", "log format (json, text)")
+
+	// build-specific flags
+	buildCmd.Flags().StringVarP(&cfgPath, "config", "c", "./test.yaml", "path to YAML config")
+	validateCmd.Flags().StringVarP(&cfgPath, "config", "c", "./test.yaml", "path to YAML config")
+
+	rootCmd.AddCommand(buildCmd)
+	rootCmd.AddCommand(validateCmd)
+	rootCmd.AddCommand(versionCmd)
+}
+
+func runBuild(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+
+	if err := setupLogger(logLevel, logFormat); err != nil {
+		return err
+	}
+
+	cfg, err := config.LoadConfig(cfgPath)
+	if err != nil {
+		return err
+	}
+
+	b, err := newBackend(cfg.Layer.Manager)
+	if err != nil {
+		return fmt.Errorf("backend: %w", err)
+	}
+
+	p, err := newPublishers(cfg.Publish)
+	if err != nil {
+		return fmt.Errorf("publishers: %w", err)
+	}
+
+	bldr := builder.New(ctx, cfg, b, p)
+	return bldr.Build(ctx)
+}
+
+func runValidate(cmd *cobra.Command, args []string) error {
+	if err := setupLogger(logLevel, logFormat); err != nil {
+		return err
+	}
+
+	cfg, err := config.LoadConfig(cfgPath)
+	if err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+
+	if _, err := newBackend(cfg.Layer.Manager); err != nil {
+		return fmt.Errorf("invalid backend: %w", err)
+	}
+
+	slog.Info("config is valid", "path", cfgPath)
+	return nil
+}
+
 func main() {
 	if reexec.Init() {
 		return
@@ -91,51 +181,7 @@ func main() {
 
 	unshare.MaybeReexecUsingUserNamespace(false)
 
-	fmt.Printf("uid: %d, euid: %d\n", os.Getuid(), os.Geteuid())
-	fmt.Printf("inside user ns: %v\n", os.Getenv("_CONTAINERS_USERNS_CONFIGURED"))
-
-	ctx := context.Background()
-
-	cfgPath := flag.String("config", "./test.yaml", "path to YAML config (or '-' for stdin)")
-	logLevel := flag.String("log-level", "info", "log level (debug, info, warn, error)")
-	logFormat := flag.String("log-format", "json", "log format (json, text)")
-	flag.Parse()
-
-	if err := setupLogger(*logLevel, *logFormat); err != nil {
-		log.Fatalf("%v", err)
-	}
-
-	cfg, err := config.LoadConfig(*cfgPath)
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-
-	// Create new backend
-	b, err := newBackend(cfg.Layer.Manager)
-	if err != nil {
-		log.Fatalf("backend: %v", err)
-	}
-
-	// check if backend supports installroot
-	if cfg.Meta.From == "scratch" && !b.SupportsInstallRoot() {
-		log.Fatalf("backend %s does not support scratch builds", cfg.Layer.Manager.Name)
-	}
-	// check if backend supports container installs
-	if cfg.Meta.From != "scratch" && !b.SupportsParentInstall() {
-		log.Fatalf("backend %s does not support parent image builds", cfg.Layer.Manager.Name)
-	}
-
-	if err := b.ValidateOptions(cfg.Layer.Manager.Options); err != nil {
-		log.Fatalf("invalid options: %v", err)
-	}
-
-	p, err := newPublishers(cfg.Publish)
-	if err != nil {
-		log.Fatalf("publishers: %v", err)
-	}
-
-	builder := builder.New(ctx, cfg, b, p)
-	if err := builder.Build(ctx); err != nil {
-		log.Fatalf("build: %v", err)
+	if err := rootCmd.Execute(); err != nil {
+		log.Fatal(err)
 	}
 }
