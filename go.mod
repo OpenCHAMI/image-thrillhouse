@@ -6,6 +6,7 @@ require (
 	github.com/containers/buildah v1.43.1
 	github.com/mattn/go-shellwords v1.0.13
 	github.com/spf13/cobra v1.10.2
+	go.podman.io/image/v5 v5.39.2
 	go.podman.io/storage v1.62.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -117,7 +118,6 @@ require (
 	go.opentelemetry.io/otel/metric v1.36.0 // indirect
 	go.opentelemetry.io/otel/trace v1.36.0 // indirect
 	go.podman.io/common v0.67.1 // indirect
-	go.podman.io/image/v5 v5.39.2 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/crypto v0.43.0 // indirect
 	golang.org/x/mod v0.28.0 // indirect

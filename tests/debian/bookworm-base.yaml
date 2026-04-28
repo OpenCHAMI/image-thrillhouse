@@ -1,6 +1,7 @@
 meta:
   name: debian-base
-  tag: bookworm
+  tags: 
+    - bookworm
   from: scratch
 
 layer:
@@ -17,4 +18,6 @@ layer:
         - ssh
         - vim
 publish:
-  - type: local
+  - type: registry
+    url: vm-host:5000
+    tls-verify: false

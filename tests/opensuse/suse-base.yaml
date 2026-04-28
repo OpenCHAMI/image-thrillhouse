@@ -5,25 +5,28 @@ meta:
 
 layer:
   manager:
-    name: dnf
+    name: zypper
     config: |
       [main]
-      gpgcheck=1
-      installonly_limit=3
-      clean_requirements_on_remove=True
-      best=True
-      skip_if_unavailable=False
-      reposdir=/etc/image-build/yum.repos.d
+      reposdir=/etc/image-build/zypp/repos.d
+      cachedir=/var/cache/zypp
+    options:
+      repopath: /etc/image-build/zypp/repos.d
   repos: 
-    - path: /etc/image-build/yum.repos.d/suse-bootstrap.repo
+    - path: /etc/image-build/zypp/repos.d/suse-bootstrap.repo
       content: |
-        [suse-bootstrap]
-        name=suse-bootstrap
-        baseurl=https://download.opensuse.org/distribution/leap/16.0/repo/oss/aarch64/
+        [repo-name]
+        name=repo-name
         enabled=1
-        gpgcheck=0
+        autorefresh=0
+        baseurl=https://download.opensuse.org/distribution/leap/16.0/repo/oss/
+        type=rpm-md
   files: []
   actions:
     install:
       packages:
         - zypper
+        - ca-certificates
+        - ca-certificates-mozilla
+    commands:
+      - run: update-ca-certificates

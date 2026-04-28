@@ -1,7 +1,8 @@
 meta:
   name: debian-compute
-  tag: bookworm
-  from: debian-base:bookworm
+  tags: 
+    - bookworm
+  from: vm-host:5000/debian-base:bookworm
 
 layer:
   manager:

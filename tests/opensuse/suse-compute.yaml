@@ -1,0 +1,16 @@
+meta:
+  name: suse-compute
+  tag: "16"
+  from: suse-base:16
+
+layer:
+  manager:
+    name: zypper
+    options:
+      repopath: /etc/image-build/zypp/repos.d
+  files: []
+  actions:
+    install:
+      packages:
+        - kernel-default
+        - systemd

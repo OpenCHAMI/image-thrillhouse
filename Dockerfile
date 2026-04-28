@@ -22,6 +22,8 @@ RUN apt-get update && apt-get install -y \
     libcap2-bin \
     vim \
     rpm \
+    zypper \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/image-build /usr/local/bin/image-build

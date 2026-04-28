@@ -5,6 +5,7 @@ podman run  \
 	--device /dev/fuse  \
 	--security-opt seccomp=unconfined \
 	--security-opt label=disable \
+	--network host \
 	-it \
 	-v ./tests/:/data:Z \
 	image-build:test bash
