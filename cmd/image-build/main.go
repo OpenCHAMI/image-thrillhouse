@@ -95,7 +95,7 @@ func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
 			if p.TLSVerify != nil {
 				tlsVerify = *p.TLSVerify
 			}
-			publishers = append(publishers, registry.New(p.URL, p.Tags, tlsVerify))
+			publishers = append(publishers, registry.New(p.URL, tlsVerify))
 		default:
 			return nil, fmt.Errorf("unsupported publisher type: %s", p.Type)
 		}
