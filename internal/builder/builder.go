@@ -17,7 +17,7 @@ import (
 type Builder struct {
 	cfg          *config.Config
 	backend      backend.Backend
-	newContainer func(context.Context, string, string) (container.Container, error)
+	newContainer func(context.Context, string, string, bool) (container.Container, error)
 	publishers   []publisher.Publisher
 }
 
@@ -25,15 +25,15 @@ func New(ctx context.Context, cfg *config.Config, b backend.Backend, p []publish
 	return &Builder{
 		cfg:     cfg,
 		backend: b,
-		newContainer: func(ctx context.Context, name string, from string) (container.Container, error) {
-			return ibuildah.NewContainer(ctx, name, from)
+		newContainer: func(ctx context.Context, name string, from string, tlsverify bool) (container.Container, error) {
+			return ibuildah.NewContainer(ctx, name, from, tlsverify)
 		},
 		publishers: p,
 	}
 }
 
 func (b *Builder) Build(ctx context.Context) error {
-	c, err := b.newContainer(ctx, b.cfg.Meta.Name, b.cfg.Meta.From)
+	c, err := b.newContainer(ctx, b.cfg.Meta.Name, b.cfg.Meta.From, b.cfg.Meta.TLSVerify())
 	if err != nil {
 		return fmt.Errorf("create container: %w", err)
 	}

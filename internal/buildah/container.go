@@ -28,7 +28,7 @@ type Container struct {
 	Store       storage.Store
 }
 
-func NewContainer(ctx context.Context, name string, from string) (container.Container, error) {
+func NewContainer(ctx context.Context, name string, from string, tlsverify bool) (container.Container, error) {
 	// get container store
 	store, err := openStore()
 	if err != nil {
@@ -38,6 +38,9 @@ func NewContainer(ctx context.Context, name string, from string) (container.Cont
 	// create new builder
 	builder, err := buildah.NewBuilder(ctx, store, buildah.BuilderOptions{
 		FromImage: from,
+		SystemContext: &types.SystemContext{
+			DockerInsecureSkipTLSVerify: types.NewOptionalBool(tlsverify),
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("new builder: %w", err)

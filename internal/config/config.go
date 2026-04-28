@@ -16,9 +16,10 @@ type Config struct {
 
 // meta info on layer
 type Meta struct {
-	Name string   `yaml:"name"`
-	From string   `yaml:"from"`
-	Tags []string `yaml:"tags"`
+	Name          string   `yaml:"name"`
+	From          string   `yaml:"from"`
+	FromTLSVerify *bool    `yaml:"from-tls-verify"`
+	Tags          []string `yaml:"tags"`
 }
 
 // layer specifics
@@ -117,4 +118,11 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+func (m *Meta) TLSVerify() bool {
+	if m.FromTLSVerify != nil {
+		return *m.FromTLSVerify
+	}
+	return true // default to verify
 }
