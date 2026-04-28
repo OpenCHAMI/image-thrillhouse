@@ -1,6 +1,7 @@
 meta:
   name: rocky-base
-  tag: "x86_64-9.5"
+  tags: 
+    - "x86_64-9.5"
   from: scratch
 
 layer:

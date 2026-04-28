@@ -1,6 +1,7 @@
 meta:
   name: rocky-compute
-  tag: "x86_64-9.5"
+  tags: 
+    - "x86_64-9.5"
   from: localhost/rocky-base:x86_64-9.5
 
 layer:

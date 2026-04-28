@@ -1,6 +1,7 @@
 meta:
   name: suse-compute
-  tag: "16"
+  tags: 
+    - "16"
   from: suse-base:16
 
 layer:

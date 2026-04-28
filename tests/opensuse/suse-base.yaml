@@ -1,6 +1,7 @@
 meta:
   name: suse-base
-  tag: "16"
+  tags: 
+    - "16"
   from: scratch
 
 layer:

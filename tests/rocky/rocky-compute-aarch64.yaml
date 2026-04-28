@@ -1,6 +1,7 @@
 meta:
   name: rocky-compute
-  tag: "aarch64-9.5"
+  tags:
+    - "aarch64-9.5"
   from: localhost/rocky-base:aarch64-9.5
 
 layer:
