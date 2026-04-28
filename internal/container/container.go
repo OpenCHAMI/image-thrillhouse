@@ -26,6 +26,7 @@ type Container interface {
 	Delete()
 	MountPath() string
 	GetIsolation() define.Isolation
+	CommitToRegistry(ctx context.Context, ref string, tlsVerify bool) error
 }
 
 type OutputWriter interface {

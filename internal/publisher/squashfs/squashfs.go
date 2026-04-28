@@ -18,9 +18,9 @@ func New(path string) *SquashfsPublisher {
 	return &SquashfsPublisher{path: path}
 }
 
-func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, name, tag string) error {
+func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string) error {
 	log := slog.With("component", "publisher")
-	output := fmt.Sprintf("%s/%s-%s.squashfs", s.path, name, tag)
+	output := fmt.Sprintf("%s/%s-%s.squashfs", s.path, name, tags[0])
 	log.Info("Creating squashfs", "squashfs", output, "source", c.MountPath())
 	if err := os.MkdirAll(s.path, 0755); err != nil {
 		return fmt.Errorf("create output directory %s: %w", s.path, err)

@@ -12,6 +12,8 @@ import (
 
 	"github.com/containers/buildah"
 	"github.com/containers/buildah/define"
+	"go.podman.io/image/v5/docker"
+	"go.podman.io/image/v5/types"
 	"go.podman.io/storage"
 
 	"github.com/travisbcotton/image-build/internal/config"
@@ -232,4 +234,21 @@ func (c *Container) GetIsolation() define.Isolation {
 		}
 	}
 	return define.IsolationDefault
+}
+
+func (c *Container) CommitToRegistry(ctx context.Context, ref string, tlsVerify bool) error {
+	imageRef, err := docker.ParseReference("//" + ref)
+	if err != nil {
+		return fmt.Errorf("parse registry ref: %w", err)
+	}
+
+	_, _, _, err = c.Builder.Commit(ctx, imageRef, buildah.CommitOptions{
+		SystemContext: &types.SystemContext{
+			DockerInsecureSkipTLSVerify: types.NewOptionalBool(!tlsVerify),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("commit to registry: %w", err)
+	}
+	return nil
 }

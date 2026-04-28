@@ -21,6 +21,7 @@ import (
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/publisher"
 	"github.com/travisbcotton/image-build/internal/publisher/local"
+	"github.com/travisbcotton/image-build/internal/publisher/registry"
 	"github.com/travisbcotton/image-build/internal/publisher/squashfs"
 )
 
@@ -86,6 +87,15 @@ func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
 				return nil, fmt.Errorf("squashfs publisher requires path")
 			}
 			publishers = append(publishers, squashfs.New(p.Path))
+		case "registry":
+			if p.URL == "" {
+				return nil, fmt.Errorf("registry publisher requires url")
+			}
+			tlsVerify := true
+			if p.TLSVerify != nil {
+				tlsVerify = *p.TLSVerify
+			}
+			publishers = append(publishers, registry.New(p.URL, p.Tags, tlsVerify))
 		default:
 			return nil, fmt.Errorf("unsupported publisher type: %s", p.Type)
 		}

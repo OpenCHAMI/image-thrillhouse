@@ -16,8 +16,8 @@ func (m *Meta) Validate() error {
 	if m.Name == "" {
 		return fmt.Errorf("meta.name is required")
 	}
-	if m.Tag == "" {
-		return fmt.Errorf("meta.tag is required")
+	if m.Tags == nil {
+		return fmt.Errorf("meta.tags is required")
 	}
 	// from is optional - absence means scratch
 	return nil

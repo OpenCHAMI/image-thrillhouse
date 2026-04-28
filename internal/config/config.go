@@ -16,9 +16,9 @@ type Config struct {
 
 // meta info on layer
 type Meta struct {
-	Name string `yaml:"name"`
-	From string `yaml:"from"`
-	Tag  string `yaml:"tag"`
+	Name string   `yaml:"name"`
+	From string   `yaml:"from"`
+	Tags []string `yaml:"tags"`
 }
 
 // layer specifics
@@ -79,11 +79,12 @@ type Command struct {
 
 // publish types
 type Publish struct {
-	Type   string `yaml:"type"`
-	URL    string `yaml:"url"`
-	Bucket string `yaml:"bucket"`
-	Prefix string `yaml:"prefix"`
-	Path   string `yaml:"path"`
+	Type      string `yaml:"type"`
+	URL       string `yaml:"url"`
+	Bucket    string `yaml:"bucket"`
+	Prefix    string `yaml:"prefix"`
+	Path      string `yaml:"path"`
+	TLSVerify *bool  `yaml:"tls-verify"`
 }
 
 // Used for switch-case so I can make things easier add in the future

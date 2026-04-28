@@ -7,5 +7,5 @@ import (
 )
 
 type Publisher interface {
-	Publish(ctx context.Context, c container.Container, name, tag string) error
+	Publish(ctx context.Context, c container.Container, name string, tags []string) error
 }
