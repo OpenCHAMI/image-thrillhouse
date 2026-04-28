@@ -23,7 +23,7 @@ func New(url string, tlsVerify bool) *RegistryPublisher {
 
 func (r *RegistryPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string) error {
 	for _, t := range tags {
-		ref := fmt.Sprintf("%s:%s", r.url, t)
+		ref := fmt.Sprintf("%s/%s:%s", r.url, name, t)
 		slog.Info("pushing to registry", "ref", ref)
 		if err := c.CommitToRegistry(ctx, ref, r.tlsVerify); err != nil {
 			return fmt.Errorf("push %s: %w", ref, err)
