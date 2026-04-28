@@ -2,6 +2,9 @@ package config
 
 import "fmt"
 
+// Validate checks the entire configuration for errors.
+// It recursively validates all sections: Meta, Layer, and their subsections.
+// Returns an error if any validation fails.
 func (c *Config) Validate() error {
 	if err := c.Meta.Validate(); err != nil {
 		return err
@@ -12,6 +15,12 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// Validate checks the Meta section for required fields.
+// Required fields:
+//   - name: Image name
+//   - tag: Image tag/version
+// Optional:
+//   - from: Base image (defaults to scratch if not specified)
 func (m *Meta) Validate() error {
 	if m.Name == "" {
 		return fmt.Errorf("meta.name is required")
@@ -23,35 +32,51 @@ func (m *Meta) Validate() error {
 	return nil
 }
 
+// Validate checks the Layer section for required fields and valid values.
+// It validates:
+//   - Manager name is specified and supported
+//   - All files are valid
+//   - All actions are valid
 func (l *Layer) Validate() error {
 	if l.Manager.Name == "" {
 		return fmt.Errorf("layer.manager is required")
 	}
+	
+	// Check if the package manager is supported
 	validManagers := map[string]bool{
-		"dnf":        true,
-		"mmdebstrap": true,
-		"apt":        true,
-		"zypper":     true,
+		"dnf":        true, // Red Hat, Rocky, AlmaLinux, Fedora
+		"mmdebstrap": true, // Debian, Ubuntu (scratch builds only)
+		"apt":        true, // Debian, Ubuntu (parent builds only)
+		"zypper":     true, // openSUSE, SLES
 	}
 	if !validManagers[l.Manager.Name] {
 		return fmt.Errorf("layer.manager %q is not supported", l.Manager)
 	}
 
+	// Validate all files
 	for _, f := range l.Files {
 		if err := f.Validate(); err != nil {
 			return err
 		}
 	}
+	
+	// Validate all actions
 	if err := l.Actions.Validate(); err != nil {
 		return err
 	}
 	return nil
 }
 
+// Validate checks a File configuration for correctness.
+// Requirements:
+//   - path must be specified
+//   - exactly one of content, src, or url must be set
 func (f *File) Validate() error {
 	if f.Path == "" {
 		return fmt.Errorf("file.path is required")
 	}
+	
+	// Count how many sources are specified
 	set := 0
 	if f.Content != "" {
 		set++
@@ -62,6 +87,8 @@ func (f *File) Validate() error {
 	if f.URL != "" {
 		set++
 	}
+	
+	// Must have exactly one source
 	if set > 1 {
 		return fmt.Errorf("file %s: only one of content, src, or url may be set", f.Path)
 	}
@@ -71,6 +98,8 @@ func (f *File) Validate() error {
 	return nil
 }
 
+// Validate checks the Actions section.
+// Currently only validates the Install subsection.
 func (a *Actions) Validate() error {
 	if err := a.Install.Validate(); err != nil {
 		return err
@@ -78,6 +107,8 @@ func (a *Actions) Validate() error {
 	return nil
 }
 
+// Validate checks the Install section.
+// Currently only validates module configurations.
 func (i *Install) Validate() error {
 	for _, m := range i.Modules {
 		if err := m.Validate(); err != nil {
@@ -87,16 +118,23 @@ func (i *Install) Validate() error {
 	return nil
 }
 
+// Validate checks a Module configuration for correctness.
+// Requirements:
+//   - name must be specified
+//   - action must be specified and valid (enable, disable, install, reset)
 func (m *Module) Validate() error {
 	if m.Name == "" {
 		return fmt.Errorf("module.name is required")
 	}
+	
+	// Valid DNF module actions
 	validActions := map[string]bool{
-		"enable":  true,
-		"disable": true,
-		"install": true,
-		"reset":   true,
+		"enable":  true, // Enable a module stream
+		"disable": true, // Disable a module
+		"install": true, // Install packages from a module
+		"reset":   true, // Reset module state
 	}
+	
 	if m.Action == "" {
 		return fmt.Errorf("module %s: action is required", m.Name)
 	}
@@ -106,6 +144,9 @@ func (m *Module) Validate() error {
 	return nil
 }
 
+// Validate checks a Command configuration for correctness.
+// Requirements:
+//   - exactly one of run or script must be set
 func (c *Command) Validate() error {
 	if c.Run != "" && c.Script != "" {
 		return fmt.Errorf("command: only one of run or script may be set")

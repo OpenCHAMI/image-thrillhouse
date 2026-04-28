@@ -16,11 +16,14 @@ const (
 	RunModeContainer
 )
 
+// Container provides an abstraction for container operations.
+// It encapsulates buildah functionality for creating, modifying, and committing containers.
 type Container interface {
 	Run(ctx context.Context, cmd []string, mode RunMode, out OutputWriter) error
 	RunScript(ctx context.Context, script string, out OutputWriter) error
 	WriteFile(file config.File) error
 	Commit(ctx context.Context, name, tag string) (string, error)
+	CommitWithLabels(ctx context.Context, name, tag string, labels map[string]string) (string, error)
 	GetID() string
 	GetName() string
 	Delete()

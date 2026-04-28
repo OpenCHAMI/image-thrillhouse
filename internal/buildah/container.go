@@ -191,11 +191,27 @@ func (c *Container) WriteFile(file config.File) error {
 }
 
 func (c *Container) Commit(ctx context.Context, name, tag string) (string, error) {
+	return c.CommitWithLabels(ctx, name, tag, nil)
+}
+
+func (c *Container) CommitWithLabels(ctx context.Context, name, tag string, labels map[string]string) (string, error) {
 	log := slog.With("component", "container")
-	log.Debug("Commit Container", "ID", c.GetID(), "Name", c.GetName(), "as", name, ":", tag)
+	log.Debug("Commit Container", "ID", c.GetID(), "Name", c.GetName(), "as", name, ":", tag, "labels", len(labels))
+	
 	options := buildah.CommitOptions{
 		AdditionalTags: []string{fmt.Sprintf("localhost/%s:%s", name, tag)},
 	}
+	
+	// Add labels if provided
+	if len(labels) > 0 {
+		// Apply labels using buildah config
+		for key, value := range labels {
+			if err := c.Builder.SetLabel(key, value); err != nil {
+				return "", fmt.Errorf("set label %s=%s: %w", key, value, err)
+			}
+		}
+	}
+	
 	_, _, _, err := c.Builder.Commit(ctx, nil, options)
 	if err != nil {
 		return "", fmt.Errorf("commit: %w", err)

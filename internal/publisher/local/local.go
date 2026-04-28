@@ -1,3 +1,5 @@
+// Package local provides a publisher that commits images to local container storage.
+// This publisher uses buildah commit to store images in the local podman/buildah registry.
 package local
 
 import (
@@ -8,8 +10,12 @@ import (
 	"github.com/travisbcotton/image-build/internal/container"
 )
 
+// LocalPublisher publishes images to the local container storage.
+// Images are committed using buildah and stored in the local podman/buildah registry.
+// These images can then be used as parent images for other builds or run with podman.
 type LocalPublisher struct{}
 
+// New creates a new LocalPublisher instance.
 func New() *LocalPublisher {
 	return &LocalPublisher{}
 }
