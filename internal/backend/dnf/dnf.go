@@ -18,12 +18,14 @@ import (
 //   - skip-broken: "true" or "false" (default: "false") - Skip uninstallable packages
 //   - allowerasing: "true" or "false" (default: "false") - Allow erasing of installed packages to resolve dependencies
 //   - nobest: "true" or "false" (default: "false") - Do not limit packages to best candidates
+//   - releasever: string (optional) - Override the RHEL/distro release version (e.g., "9", "10")
 type DnfBackend struct {
 	installWeakDeps bool
 	best            bool
 	skipBroken      bool
 	allowErasing    bool
 	noBest          bool
+	releaseVer      string
 }
 
 // New creates a new DNF backend instance.
@@ -33,15 +35,17 @@ type DnfBackend struct {
 //   - skip-broken: Skip packages with unsolvable dependencies (default: false)
 //   - allowerasing: Allow erasing packages to resolve dependencies (default: false)
 //   - nobest: Do not limit to best candidates (default: false)
+//   - releasever: Override the distro release version (e.g., "9", "10")
 func New(options map[string]string) *DnfBackend {
 	backend := &DnfBackend{
-		installWeakDeps: true,  // DNF default
-		best:            true,  // DNF default
+		installWeakDeps: true, // DNF default
+		best:            true, // DNF default
 		skipBroken:      false,
 		allowErasing:    false,
 		noBest:          false,
+		releaseVer:      "", // Empty = use system default
 	}
-	
+
 	// Parse options
 	if options["install-weak-deps"] == "false" {
 		backend.installWeakDeps = false
@@ -58,7 +62,10 @@ func New(options map[string]string) *DnfBackend {
 	if options["nobest"] == "true" {
 		backend.noBest = true
 	}
-	
+	if rv, ok := options["releasever"]; ok && rv != "" {
+		backend.releaseVer = rv
+	}
+
 	return backend
 }
 
@@ -159,6 +166,7 @@ func (d *DnfBackend) InstallRootCommands(install config.Install, rootPath string
 //   - skip-broken: "true" or "false"
 //   - allowerasing: "true" or "false"
 //   - nobest: "true" or "false"
+//   - releasever: string (any value, e.g., "9", "10", "40")
 //
 // Returns an error if an unknown option is provided or if a value is invalid.
 func (d *DnfBackend) ValidateOptions(options map[string]string) error {
@@ -168,33 +176,41 @@ func (d *DnfBackend) ValidateOptions(options map[string]string) error {
 		"skip-broken":       true,
 		"allowerasing":      true,
 		"nobest":            true,
+		"releasever":        true,
 	}
-	
+
 	validValues := map[string]bool{
 		"true":  true,
 		"false": true,
 	}
-	
+
 	for key, value := range options {
 		if !validOptions[key] {
 			return fmt.Errorf("unknown option %q for dnf backend", key)
+		}
+		// Skip validation for releasever - it can be any string
+		if key == "releasever" {
+			continue
 		}
 		if value != "" && !validValues[value] {
 			return fmt.Errorf("option %q must be 'true' or 'false', got %q", key, value)
 		}
 	}
-	
+
 	// Validate conflicting options
 	if options["best"] == "true" && options["nobest"] == "true" {
 		return fmt.Errorf("options 'best' and 'nobest' cannot both be true")
 	}
-	
+
 	return nil
 }
 
 // addOptionFlags adds DNF option flags to a command based on configured options.
 // This is a helper method to avoid duplicating flag logic.
 func (d *DnfBackend) addOptionFlags(cmd []string) []string {
+	if d.releaseVer != "" {
+		cmd = append(cmd, "--releasever", d.releaseVer)
+	}
 	if !d.installWeakDeps {
 		cmd = append(cmd, "--setopt=install_weak_deps=False")
 	}

@@ -1,8 +1,10 @@
 #!/bin/bash
-podman run  \
+podman run --rm \
 	--user root \
        	--cap-add SYS_ADMIN \
-	--device /dev/fuse  \
+	--cap-add SETUID \
+	--cap-add SETGID \
+	--device /dev/fuse \
 	--security-opt seccomp=unconfined \
 	--security-opt label=disable \
 	--secret aws_access_key,type=env,target=AWS_ACCESS_KEY_ID \

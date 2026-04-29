@@ -187,6 +187,7 @@ All backends support configurable options to control package installation behavi
 - `skip-broken`: `"true"` or `"false"` (default: `"false"`) - Skip broken packages
 - `allowerasing`: `"true"` or `"false"` (default: `"false"`) - Allow erasing packages for dependencies
 - `nobest`: `"true"` or `"false"` (default: `"false"`) - Don't limit to best candidates
+- `releasever`: string (optional) - Override the RHEL/distro release version (e.g., `"9"`, `"10"`, `"40"`) - **Required for scratch builds**
 
 **Zypper (openSUSE/SLES):**
 - `repopath`: Repository directory path (default: `"/etc/zypp/repos.d"`)
@@ -311,6 +312,136 @@ publish:
 - ✅ Suite-based installation
 - ✅ Required options (suite, mirror)
 
+## Container Images
+
+The Dockerfile provides multiple build targets optimized for different Linux distributions. A single Go binary is compiled once and copied into each package-manager-specific runtime image.
+
+### Available Build Targets
+
+**DNF-based (RHEL/Rocky/AlmaLinux/Fedora):**
+- **`dnf`** (default) - AlmaLinux 10 base that can build images for **any RHEL version**
+  - Use `options: { releasever: "9" }` in config for RHEL/Rocky/Alma 9
+  - Use `options: { releasever: "10" }` in config for RHEL/Rocky/Alma 10
+  - Use `options: { releasever: "40" }` in config for Fedora 40
+  - The `releasever` option tells DNF which release version to target
+
+**APT-based (Debian/Ubuntu):**
+- **`apt`** - Debian Bookworm (12) base for building Debian/Ubuntu images
+
+**Zypper-based (SUSE/openSUSE):**
+- **`zypper`** - openSUSE Leap base for building SUSE/openSUSE images
+
+### Building Target-Specific Images
+
+```bash
+# Build default DNF image (can build any RHEL version via releasever)
+podman build -t image-builder:latest .
+
+# Build APT image (for Debian/Ubuntu)
+podman build --target apt -t image-builder:debian .
+
+# Build Zypper image (for SUSE/openSUSE)
+podman build --target zypper -t image-builder:suse .
+```
+
+### Multi-Version Support with Single DNF Image
+
+The DNF image uses AlmaLinux 10 as the base but can build images for any RHEL/Fedora version using the `releasever` option:
+
+**Example: Building Rocky Linux 9**
+```yaml
+meta:
+  name: rocky-9-base
+  from: scratch
+
+layer:
+  manager:
+    name: dnf
+    options:
+      releasever: "9"  # ← Specify target RHEL version
+    config: |
+      [main]
+      gpgcheck=1
+      reposdir=/etc/image-build/yum.repos.d
+  repos:
+    - path: /etc/image-build/yum.repos.d/rocky-baseos.repo
+      content: |
+        [rocky-baseos]
+        name=rocky-baseos
+        baseurl=https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os
+        enabled=1
+        gpgcheck=1
+        gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9
+  actions:
+    install:
+      packages:
+        - bash
+        - systemd
+```
+
+**Example: Building Rocky Linux 10**
+```yaml
+meta:
+  name: rocky-10-base
+  from: scratch
+
+layer:
+  manager:
+    name: dnf
+    options:
+      releasever: "10"  # ← Specify target RHEL version
+    config: |
+      [main]
+      gpgcheck=1
+      reposdir=/etc/image-build/yum.repos.d
+  repos:
+    - path: /etc/image-build/yum.repos.d/rocky-baseos.repo
+      content: |
+        [rocky-baseos]
+        name=rocky-baseos
+        baseurl=https://dl.rockylinux.org/pub/rocky/10/BaseOS/x86_64/os
+        enabled=1
+        gpgcheck=1
+        gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-10
+  actions:
+    install:
+      packages:
+        - bash
+        - systemd
+```
+
+The `releasever` option is passed to DNF as `--releasever` and tells it which release version to use when resolving dependencies and accessing repositories. This allows a single builder image to create images for any RHEL-family distribution version.
+
+**Benefits:**
+- ✅ **Single builder image** - No need for separate rhel9/rhel10 images
+- ✅ **Simpler maintenance** - One Dockerfile, one build
+- ✅ **Version flexibility** - Build any RHEL version from config
+- ✅ **Smaller storage** - Only one base image to store
+
+### Architecture
+
+```
+Single Go Builder (golang:1.26-bookworm)
+   ├─> zypper (opensuse/leap:latest)
+   ├─> apt (debian:bookworm-slim)
+   └─> dnf (almalinux:10) ← default, supports all RHEL versions via releasever
+```
+
+The Go binary is compiled once and copied into each package-manager-specific base image, saving ~500MB-1GB per image compared to building separately.
+
+### Why Multiple Base Images?
+
+When building images **from scratch** (using `from: scratch` in config), the package manager runs on the **host** using `--installroot` to bootstrap a new filesystem. Different distributions have subtle differences in:
+
+- Package metadata formats and repository structures
+- GPG key handling and signature verification
+- Dependency resolution algorithms
+- Default configuration files
+
+Using the **native package manager** from the target distribution family ensures maximum compatibility and reduces the risk of issues during scratch builds.
+
+**For parent image builds** (building on top of an existing image), the package manager runs **inside** the container, so the base image choice matters less - the native tools in the parent image are used.
+
 ## Running in Container
 
 ### Production Usage (Pre-built Container)
@@ -318,7 +449,21 @@ publish:
 The recommended way to run image-build is using the pre-built container from GitHub Container Registry:
 
 ```bash
-# Basic build
+# For any RHEL/Rocky/Alma/Fedora version (default)
+# Specify releasever in your config file
+podman run --rm \
+  --device /dev/fuse \
+  --cap-add=SYS_ADMIN \
+  --cap-add=SETUID \
+  --cap-add=SETGID \
+  --security-opt seccomp=unconfined \
+  --security-opt label=disable \
+  -v $(pwd)/rocky9.yaml:/config.yaml:Z \
+  -v $(pwd)/output:/output:Z \
+  ghcr.io/openchami/image-builder:latest \
+  image-build build --config /config.yaml --log-level info
+
+# For Debian/Ubuntu builds
 podman run --rm \
   --device /dev/fuse \
   --cap-add=SYS_ADMIN \
@@ -328,12 +473,10 @@ podman run --rm \
   --security-opt label=disable \
   -v $(pwd)/my-image.yaml:/config.yaml:Z \
   -v $(pwd)/output:/output:Z \
-  ghcr.io/openchami/image-build-go:latest \
+  ghcr.io/openchami/image-builder:debian \
   image-build build --config /config.yaml --log-level info
-```
 
-**With S3 credentials:**
-```bash
+# For SUSE/openSUSE builds
 podman run --rm \
   --device /dev/fuse \
   --cap-add=SYS_ADMIN \
@@ -341,17 +484,17 @@ podman run --rm \
   --cap-add=SETGID \
   --security-opt seccomp=unconfined \
   --security-opt label=disable \
-  -e S3_ACCESS=${S3_ACCESS} \
-  -e S3_SECRET=${S3_SECRET} \
   -v $(pwd)/my-image.yaml:/config.yaml:Z \
   -v $(pwd)/output:/output:Z \
-  ghcr.io/openchami/image-build-go:latest \
+  ghcr.io/openchami/image-builder:suse \
   image-build build --config /config.yaml --log-level info
 ```
 
-**Available images:**
-- `ghcr.io/openchami/image-build-go:latest` - Latest build from main branch
-- `ghcr.io/openchami/image-build-go:v0.1.0` - Specific version (when tagged)
+**Available image tags:**
+- `ghcr.io/openchami/image-builder:latest` - DNF-based (AlmaLinux 10 - for any RHEL/Fedora version)
+- `ghcr.io/openchami/image-builder:debian` - APT-based (for Debian/Ubuntu)
+- `ghcr.io/openchami/image-builder:suse` - Zypper-based (for SUSE/openSUSE)
+- `ghcr.io/openchami/image-builder:v0.1.0` - Specific version (when tagged)
 
 ### Development Usage (Local Build)
 

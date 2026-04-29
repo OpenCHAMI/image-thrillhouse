@@ -1,3 +1,4 @@
+# Single builder stage: compiles the Go binary once for all targets
 FROM golang:1.26-bookworm AS builder
 RUN apt-get update && apt-get install -y \
     libgpgme-dev \
@@ -11,50 +12,104 @@ WORKDIR /src
 COPY . .
 RUN go build -o image-build ./cmd/image-build/
 
-FROM debian:bookworm-slim
+# Zypper stage: for building SUSE/openSUSE images with native Zypper
+FROM opensuse/leap:latest AS zypper
+RUN zypper install -y \
+    buildah \
+    fuse-overlayfs \
+    vim \
+    curl \
+    squashfs \
+    shadow \
+    gpgme \
+    device-mapper \
+    && zypper clean --all
+
+COPY --from=builder /src/image-build /usr/local/bin/image-build
+
+RUN useradd -m --uid 1001 builder
+
+RUN touch /etc/subgid /etc/subuid && \
+    echo builder:10000:65536 > /etc/subuid && \
+    echo builder:10000:65536 > /etc/subgid && \
+    chmod 644 /etc/subuid /etc/subgid
+
+RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
+    printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n\n[storage.options]\nmount_program = "/usr/bin/fuse-overlayfs"\n' > /etc/containers/storage.conf && \
+    chown -R builder:builder /home/builder /run/containers /var/lib/containers
+
+USER builder
+WORKDIR /home/builder
+
+# APT stage: for building Debian/Ubuntu images with APT/mmdebstrap
+FROM debian:bookworm-slim AS apt
 RUN apt-get update && apt-get install -y \
     buildah \
     mmdebstrap \
-    dnf \
     fakeroot \
     fakechroot \
     fuse-overlayfs \
     libcap2-bin \
+    uidmap \
     vim \
-    rpm \
-    zypper \
     curl \
     squashfs-tools \
+    libgpgme11 \
+    libdevmapper1.02.1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/image-build /usr/local/bin/image-build
 
 RUN chcon -t container_runtime_exec_t /usr/local/bin/image-build 2>/dev/null || true
 
-RUN touch /etc/subgid /etc/subuid \
+RUN useradd -m --uid 1001 builder
+
+RUN touch /etc/subgid /etc/subuid && \
 	setcap cap_setuid=ep "$(command -v newuidmap)" && \
-    	setcap cap_setgid=ep "$(command -v newgidmap)" &&\
+    	setcap cap_setgid=ep "$(command -v newgidmap)" && \
     	chmod 0755 "$(command -v newuidmap)" && \
     	chmod 0755 "$(command -v newgidmap)" && \
-	chmod g=u /etc/subgid /etc/subuid /etc/passwd &&\
-	echo builder:10000:65536 > /etc/subuid &&\
+	chmod 644 /etc/subgid /etc/subuid && \
+	echo builder:10000:65536 > /etc/subuid && \
 	echo builder:10000:65536 > /etc/subgid
 
-RUN useradd -m --uid 1001 builder && \
-    chown -R builder /home/builder
-
 RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
-    cat > /etc/containers/storage.conf << EOF
-[storage]
-driver = "overlay"
-runroot = "/run/containers/storage"
-graphroot = "/var/lib/containers/storage"
-
-[storage.options]
-mount_program = "/usr/bin/fuse-overlayfs"
-EOF
+    printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n\n[storage.options]\nmount_program = "/usr/bin/fuse-overlayfs"\n' > /etc/containers/storage.conf && \
+    chown -R builder:builder /home/builder /run/containers /var/lib/containers
 
 RUN echo "user_allow_other" >> /etc/fuse.conf
+
+USER builder
+WORKDIR /home/builder
+
+# DNF stage: for building RHEL/Rocky/Alma/Fedora images with native DNF (default)
+# Uses AlmaLinux 10 which can build images for RHEL 9, 10, etc. using --releasever
+FROM almalinux:10 AS dnf
+RUN dnf install -y \
+    buildah \
+    dnf \
+    dnf-plugins-core \
+    fuse-overlayfs \
+    vim \
+    curl \
+    squashfs-tools \
+    shadow-utils \
+    gpgme \
+    device-mapper-libs \
+    && dnf clean all
+
+COPY --from=builder /src/image-build /usr/local/bin/image-build
+
+RUN useradd -m --uid 1001 builder
+
+RUN touch /etc/subgid /etc/subuid && \
+    echo builder:10000:65536 > /etc/subuid && \
+    echo builder:10000:65536 > /etc/subgid && \
+    chmod 644 /etc/subuid /etc/subgid
+
+RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
+    printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n\n[storage.options]\nmount_program = "/usr/bin/fuse-overlayfs"\n' > /etc/containers/storage.conf && \
+    chown -R builder:builder /home/builder /run/containers /var/lib/containers
 
 USER builder
 WORKDIR /home/builder
