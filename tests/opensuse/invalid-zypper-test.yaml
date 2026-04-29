@@ -1,0 +1,16 @@
+meta:
+  name: opensuse-invalid
+  tags: 
+    - leap
+  from: opensuse/leap:15.5
+layer:
+  manager:
+    name: zypper
+    options:
+      invalid-zypper-option: "true"
+  actions:
+    install:
+      packages:
+        - vim
+publish:
+  - type: local

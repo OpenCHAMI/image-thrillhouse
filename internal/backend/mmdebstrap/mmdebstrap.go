@@ -1,3 +1,7 @@
+// Package mmdebstrap implements a backend for creating Debian/Ubuntu scratch builds.
+// mmdebstrap is a Debian debootstrap alternative that creates minimal base systems.
+// This backend only supports scratch builds (from = "scratch").
+// For parent image builds on Debian/Ubuntu, use the apt backend instead.
 package mmdebstrap
 
 import (
@@ -9,13 +13,24 @@ import (
 	"github.com/travisbcotton/image-build/internal/container"
 )
 
+// MmdebstrapBackend implements the Backend interface for mmdebstrap.
+// It creates minimal Debian/Ubuntu base systems from scratch.
 type MmdebstrapBackend struct {
-	suite   string
-	mirror  string
-	variant string
-	mode    string
+	suite   string // Debian/Ubuntu suite (e.g., bookworm, jammy)
+	mirror  string // Package mirror URL (e.g., http://deb.debian.org/debian)
+	variant string // Bootstrap variant: minbase, buildd, etc. (default: minbase)
+	mode    string // Execution mode: fakechroot, fakeroot, etc. (default: fakechroot)
 }
 
+// New creates a new mmdebstrap backend instance with the provided options.
+//
+// Required options:
+//   - suite: Debian/Ubuntu release codename (e.g., bookworm, jammy)
+//   - mirror: Package mirror URL
+//
+// Optional options:
+//   - variant: Bootstrap variant (default: minbase)
+//   - mode: Execution mode (default: fakechroot)
 func New(options map[string]string) *MmdebstrapBackend {
 	variant := options["variant"]
 	if variant == "" {
@@ -33,15 +48,29 @@ func New(options map[string]string) *MmdebstrapBackend {
 	}
 }
 
+// ConfigFilePath returns the path where configuration should be written.
+// Note: This returns the DNF path which appears to be a bug or placeholder.
+// mmdebstrap doesn't use a persistent config file like DNF.
 func (d *MmdebstrapBackend) ConfigFilePath() string {
 	return "/etc/dnf/dnf.conf"
 }
 
+// InstallCommands is not supported by mmdebstrap backend and returns nil.
+// mmdebstrap is only for scratch builds, not for installing into existing containers.
+// For parent image builds on Debian/Ubuntu, use the apt backend instead.
 func (m *MmdebstrapBackend) InstallCommands(install config.Install) [][]string {
 	slog.Warn("mmdebstrap does not support parent image installs, use apt backend instead")
 	return nil
 }
 
+// InstallRootCommands generates the mmdebstrap command to bootstrap a Debian/Ubuntu system.
+// This creates a minimal base system from scratch using the configured suite and mirror.
+//
+// Command format:
+//   mmdebstrap --mode=<mode> --variant=<variant> --include=<packages> <suite> <rootPath> <mirror>
+//
+// Example:
+//   mmdebstrap --mode=fakechroot --variant=minbase --include=bash,coreutils bookworm /root http://deb.debian.org/debian
 func (m *MmdebstrapBackend) InstallRootCommands(install config.Install, rootPath string) [][]string {
 	cmd := make([]string, 0)
 	cmd = append(cmd, "mmdebstrap")
@@ -60,6 +89,12 @@ func (m *MmdebstrapBackend) InstallRootCommands(install config.Install, rootPath
 	return [][]string{cmd}
 }
 
+// ValidateOptions checks if the required mmdebstrap options are provided.
+// Required options:
+//   - suite: Must be specified (e.g., bookworm, bullseye, jammy)
+//   - mirror: Must be specified (e.g., http://deb.debian.org/debian)
+//
+// Returns an error if either required option is missing.
 func (m *MmdebstrapBackend) ValidateOptions(options map[string]string) error {
 	if options["suite"] == "" {
 		return fmt.Errorf("mmdebstrap requires options.suite (e.g. bookworm)")
@@ -70,13 +105,20 @@ func (m *MmdebstrapBackend) ValidateOptions(options map[string]string) error {
 	return nil
 }
 
+// SupportsInstallRoot returns true because mmdebstrap can bootstrap a scratch filesystem.
 func (d *MmdebstrapBackend) SupportsInstallRoot() bool {
 	return true
 }
+
+// SupportsParentInstall returns true but logs a warning when used.
+// In practice, mmdebstrap should only be used for scratch builds.
+// Use the apt backend for parent image builds.
 func (d *MmdebstrapBackend) SupportsParentInstall() bool {
 	return true
 }
 
+// OutputWriter returns a writer that parses and formats mmdebstrap output.
+// The writer filters mmdebstrap's verbose output and logs relevant information.
 func (d *MmdebstrapBackend) OutputWriter() container.OutputWriter {
 	return &mmdebstrapLogWriter{}
 }

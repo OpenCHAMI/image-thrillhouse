@@ -1,3 +1,4 @@
+// Package buildah provides container operations using the Buildah library.
 package buildah
 
 import (
@@ -6,6 +7,9 @@ import (
 	"go.podman.io/storage"
 )
 
+// openStore opens the default container storage.
+// This initializes access to the local container/image storage used by Podman and Buildah.
+// The storage location and configuration come from the system's default settings.
 func openStore() (storage.Store, error) {
 	opts, err := storage.DefaultStoreOptions()
 	if err != nil {

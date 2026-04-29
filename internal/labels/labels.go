@@ -44,7 +44,9 @@ func (g *Generator) Generate() map[string]string {
 	labels["org.openchami.image.type"] = "base" // Currently only base layer type supported
 	labels["org.openchami.image.package-manager"] = g.cfg.Layer.Manager.Name
 	labels["org.openchami.image.parent"] = g.cfg.Meta.From
-	labels["org.openchami.image.tags"] = g.cfg.Meta.Tag
+	if len(g.cfg.Meta.Tags) > 0 {
+		labels["org.openchami.image.tags"] = strings.Join(g.cfg.Meta.Tags, ",")
+	}
 
 	// Build timestamp in ISO 8601 format
 	labels["org.openchami.image.build-date"] = time.Now().UTC().Format(time.RFC3339)
@@ -85,10 +87,8 @@ func (g *Generator) Generate() map[string]string {
 		labels["org.openchami.image.modules"] = strings.Join(moduleStrings, ",")
 	}
 
-	// Add custom labels from config (these override automatic labels)
-	for key, value := range g.cfg.Meta.Labels {
-		labels[key] = value
-	}
+	// Note: Custom labels from config would be added here if Meta.Labels field existed
+	// TODO: Add Labels map[string]string field to config.Meta if custom labels are needed
 
 	return labels
 }

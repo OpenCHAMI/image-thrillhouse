@@ -11,12 +11,55 @@ import (
 )
 
 // DnfBackend implements the Backend interface for DNF package manager.
-type DnfBackend struct{}
+//
+// Supported options:
+//   - install-weak-deps: "true" or "false" (default: "true") - Install weak dependencies
+//   - best: "true" or "false" (default: "true") - Use best package versions
+//   - skip-broken: "true" or "false" (default: "false") - Skip uninstallable packages
+//   - allowerasing: "true" or "false" (default: "false") - Allow erasing of installed packages to resolve dependencies
+//   - nobest: "true" or "false" (default: "false") - Do not limit packages to best candidates
+type DnfBackend struct {
+	installWeakDeps bool
+	best            bool
+	skipBroken      bool
+	allowErasing    bool
+	noBest          bool
+}
 
 // New creates a new DNF backend instance.
-// Options are currently unused but reserved for future DNF-specific configuration.
+// The options parameter can configure DNF behavior:
+//   - install-weak-deps: Whether to install weak dependencies (default: true)
+//   - best: Use best package versions (default: true)
+//   - skip-broken: Skip packages with unsolvable dependencies (default: false)
+//   - allowerasing: Allow erasing packages to resolve dependencies (default: false)
+//   - nobest: Do not limit to best candidates (default: false)
 func New(options map[string]string) *DnfBackend {
-	return &DnfBackend{}
+	backend := &DnfBackend{
+		installWeakDeps: true,  // DNF default
+		best:            true,  // DNF default
+		skipBroken:      false,
+		allowErasing:    false,
+		noBest:          false,
+	}
+	
+	// Parse options
+	if options["install-weak-deps"] == "false" {
+		backend.installWeakDeps = false
+	}
+	if options["best"] == "false" {
+		backend.best = false
+	}
+	if options["skip-broken"] == "true" {
+		backend.skipBroken = true
+	}
+	if options["allowerasing"] == "true" {
+		backend.allowErasing = true
+	}
+	if options["nobest"] == "true" {
+		backend.noBest = true
+	}
+	
+	return backend
 }
 
 // ConfigFilePath returns the path to the DNF configuration file.
@@ -33,29 +76,36 @@ func (d *DnfBackend) ConfigFilePath() string {
 //   - Module operations: dnf module <action> <module:stream>
 //
 // All commands use -q for quiet output and -y for automatic yes.
+// Additional flags are added based on configured options.
 func (d *DnfBackend) InstallCommands(install config.Install) [][]string {
 	var cmds [][]string
 
 	// Install individual packages
 	if len(install.Packages) > 0 {
-		cmd := make([]string, 0, 4+len(install.Packages))
-		cmd = append(cmd, "dnf", "-q", "install", "-y")
+		cmd := make([]string, 0, 10+len(install.Packages))
+		cmd = append(cmd, "dnf", "-q")
+		cmd = d.addOptionFlags(cmd)
+		cmd = append(cmd, "install", "-y")
 		cmd = append(cmd, install.Packages...)
 		cmds = append(cmds, cmd)
 	}
 
 	// Install package groups (e.g., "Development Tools")
 	if len(install.Groups) > 0 {
-		cmd := make([]string, 0, 4+len(install.Groups))
-		cmd = append(cmd, "dnf", "-q", "groupinstall", "-y")
+		cmd := make([]string, 0, 10+len(install.Groups))
+		cmd = append(cmd, "dnf", "-q")
+		cmd = d.addOptionFlags(cmd)
+		cmd = append(cmd, "groupinstall", "-y")
 		cmd = append(cmd, install.Groups...)
 		cmds = append(cmds, cmd)
 	}
 
 	// Handle module operations (enable, install, disable, reset)
 	for _, mod := range install.Modules {
-		cmd := make([]string, 0, 6)
-		cmd = append(cmd, "dnf", "-q", "module", "-y", mod.Action, fmt.Sprintf("%s:%s", mod.Name, mod.Stream))
+		cmd := make([]string, 0, 12)
+		cmd = append(cmd, "dnf", "-q")
+		cmd = d.addOptionFlags(cmd)
+		cmd = append(cmd, "module", "-y", mod.Action, fmt.Sprintf("%s:%s", mod.Name, mod.Stream))
 		cmds = append(cmds, cmd)
 	}
 
@@ -72,24 +122,30 @@ func (d *DnfBackend) InstallRootCommands(install config.Install, rootPath string
 
 	// Install individual packages into the root path
 	if len(install.Packages) > 0 {
-		cmd := make([]string, 0, 4+len(install.Packages))
-		cmd = append(cmd, "dnf", "-q", "--installroot", rootPath, "install", "-y")
+		cmd := make([]string, 0, 12+len(install.Packages))
+		cmd = append(cmd, "dnf", "-q")
+		cmd = d.addOptionFlags(cmd)
+		cmd = append(cmd, "--installroot", rootPath, "install", "-y")
 		cmd = append(cmd, install.Packages...)
 		cmds = append(cmds, cmd)
 	}
 
 	// Install package groups into the root path
 	if len(install.Groups) > 0 {
-		cmd := make([]string, 0, 4+len(install.Groups))
-		cmd = append(cmd, "dnf", "-q", "--installroot", rootPath, "groupinstall", "-y")
+		cmd := make([]string, 0, 12+len(install.Groups))
+		cmd = append(cmd, "dnf", "-q")
+		cmd = d.addOptionFlags(cmd)
+		cmd = append(cmd, "--installroot", rootPath, "groupinstall", "-y")
 		cmd = append(cmd, install.Groups...)
 		cmds = append(cmds, cmd)
 	}
 
 	// Handle module operations for the root path
 	for _, mod := range install.Modules {
-		cmd := make([]string, 0, 6)
-		cmd = append(cmd, "dnf", "-q", "--installroot", rootPath, "module", "-y", mod.Action, fmt.Sprintf("%s:%s", mod.Name, mod.Stream))
+		cmd := make([]string, 0, 14)
+		cmd = append(cmd, "dnf", "-q")
+		cmd = d.addOptionFlags(cmd)
+		cmd = append(cmd, "--installroot", rootPath, "module", "-y", mod.Action, fmt.Sprintf("%s:%s", mod.Name, mod.Stream))
 		cmds = append(cmds, cmd)
 	}
 
@@ -97,9 +153,64 @@ func (d *DnfBackend) InstallRootCommands(install config.Install, rootPath string
 }
 
 // ValidateOptions validates DNF-specific options.
-// Currently no options are defined, so this always returns nil.
+// Valid options:
+//   - install-weak-deps: "true" or "false"
+//   - best: "true" or "false"
+//   - skip-broken: "true" or "false"
+//   - allowerasing: "true" or "false"
+//   - nobest: "true" or "false"
+//
+// Returns an error if an unknown option is provided or if a value is invalid.
 func (d *DnfBackend) ValidateOptions(options map[string]string) error {
+	validOptions := map[string]bool{
+		"install-weak-deps": true,
+		"best":              true,
+		"skip-broken":       true,
+		"allowerasing":      true,
+		"nobest":            true,
+	}
+	
+	validValues := map[string]bool{
+		"true":  true,
+		"false": true,
+	}
+	
+	for key, value := range options {
+		if !validOptions[key] {
+			return fmt.Errorf("unknown option %q for dnf backend", key)
+		}
+		if value != "" && !validValues[value] {
+			return fmt.Errorf("option %q must be 'true' or 'false', got %q", key, value)
+		}
+	}
+	
+	// Validate conflicting options
+	if options["best"] == "true" && options["nobest"] == "true" {
+		return fmt.Errorf("options 'best' and 'nobest' cannot both be true")
+	}
+	
 	return nil
+}
+
+// addOptionFlags adds DNF option flags to a command based on configured options.
+// This is a helper method to avoid duplicating flag logic.
+func (d *DnfBackend) addOptionFlags(cmd []string) []string {
+	if !d.installWeakDeps {
+		cmd = append(cmd, "--setopt=install_weak_deps=False")
+	}
+	if !d.best {
+		cmd = append(cmd, "--setopt=best=False")
+	}
+	if d.skipBroken {
+		cmd = append(cmd, "--skip-broken")
+	}
+	if d.allowErasing {
+		cmd = append(cmd, "--allowerasing")
+	}
+	if d.noBest {
+		cmd = append(cmd, "--nobest")
+	}
+	return cmd
 }
 
 // SupportsInstallRoot indicates that DNF supports scratch builds using --installroot.

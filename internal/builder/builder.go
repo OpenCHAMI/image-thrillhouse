@@ -95,7 +95,7 @@ func (b *Builder) Build(ctx context.Context) error {
 
 	// Publish to all configured destinations
 	for _, p := range b.publishers {
-		if err := p.Publish(ctx, c, b.cfg.Meta.Name, b.cfg.Meta.Tags); err != nil {
+		if err := p.Publish(ctx, c, b.cfg.Meta.Name, b.cfg.Meta.Tags, imageLabels); err != nil {
 			return fmt.Errorf("publish %T: %w", p, err)
 		}
 	}

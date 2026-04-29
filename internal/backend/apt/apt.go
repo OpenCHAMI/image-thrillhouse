@@ -1,29 +1,114 @@
+// Package apt implements the APT package manager backend for Debian and Ubuntu systems.
+// This backend only supports parent image builds (from != "scratch").
+// For scratch builds, use the mmdebstrap backend instead.
 package apt
 
 import (
+	"fmt"
 	"log/slog"
 
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
 )
 
-type AptBackend struct{}
-
-func New(options map[string]string) *AptBackend {
-	return &AptBackend{}
+// AptBackend implements the Backend interface for APT-based distributions.
+// It supports Debian, Ubuntu, and their derivatives for parent image builds.
+//
+// Supported options:
+//   - install-recommends: "true" or "false" (default: "false") - Install recommended packages
+//   - install-suggests: "true" or "false" (default: "false") - Install suggested packages
+//   - allow-unauthenticated: "true" or "false" (default: "false") - Allow unauthenticated packages
+type AptBackend struct {
+	installRecommends    bool
+	installSuggests      bool
+	allowUnauthenticated bool
 }
 
+// New creates a new APT backend instance.
+// The options parameter can configure APT behavior:
+//   - install-recommends: Whether to install recommended packages (default: false)
+//   - install-suggests: Whether to install suggested packages (default: false)
+//   - allow-unauthenticated: Whether to allow unauthenticated packages (default: false)
+func New(options map[string]string) *AptBackend {
+	backend := &AptBackend{
+		installRecommends:    false,
+		installSuggests:      false,
+		allowUnauthenticated: false,
+	}
+	
+	// Parse options
+	if options["install-recommends"] == "true" {
+		backend.installRecommends = true
+	}
+	if options["install-suggests"] == "true" {
+		backend.installSuggests = true
+	}
+	if options["allow-unauthenticated"] == "true" {
+		backend.allowUnauthenticated = true
+	}
+	
+	return backend
+}
+
+// ValidateOptions checks if the provided options are valid for the APT backend.
+// Valid options:
+//   - install-recommends: "true" or "false"
+//   - install-suggests: "true" or "false"
+//   - allow-unauthenticated: "true" or "false"
+//
+// Returns an error if an unknown option is provided or if a value is invalid.
 func (a *AptBackend) ValidateOptions(options map[string]string) error {
+	validOptions := map[string]bool{
+		"install-recommends":    true,
+		"install-suggests":      true,
+		"allow-unauthenticated": true,
+	}
+	
+	validValues := map[string]bool{
+		"true":  true,
+		"false": true,
+	}
+	
+	for key, value := range options {
+		if !validOptions[key] {
+			return fmt.Errorf("unknown option %q for apt backend", key)
+		}
+		if value != "" && !validValues[value] {
+			return fmt.Errorf("option %q must be 'true' or 'false', got %q", key, value)
+		}
+	}
+	
 	return nil
 }
 
-func (a *AptBackend) SupportsInstallRoot() bool   { return false }
+// SupportsInstallRoot returns false because APT cannot bootstrap a scratch filesystem.
+// Use the mmdebstrap backend for scratch builds on Debian/Ubuntu systems.
+func (a *AptBackend) SupportsInstallRoot() bool { return false }
+
+// SupportsParentInstall returns true because APT can install packages into existing images.
 func (a *AptBackend) SupportsParentInstall() bool { return true }
 
+// ConfigFilePath returns the path where APT configuration should be written.
+// Returns the standard apt.conf.d drop-in directory path with a high priority number
+// to ensure our configuration overrides other settings.
 func (a *AptBackend) ConfigFilePath() string {
 	return "/etc/apt/apt.conf.d/99-image-build.conf"
 }
 
+// InstallCommands generates apt-get commands to install packages in a running container.
+// This method is used for parent image builds (from != "scratch").
+//
+// Process:
+//  1. Always runs 'apt-get update' first to refresh package indexes
+//  2. Warns if groups or modules are specified (APT doesn't support these)
+//  3. Installs all packages with 'apt-get install' and configured options
+//
+// Flags used:
+//   -y: Assume "yes" to all prompts (non-interactive)
+//   -q: Quiet mode for cleaner output
+//   --no-install-recommends: Don't install recommended packages (unless enabled)
+//   --no-install-suggests: Don't install suggested packages (unless enabled)
+//   --allow-unauthenticated: Allow packages without GPG verification (if enabled)
 func (a *AptBackend) InstallCommands(install config.Install) [][]string {
 	var cmds [][]string
 
@@ -38,8 +123,20 @@ func (a *AptBackend) InstallCommands(install config.Install) [][]string {
 	}
 
 	if len(install.Packages) > 0 {
-		cmd := make([]string, 0, 4+len(install.Packages))
+		cmd := make([]string, 0, 8+len(install.Packages))
 		cmd = append(cmd, "apt-get", "install", "-y", "-q")
+		
+		// Add option flags
+		if !a.installRecommends {
+			cmd = append(cmd, "--no-install-recommends")
+		}
+		if !a.installSuggests {
+			cmd = append(cmd, "--no-install-suggests")
+		}
+		if a.allowUnauthenticated {
+			cmd = append(cmd, "--allow-unauthenticated")
+		}
+		
 		cmd = append(cmd, install.Packages...)
 		cmds = append(cmds, cmd)
 	}
@@ -47,10 +144,14 @@ func (a *AptBackend) InstallCommands(install config.Install) [][]string {
 	return cmds
 }
 
+// InstallRootCommands is not supported by APT backend and returns nil.
+// For scratch builds on Debian/Ubuntu, use the mmdebstrap backend instead.
 func (a *AptBackend) InstallRootCommands(install config.Install, rootPath string) [][]string {
 	return nil
 }
 
+// OutputWriter returns a writer that parses and formats APT command output.
+// The writer extracts useful information like installed packages and warnings.
 func (a *AptBackend) OutputWriter() container.OutputWriter {
 	return &aptLogWriter{}
 }

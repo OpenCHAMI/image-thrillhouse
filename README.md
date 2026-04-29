@@ -132,6 +132,13 @@ image-build build --config my-image.yaml --log-level info
 image-build validate --config my-image.yaml
 ```
 
+This will check:
+- YAML syntax
+- Required fields
+- Package manager support
+- Backend options (validates unknown options and invalid values)
+- Publisher configuration
+
 ## Configuration Reference
 
 The configuration file is divided into three main sections:
@@ -160,9 +167,38 @@ layer:
     config: |              # Optional: package manager config file content
       [main]
       gpgcheck=1
-    options:               # Optional: backend-specific options
-      key: value
+    options:               # Optional: backend-specific options (see below)
+      install-weak-deps: "false"
+      best: "true"
 ```
+
+**Backend Options:**
+
+All backends support configurable options to control package installation behavior:
+
+**APT (Debian/Ubuntu):**
+- `install-recommends`: `"true"` or `"false"` (default: `"false"`) - Install recommended packages
+- `install-suggests`: `"true"` or `"false"` (default: `"false"`) - Install suggested packages  
+- `allow-unauthenticated`: `"true"` or `"false"` (default: `"false"`) - Allow unsigned packages
+
+**DNF (RHEL/Rocky/Fedora):**
+- `install-weak-deps`: `"true"` or `"false"` (default: `"true"`) - Install weak dependencies
+- `best`: `"true"` or `"false"` (default: `"true"`) - Use best package versions
+- `skip-broken`: `"true"` or `"false"` (default: `"false"`) - Skip broken packages
+- `allowerasing`: `"true"` or `"false"` (default: `"false"`) - Allow erasing packages for dependencies
+- `nobest`: `"true"` or `"false"` (default: `"false"`) - Don't limit to best candidates
+
+**Zypper (openSUSE/SLES):**
+- `repopath`: Repository directory path (default: `"/etc/zypp/repos.d"`)
+- `no-recommends`: `"true"` or `"false"` (default: `"false"`) - Don't install recommended packages
+- `no-gpg-checks`: `"true"` or `"false"` (default: `"false"`) - Skip GPG verification
+- `force-resolution`: `"true"` or `"false"` (default: `"false"`) - Auto-resolve conflicts
+
+**mmdebstrap (Debian/Ubuntu scratch builds):**
+- `suite`: Debian/Ubuntu release (e.g., `"bookworm"`) - **Required**
+- `mirror`: Package mirror URL (e.g., `"http://deb.debian.org/debian"`) - **Required**
+- `variant`: Bootstrap variant (default: `"minbase"`)
+- `mode`: Execution mode (default: `"fakechroot"`)
 
 #### Repository Configuration
 
@@ -251,12 +287,14 @@ publish:
 - ✅ Package groups
 - ✅ Modules (enable/install/disable)
 - ✅ Repository management
+- ✅ Configurable options (5 options)
 
 ### Zypper (openSUSE, SLES)
 
 - ✅ Scratch builds
 - ✅ Parent image builds
 - ✅ Repository management
+- ✅ Configurable options (4 options)
 - ⚠️ No package group support
 
 ### APT (Debian, Ubuntu)
@@ -264,12 +302,14 @@ publish:
 - ❌ Scratch builds not supported (use mmdebstrap)
 - ✅ Parent image builds
 - ✅ Repository management
+- ✅ Configurable options (3 options)
 
 ### mmdebstrap (Debian, Ubuntu)
 
 - ✅ Scratch builds (Debian bootstrap)
 - ❌ Parent image builds not supported
 - ✅ Suite-based installation
+- ✅ Required options (suite, mirror)
 
 ## Running in Container
 
@@ -377,8 +417,11 @@ See the `tests/` directory for complete examples:
 
 - `tests/rocky/rocky-base-x86_64.yaml` - Rocky Linux base image from scratch
 - `tests/rocky/rocky-compute-x86_64.yaml` - Compute node image with additional packages
+- `tests/rocky/rocky-dnf-options-example.yaml` - DNF with configurable options
 - `tests/debian/bookworm-base.yaml` - Debian base using mmdebstrap
+- `tests/debian/bookworm-apt-options-example.yaml` - APT with configurable options
 - `tests/opensuse/suse-base.yaml` - openSUSE base with Zypper
+- `tests/opensuse/suse-zypper-options-example.yaml` - Zypper with configurable options
 
 ## Architecture
 
@@ -424,7 +467,19 @@ go build -o image-build ./cmd/image-build
 
 ```bash
 go test ./...
+go test -v ./...          # Verbose output
+go test -cover ./...      # With coverage
 ```
+
+**Test Coverage:**
+- ✅ `internal/config` - Configuration parsing and validation
+- ✅ `internal/labels` - Label generation
+- ✅ `internal/backend/apt` - APT backend with options
+- ✅ `internal/backend/dnf` - DNF backend with options
+- ✅ `internal/backend/zypper` - Zypper backend with options
+- ✅ `internal/backend/mmdebstrap` - mmdebstrap backend
+
+See `TESTING.md` for detailed testing guide.
 
 ### Adding a New Backend
 

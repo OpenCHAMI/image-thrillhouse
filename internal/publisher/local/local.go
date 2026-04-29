@@ -20,10 +20,14 @@ func New() *LocalPublisher {
 	return &LocalPublisher{}
 }
 
-func (l *LocalPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string) error {
+// Publish commits the container to local storage with the provided labels.
+// Each tag is committed separately with the same labels.
+//
+// The image is tagged as "localhost/<name>:<tag>" in the local container storage.
+func (l *LocalPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
 	log := slog.With("component", "publisher")
 	for _, tag := range tags {
-		id, err := c.Commit(ctx, name, tag)
+		id, err := c.CommitWithLabels(ctx, name, tag, labels)
 		log.Info("Committing locally", "ContainerID", id, "Image", fmt.Sprintf("localhost/%s:%s", name, tag))
 		if err != nil {
 			return fmt.Errorf("commit: %w", err)

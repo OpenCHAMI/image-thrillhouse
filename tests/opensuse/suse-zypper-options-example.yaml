@@ -1,0 +1,22 @@
+meta:
+  name: opensuse-with-options
+  tags: 
+    - leap
+  from: opensuse/leap:15.5
+
+layer:
+  manager:
+    name: zypper
+    options:
+      no-recommends: "true"         # Smaller images
+      no-gpg-checks: "false"        # Require GPG verification
+      force-resolution: "false"     # Don't force conflict resolution
+  actions:
+    install:
+      packages:
+        - vim
+        - curl
+        - git
+
+publish:
+  - type: local

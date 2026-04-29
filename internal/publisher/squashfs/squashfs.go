@@ -38,7 +38,7 @@ func New(path string) *SquashfsPublisher {
 // Requirements:
 //   - mksquashfs command must be available (install squashfs-tools)
 //   - Output directory must be writable
-func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, name, tag string, labels map[string]string) error {
+func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
 	log := slog.With("component", "publisher")
 	output := fmt.Sprintf("%s/%s-%s.squashfs", s.path, name, tags[0])
 	log.Info("Creating squashfs", "squashfs", output, "source", c.MountPath())

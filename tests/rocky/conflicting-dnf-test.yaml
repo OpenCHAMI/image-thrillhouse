@@ -1,0 +1,17 @@
+meta:
+  name: rocky-conflict
+  tags: 
+    - "9"
+  from: rockylinux:9
+layer:
+  manager:
+    name: dnf
+    options:
+      best: "true"
+      nobest: "true"    # Conflict with best=true
+  actions:
+    install:
+      packages:
+        - vim
+publish:
+  - type: local

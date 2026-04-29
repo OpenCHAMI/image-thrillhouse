@@ -93,20 +93,29 @@ var versionCmd = &cobra.Command{
 //   - apt: Debian, Ubuntu (only parent builds, use mmdebstrap for scratch)
 //   - mmdebstrap: Debian, Ubuntu (only scratch builds using debootstrap)
 //
-// Returns an error if the package manager name is not recognized.
+// Returns an error if the package manager name is not recognized or if options are invalid.
 func newBackend(manager config.Manager) (backend.Backend, error) {
+	var b backend.Backend
+	
 	switch manager.Name {
 		case "dnf":
-			return dnf.New(manager.Options), nil
+			b = dnf.New(manager.Options)
 		case "mmdebstrap":
-			return mmdebstrap.New(manager.Options), nil
+			b = mmdebstrap.New(manager.Options)
 		case "apt":
-			return apt.New(manager.Options), nil
+			b = apt.New(manager.Options)
 		case "zypper":
-			return zypper.New(manager.Options), nil
+			b = zypper.New(manager.Options)
 		default:
 			return nil, fmt.Errorf("unsupported package manager: %s", manager.Name)
 	}
+	
+	// Validate backend-specific options
+	if err := b.ValidateOptions(manager.Options); err != nil {
+		return nil, fmt.Errorf("invalid options for %s backend: %w", manager.Name, err)
+	}
+	
+	return b, nil
 }
 
 // newPublishers creates a list of publishers based on the configuration.
@@ -139,25 +148,29 @@ func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
 					return nil, fmt.Errorf("squashfs publisher requires path")
 				}
 				publishers = append(publishers, squashfs.New(p.Path))
-			case "registry":
-				if p.URL == "" {
-					return nil, fmt.Errorf("registry publisher requires url")
-				}
-				publishers = append(publishers, registry.New(p.URL, p.Options))
-			case "s3":
-				if p.URL == "" {
-					return nil, fmt.Errorf("s3 publisher requires url")
-				}
-				if p.Bucket == "" {
-					return nil, fmt.Errorf("s3 publisher requires bucket")
-				}
-				// Get S3 credentials from environment variables
-				accessKey := os.Getenv("S3_ACCESS")
-				secretKey := os.Getenv("S3_SECRET")
-				if accessKey == "" || secretKey == "" {
-					return nil, fmt.Errorf("s3 publisher requires S3_ACCESS and S3_SECRET environment variables")
-				}
-				publishers = append(publishers, s3.New(p.URL, p.Bucket, p.Prefix, accessKey, secretKey))
+		case "registry":
+			if p.URL == "" {
+				return nil, fmt.Errorf("registry publisher requires url")
+			}
+			tlsVerify := true
+			if p.TLSVerify != nil {
+				tlsVerify = *p.TLSVerify
+			}
+			publishers = append(publishers, registry.New(p.URL, tlsVerify))
+		case "s3":
+			if p.URL == "" {
+				return nil, fmt.Errorf("s3 publisher requires url")
+			}
+			if p.Bucket == "" {
+				return nil, fmt.Errorf("s3 publisher requires bucket")
+			}
+			// Get S3 credentials from environment variables
+			accessKey := os.Getenv("S3_ACCESS")
+			secretKey := os.Getenv("S3_SECRET")
+			if accessKey == "" || secretKey == "" {
+				return nil, fmt.Errorf("s3 publisher requires S3_ACCESS and S3_SECRET environment variables")
+			}
+			publishers = append(publishers, s3pub.New(p.URL, p.Bucket, p.Prefix, accessKey, secretKey))
 			default:
 				return nil, fmt.Errorf("unsupported publisher type: %s", p.Type)
 		}
@@ -183,12 +196,12 @@ func setupLogger(level, format string) error {
 
 	var handler slog.Handler
 	switch format {
-	case "json":
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	case "text":
-		handler = slog.NewTextHandler(os.Stdout, opts)
-	default:
-		return fmt.Errorf("invalid log format %q", format)
+		case "json":
+			handler = slog.NewJSONHandler(os.Stdout, opts)
+		case "text":
+			handler = slog.NewTextHandler(os.Stdout, opts)
+		default:
+			return fmt.Errorf("invalid log format %q", format)
 	}
 
 	slog.SetDefault(slog.New(handler))

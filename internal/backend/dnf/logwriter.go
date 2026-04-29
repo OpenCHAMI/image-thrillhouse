@@ -1,3 +1,4 @@
+// Package dnf provides a backend for DNF package manager.
 package dnf
 
 import (
@@ -6,14 +7,25 @@ import (
 	"strings"
 )
 
+// dnfLogWriter buffers and parses DNF command output.
+// It extracts installed packages, warnings, and errors from DNF's output.
 type dnfLogWriter struct {
 	buf bytes.Buffer
 }
 
+// Write buffers the output data for later processing by Flush.
+// Implements io.Writer interface.
 func (w *dnfLogWriter) Write(p []byte) (n int, err error) {
 	return w.buf.Write(p)
 }
 
+// Flush processes the buffered DNF output and logs relevant information.
+// It parses DNF's output format to extract:
+//   - Installed packages (lines after "Installed:" section)
+//   - Warnings (e.g., unable to detect release version)
+//   - Errors (lines starting with "Error:")
+//
+// The buffer is reset after processing.
 func (w *dnfLogWriter) Flush(err error) {
 	output := w.buf.String()
 	w.buf.Reset()

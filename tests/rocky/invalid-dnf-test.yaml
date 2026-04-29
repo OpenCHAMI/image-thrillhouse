@@ -1,0 +1,16 @@
+meta:
+  name: rocky-invalid
+  tags: 
+    - "9"
+  from: rockylinux:9
+layer:
+  manager:
+    name: dnf
+    options:
+      invalid-dnf-option: "true"
+  actions:
+    install:
+      packages:
+        - vim
+publish:
+  - type: local

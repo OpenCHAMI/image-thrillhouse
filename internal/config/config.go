@@ -146,6 +146,8 @@ func LoadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+// TLSVerify returns whether to verify TLS certificates when pulling base images.
+// Defaults to true (verify) if not explicitly set.
 func (m *Meta) TLSVerify() bool {
 	if m.FromTLSVerify != nil {
 		return *m.FromTLSVerify

@@ -15,7 +15,7 @@ import (
 //   - Local: Commit to local container storage (podman/buildah)
 //   - SquashFS: Create a SquashFS filesystem image
 //   - Registry: Push to OCI container registry
-//   - S3: Upload to S3-compatible storage (TODO: not yet implemented)
+//   - S3: Upload to S3-compatible storage
 //
 // Multiple publishers can be used simultaneously to publish to multiple destinations.
 type Publisher interface {
@@ -25,9 +25,9 @@ type Publisher interface {
 	//   - ctx: Context for cancellation and timeouts
 	//   - c: The container to publish
 	//   - name: Image name from configuration
-	//   - tag: Image tag from configuration
+	//   - tags: Image tags from configuration
 	//   - labels: Map of image labels to apply
 	//
 	// Returns an error if publishing fails.
-	Publish(ctx context.Context, c container.Container, name, tag string, labels map[string]string) error
+	Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error
 }
