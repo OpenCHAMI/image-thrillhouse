@@ -82,9 +82,39 @@ RUN echo "user_allow_other" >> /etc/fuse.conf
 USER builder
 WORKDIR /home/builder
 
-# DNF stage: for building RHEL/Rocky/Alma/Fedora images with native DNF (default)
-# Uses AlmaLinux 10 which can build images for RHEL 9, 10, etc. using --releasever
-FROM almalinux:10 AS dnf
+# DNF/RHEL 9 stage: for building RHEL 9/Rocky 9/Alma 9 images (default)
+FROM almalinux:9 AS dnf
+RUN dnf install -y \
+    buildah \
+    dnf \
+    dnf-plugins-core \
+    fuse-overlayfs \
+    vim \
+    curl \
+    squashfs-tools \
+    shadow-utils \
+    gpgme \
+    device-mapper-libs \
+    && dnf clean all
+
+COPY --from=builder /src/image-build /usr/local/bin/image-build
+
+RUN useradd -m --uid 1001 builder
+
+RUN touch /etc/subgid /etc/subuid && \
+    echo builder:10000:65536 > /etc/subuid && \
+    echo builder:10000:65536 > /etc/subgid && \
+    chmod 644 /etc/subuid /etc/subgid
+
+RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
+    printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n\n[storage.options]\nmount_program = "/usr/bin/fuse-overlayfs"\n' > /etc/containers/storage.conf && \
+    chown -R builder:builder /home/builder /run/containers /var/lib/containers
+
+USER builder
+WORKDIR /home/builder
+
+# DNF/RHEL 10 stage: for building RHEL 10/Rocky 10/Alma 10 images
+FROM almalinux:10 AS dnf10
 RUN dnf install -y \
     buildah \
     dnf \
