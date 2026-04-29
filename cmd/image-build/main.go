@@ -22,6 +22,7 @@ import (
 	"github.com/travisbcotton/image-build/internal/publisher"
 	"github.com/travisbcotton/image-build/internal/publisher/local"
 	"github.com/travisbcotton/image-build/internal/publisher/registry"
+	s3pub "github.com/travisbcotton/image-build/internal/publisher/s3"
 	"github.com/travisbcotton/image-build/internal/publisher/squashfs"
 )
 
@@ -96,6 +97,11 @@ func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
 				tlsVerify = *p.TLSVerify
 			}
 			publishers = append(publishers, registry.New(p.URL, tlsVerify))
+		case "s3":
+			if p.Bucket == "" {
+				return nil, fmt.Errorf("s3 publisher requires bucket")
+			}
+			publishers = append(publishers, s3pub.New(p.Endpoint, p.Bucket, p.Prefix, p.Format))
 		default:
 			return nil, fmt.Errorf("unsupported publisher type: %s", p.Type)
 		}

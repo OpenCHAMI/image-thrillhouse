@@ -86,6 +86,8 @@ type Publish struct {
 	Prefix    string `yaml:"prefix"`
 	Path      string `yaml:"path"`
 	TLSVerify *bool  `yaml:"tls-verify"`
+	Endpoint  string `yaml:"endpoint"`
+	Format    string `yaml:"format"`
 }
 
 // Used for switch-case so I can make things easier add in the future
