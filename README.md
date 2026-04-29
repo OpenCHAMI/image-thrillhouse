@@ -4,7 +4,7 @@ A Go-based image builder that wraps `buildah` to create layered OS images with m
 
 ## Features
 
-- **Multiple Package Managers**: Support for DNF, Zypper and APT
+- **Multiple Package Managers**: Support for DNF, Zypper, APT (parent builds only) and mmdebstrap (scratch builds only)
 - **Scratch & Parent Builds**: Build from scratch or layer on top of existing images
 - **Flexible Configuration**: YAML-based declarative configuration
 - **Multiple Publishers**: 

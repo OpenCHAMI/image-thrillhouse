@@ -29,7 +29,7 @@ import (
 	"github.com/travisbcotton/image-build/internal/publisher/squashfs"
 )
 
-// Global command-line flags that are shared across all subcommands
+// Global CLI flags that are shared across all subcommands
 var (
 	cfgPath   string // Path to the YAML configuration file
 	logLevel  string // Logging level: debug, info, warn, error
@@ -49,7 +49,7 @@ var rootCmd = &cobra.Command{
 var buildCmd = &cobra.Command{
 	Use:   "build",
 	Short: "Build an image layer from a config file",
-	Long: `Build a container image using the specified configuration file.
+	Long: `Build an OS image using the specified configuration file.
 
 The configuration defines:
   - Base image to build from (scratch or existing image)
@@ -96,16 +96,16 @@ var versionCmd = &cobra.Command{
 // Returns an error if the package manager name is not recognized.
 func newBackend(manager config.Manager) (backend.Backend, error) {
 	switch manager.Name {
-	case "dnf":
-		return dnf.New(manager.Options), nil
-	case "mmdebstrap":
-		return mmdebstrap.New(manager.Options), nil
-	case "apt":
-		return apt.New(manager.Options), nil
-	case "zypper":
-		return zypper.New(manager.Options), nil
-	default:
-		return nil, fmt.Errorf("unsupported package manager: %s", manager.Name)
+		case "dnf":
+			return dnf.New(manager.Options), nil
+		case "mmdebstrap":
+			return mmdebstrap.New(manager.Options), nil
+		case "apt":
+			return apt.New(manager.Options), nil
+		case "zypper":
+			return zypper.New(manager.Options), nil
+		default:
+			return nil, fmt.Errorf("unsupported package manager: %s", manager.Name)
 	}
 }
 
@@ -119,7 +119,8 @@ func newBackend(manager config.Manager) (backend.Backend, error) {
 //   - local: Commit to local podman/buildah storage
 //   - squashfs: Create a SquashFS filesystem image (requires path)
 //   - registry: Push to OCI container registry (requires url)
-//   - s3: Upload to S3-compatible storage (requires url, bucket)
+//   - s3: Upload to S3-compatible storage (requires url, bucket, access (env provided)
+//         and secret (env provided))
 //
 // Returns an error if a publisher type is not supported or missing required fields.
 func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
@@ -131,29 +132,34 @@ func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
 	var publishers []publisher.Publisher
 	for _, p := range publishes {
 		switch p.Type {
-		case "local":
-			publishers = append(publishers, local.New())
-		case "squashfs":
-			if p.Path == "" {
-				return nil, fmt.Errorf("squashfs publisher requires path")
-			}
-			publishers = append(publishers, squashfs.New(p.Path))
-		case "registry":
-			if p.URL == "" {
-				return nil, fmt.Errorf("registry publisher requires url")
-			}
-			tlsVerify := true
-			if p.TLSVerify != nil {
-				tlsVerify = *p.TLSVerify
-			}
-			publishers = append(publishers, registry.New(p.URL, tlsVerify))
-		case "s3":
-			if p.Bucket == "" {
-				return nil, fmt.Errorf("s3 publisher requires bucket")
-			}
-			publishers = append(publishers, s3pub.New(p.Endpoint, p.Bucket, p.Prefix, p.Format))
-		default:
-			return nil, fmt.Errorf("unsupported publisher type: %s", p.Type)
+			case "local":
+				publishers = append(publishers, local.New())
+			case "squashfs":
+				if p.Path == "" {
+					return nil, fmt.Errorf("squashfs publisher requires path")
+				}
+				publishers = append(publishers, squashfs.New(p.Path))
+			case "registry":
+				if p.URL == "" {
+					return nil, fmt.Errorf("registry publisher requires url")
+				}
+				publishers = append(publishers, registry.New(p.URL, p.Options))
+			case "s3":
+				if p.URL == "" {
+					return nil, fmt.Errorf("s3 publisher requires url")
+				}
+				if p.Bucket == "" {
+					return nil, fmt.Errorf("s3 publisher requires bucket")
+				}
+				// Get S3 credentials from environment variables
+				accessKey := os.Getenv("S3_ACCESS")
+				secretKey := os.Getenv("S3_SECRET")
+				if accessKey == "" || secretKey == "" {
+					return nil, fmt.Errorf("s3 publisher requires S3_ACCESS and S3_SECRET environment variables")
+				}
+				publishers = append(publishers, s3.New(p.URL, p.Bucket, p.Prefix, accessKey, secretKey))
+			default:
+				return nil, fmt.Errorf("unsupported publisher type: %s", p.Type)
 		}
 	}
 	return publishers, nil
