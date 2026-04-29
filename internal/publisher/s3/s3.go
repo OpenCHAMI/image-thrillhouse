@@ -99,7 +99,7 @@ func (p *S3Publisher) createSquashfs(mountPath, name, tag string) (string, error
 	}
 
 	cmd := exec.Command("mksquashfs", mountPath, tmp.Name(), "-noappend", "-no-progress")
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = nil
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		os.Remove(tmp.Name())
