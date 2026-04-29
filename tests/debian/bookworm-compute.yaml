@@ -15,5 +15,10 @@ layer:
     install:
       packages:
         - systemd
+        - linux-image-arm64
 publish:
-  - type: local
+  - type: s3
+    endpoint: http://vm-host:7070
+    bucket: boot-images
+    prefix: compute
+    format: squashfs

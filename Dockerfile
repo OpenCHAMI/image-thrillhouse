@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     rpm \
     zypper \
     curl \
+    squashfs-tools \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/image-build /usr/local/bin/image-build
