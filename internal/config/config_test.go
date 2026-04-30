@@ -15,7 +15,7 @@ func TestLoadConfig(t *testing.T) {
 	configContent := `
 meta:
   name: test-image
-  tag: "1.0"
+  tags: ["1.0"]
   from: scratch
 
 layer:
@@ -51,8 +51,8 @@ publish:
 		t.Errorf("Expected name 'test-image', got '%s'", cfg.Meta.Name)
 	}
 
-	if cfg.Meta.Tag != "1.0" {
-		t.Errorf("Expected tag '1.0', got '%s'", cfg.Meta.Tag)
+	if len(cfg.Meta.Tags) != 1 || cfg.Meta.Tags[0] != "1.0" {
+		t.Errorf("Expected tags ['1.0'], got '%v'", cfg.Meta.Tags)
 	}
 
 	if cfg.Layer.Manager.Name != "dnf" {
@@ -105,7 +105,7 @@ func TestValidateMeta(t *testing.T) {
 			name: "valid meta",
 			meta: Meta{
 				Name: "test-image",
-				Tag:  "1.0",
+				Tags: []string{"1.0"},
 				From: "scratch",
 			},
 			wantErr: false,
@@ -113,13 +113,13 @@ func TestValidateMeta(t *testing.T) {
 		{
 			name: "missing name",
 			meta: Meta{
-				Tag:  "1.0",
+				Tags: []string{"1.0"},
 				From: "scratch",
 			},
 			wantErr: true,
 		},
 		{
-			name: "missing tag",
+			name: "missing tags",
 			meta: Meta{
 				Name: "test-image",
 				From: "scratch",
@@ -130,7 +130,7 @@ func TestValidateMeta(t *testing.T) {
 			name: "valid without from",
 			meta: Meta{
 				Name: "test-image",
-				Tag:  "1.0",
+				Tags: []string{"1.0"},
 			},
 			wantErr: false,
 		},

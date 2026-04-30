@@ -16,7 +16,7 @@ func TestNew(t *testing.T) {
 func TestConfigFilePath(t *testing.T) {
 	backend := New(nil)
 	expected := "/etc/zypp/zypp.conf"
-	
+
 	if got := backend.ConfigFilePath(); got != expected {
 		t.Errorf("ConfigFilePath() = %v, want %v", got, expected)
 	}
@@ -59,19 +59,19 @@ func TestInstallCommands(t *testing.T) {
 			wantCmds: 1,
 		},
 		{
-			name: "groups not supported",
+			name: "groups (patterns) supported",
 			install: config.Install{
 				Groups: []string{"Development"},
 			},
-			wantCmds: 0, // Zypper doesn't support groups
+			wantCmds: 1, // Zypper supports groups as patterns
 		},
 		{
-			name: "packages only (no groups)",
+			name: "packages and groups",
 			install: config.Install{
 				Packages: []string{"vim"},
-				Groups:   []string{"Development"}, // Should be ignored
+				Groups:   []string{"Development"},
 			},
-			wantCmds: 1,
+			wantCmds: 2, // One for packages, one for groups
 		},
 	}
 
@@ -93,13 +93,13 @@ func TestInstallCommandsStructure(t *testing.T) {
 	}
 
 	cmds := backend.InstallCommands(install)
-	
+
 	if len(cmds) != 1 {
 		t.Fatalf("Expected 1 command, got %d", len(cmds))
 	}
 
 	cmd := cmds[0]
-	
+
 	// Check command starts with zypper
 	if cmd[0] != "zypper" {
 		t.Errorf("Expected command to start with 'zypper', got '%s'", cmd[0])
@@ -139,34 +139,34 @@ func TestInstallRootCommands(t *testing.T) {
 	}
 
 	cmds := backend.InstallRootCommands(install, rootPath)
-	
+
 	if len(cmds) != 1 {
 		t.Fatalf("Expected 1 command, got %d", len(cmds))
 	}
 
 	cmd := cmds[0]
-	
-	// Check for --root flag
-	hasRoot := false
+
+	// Check for --installroot flag (not --root)
+	hasInstallRoot := false
 	for i, arg := range cmd {
-		if arg == "--root" {
-			hasRoot = true
+		if arg == "--installroot" {
+			hasInstallRoot = true
 			if i+1 < len(cmd) && cmd[i+1] == rootPath {
 				// Path is correct
 			} else {
-				t.Errorf("Expected --root to be followed by %s", rootPath)
+				t.Errorf("Expected --installroot to be followed by %s", rootPath)
 			}
 			break
 		}
 	}
-	if !hasRoot {
-		t.Error("Expected --root flag for scratch builds")
+	if !hasInstallRoot {
+		t.Error("Expected --installroot flag for scratch builds")
 	}
 }
 
 func TestValidateOptions(t *testing.T) {
 	backend := New(nil)
-	
+
 	err := backend.ValidateOptions(nil)
 	if err != nil {
 		t.Errorf("ValidateOptions() error = %v, want nil", err)
@@ -175,7 +175,7 @@ func TestValidateOptions(t *testing.T) {
 
 func TestOutputWriter(t *testing.T) {
 	backend := New(nil)
-	
+
 	writer := backend.OutputWriter()
 	if writer == nil {
 		t.Error("OutputWriter() returned nil")

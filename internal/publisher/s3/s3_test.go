@@ -67,18 +67,19 @@ func TestNew(t *testing.T) {
 
 func TestS3Publisher_Type(t *testing.T) {
 	pub := New("https://s3.amazonaws.com", "bucket", "prefix/", "key", "secret")
-	
+
 	if _, ok := interface{}(pub).(*S3Publisher); !ok {
 		t.Error("New() did not return *S3Publisher")
 	}
 }
 
 func TestDetectOS(t *testing.T) {
+	// Just verify New() works
 	pub := New("", "", "", "", "")
-	
-	// Create a temporary os-release file
-	tmpDir := t.TempDir()
-	
+	if pub == nil {
+		t.Fatal("New() returned nil")
+	}
+
 	tests := []struct {
 		name       string
 		content    string
@@ -149,13 +150,13 @@ VERSION_ID="9"`,
 func TestFindKernelVersion_Logic(t *testing.T) {
 	// Test the logic without actual filesystem
 	// In real scenario, we'd read /lib/modules/
-	
+
 	kernelVersions := []string{
 		"5.14.0-362.24.1.el9_3.x86_64",
 		"6.1.0-18-amd64",
 		"5.15.0-91-generic",
 	}
-	
+
 	for _, version := range kernelVersions {
 		if version == "" {
 			t.Error("Kernel version should not be empty")
@@ -201,11 +202,11 @@ func TestInitramfsPatterns(t *testing.T) {
 func TestVmlinuzPattern(t *testing.T) {
 	kver := "5.14.0-362.el9.x86_64"
 	expected := "vmlinuz-" + kver
-	
+
 	if !strings.HasPrefix(expected, "vmlinuz-") {
 		t.Error("vmlinuz pattern should start with 'vmlinuz-'")
 	}
-	
+
 	if !strings.Contains(expected, kver) {
 		t.Error("vmlinuz pattern should contain kernel version")
 	}
@@ -213,12 +214,12 @@ func TestVmlinuzPattern(t *testing.T) {
 
 func TestS3KeyGeneration(t *testing.T) {
 	tests := []struct {
-		name         string
-		prefix       string
-		osName       string
-		imageName    string
-		tag          string
-		expectedKey  string
+		name        string
+		prefix      string
+		osName      string
+		imageName   string
+		tag         string
+		expectedKey string
 	}{
 		{
 			name:        "with prefix",

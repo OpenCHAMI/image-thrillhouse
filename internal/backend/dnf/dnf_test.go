@@ -16,7 +16,7 @@ func TestNew(t *testing.T) {
 func TestConfigFilePath(t *testing.T) {
 	backend := New(nil)
 	expected := "/etc/dnf/dnf.conf"
-	
+
 	if got := backend.ConfigFilePath(); got != expected {
 		t.Errorf("ConfigFilePath() = %v, want %v", got, expected)
 	}
@@ -113,13 +113,13 @@ func TestInstallCommandsStructure(t *testing.T) {
 	}
 
 	cmds := backend.InstallCommands(install)
-	
+
 	if len(cmds) != 1 {
 		t.Fatalf("Expected 1 command, got %d", len(cmds))
 	}
 
 	cmd := cmds[0]
-	
+
 	// Check command starts with dnf
 	if cmd[0] != "dnf" {
 		t.Errorf("Expected command to start with 'dnf', got '%s'", cmd[0])
@@ -216,13 +216,13 @@ func TestInstallRootCommandsStructure(t *testing.T) {
 	}
 
 	cmds := backend.InstallRootCommands(install, rootPath)
-	
+
 	if len(cmds) != 1 {
 		t.Fatalf("Expected 1 command, got %d", len(cmds))
 	}
 
 	cmd := cmds[0]
-	
+
 	// Check for --installroot flag
 	hasInstallRoot := false
 	for i, arg := range cmd {
@@ -252,7 +252,7 @@ func TestInstallCommandsWithModules(t *testing.T) {
 	}
 
 	cmds := backend.InstallCommands(install)
-	
+
 	if len(cmds) != 2 {
 		t.Fatalf("Expected 2 commands (one per module), got %d", len(cmds))
 	}
@@ -285,22 +285,49 @@ func TestInstallCommandsWithModules(t *testing.T) {
 
 func TestValidateOptions(t *testing.T) {
 	backend := New(nil)
-	
-	// Currently no options are validated, should always return nil
+
+	// Test nil options
 	err := backend.ValidateOptions(nil)
 	if err != nil {
-		t.Errorf("ValidateOptions() error = %v, want nil", err)
+		t.Errorf("ValidateOptions(nil) error = %v, want nil", err)
 	}
 
-	err = backend.ValidateOptions(map[string]string{"key": "value"})
+	// Test valid options
+	err = backend.ValidateOptions(map[string]string{
+		"install-weak-deps": "false",
+		"best":              "true",
+		"skip-broken":       "true",
+		"releasever":        "9",
+	})
 	if err != nil {
-		t.Errorf("ValidateOptions() error = %v, want nil", err)
+		t.Errorf("ValidateOptions() with valid options error = %v, want nil", err)
+	}
+
+	// Test invalid option name
+	err = backend.ValidateOptions(map[string]string{"invalid-key": "value"})
+	if err == nil {
+		t.Error("ValidateOptions() with invalid option should return error")
+	}
+
+	// Test invalid option value
+	err = backend.ValidateOptions(map[string]string{"best": "maybe"})
+	if err == nil {
+		t.Error("ValidateOptions() with invalid value should return error")
+	}
+
+	// Test conflicting options
+	err = backend.ValidateOptions(map[string]string{
+		"best":   "true",
+		"nobest": "true",
+	})
+	if err == nil {
+		t.Error("ValidateOptions() with conflicting options should return error")
 	}
 }
 
 func TestOutputWriter(t *testing.T) {
 	backend := New(nil)
-	
+
 	writer := backend.OutputWriter()
 	if writer == nil {
 		t.Error("OutputWriter() returned nil")
