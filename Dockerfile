@@ -35,7 +35,7 @@ RUN touch /etc/subgid /etc/subuid && \
     chmod 644 /etc/subuid /etc/subgid
 
 RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
-    printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n\n[storage.options]\nmount_program = "/usr/bin/fuse-overlayfs"\n' > /etc/containers/storage.conf && \
+    printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > /etc/containers/storage.conf && \
     chown -R builder:builder /home/builder /run/containers /var/lib/containers
 
 USER builder
@@ -108,7 +108,7 @@ RUN touch /etc/subgid /etc/subuid && \
     chmod 644 /etc/subuid /etc/subgid
 
 RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
-    printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n\n[storage.options]\nmount_program = "/usr/bin/fuse-overlayfs"\n' > /etc/containers/storage.conf && \
+    printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > /etc/containers/storage.conf && \
     chown -R builder:builder /home/builder /run/containers /var/lib/containers
 
 USER builder
@@ -139,7 +139,7 @@ RUN touch /etc/subgid /etc/subuid && \
     chmod 644 /etc/subuid /etc/subgid
 
 RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
-    printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n\n[storage.options]\nmount_program = "/usr/bin/fuse-overlayfs"\n' > /etc/containers/storage.conf && \
+    printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > /etc/containers/storage.conf && \
     chown -R builder:builder /home/builder /run/containers /var/lib/containers
 
 USER builder

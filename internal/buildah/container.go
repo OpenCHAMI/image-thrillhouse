@@ -94,6 +94,12 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 			command := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
 			command.Stdout = out
 			command.Stderr = out
+			// Set environment variables for RPM/DNF to work in containers
+			command.Env = append(os.Environ(),
+				"LANG=C.UTF-8",
+				"LC_ALL=C.UTF-8",
+				"RPM_INSTALL_PREFIX="+c.MountPath(),
+			)
 			err := command.Run()
 			out.Flush(err)
 			//dnfOut.Flush(err)
@@ -249,11 +255,11 @@ func (c *Container) Commit(ctx context.Context, name, tag string) (string, error
 func (c *Container) CommitWithLabels(ctx context.Context, name, tag string, labels map[string]string) (string, error) {
 	log := slog.With("component", "container")
 	log.Debug("Commit Container", "ID", c.GetID(), "Name", c.GetName(), "as", name, ":", tag, "labels", len(labels))
-	
+
 	options := buildah.CommitOptions{
 		AdditionalTags: []string{fmt.Sprintf("localhost/%s:%s", name, tag)},
 	}
-	
+
 	// Add labels if provided
 	if len(labels) > 0 {
 		// Apply labels using buildah config
@@ -261,7 +267,7 @@ func (c *Container) CommitWithLabels(ctx context.Context, name, tag string, labe
 			c.Builder.SetLabel(key, value)
 		}
 	}
-	
+
 	_, _, _, err := c.Builder.Commit(ctx, nil, options)
 	if err != nil {
 		return "", fmt.Errorf("commit: %w", err)

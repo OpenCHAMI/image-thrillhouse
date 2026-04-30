@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 
 	"github.com/mattn/go-shellwords"
 	"github.com/travisbcotton/image-build/internal/backend"
@@ -58,13 +59,38 @@ func (b *Builder) Build(ctx context.Context) error {
 		return fmt.Errorf("create container: %w", err)
 	}
 	defer c.Delete() // Always clean up the container when done
-	
+
 	log := slog.With("component", "builder")
 	log.Debug("Created container", "id", c.GetID(), "name", c.GetName(), "mountPath", c.MountPath())
 
 	// Apply package manager configuration (e.g., dnf.conf)
 	if err := b.applyManagerConfig(c); err != nil {
 		return fmt.Errorf("write manager config: %w", err)
+	}
+
+	// Write RPM macros to disable file capabilities for scratch builds with DNF
+	// This works around issues with overlay filesystems that don't support extended attributes
+	if b.cfg.Meta.From == "scratch" && b.cfg.Layer.Manager.Name == "dnf" {
+		log.Debug("Writing RPM macros to disable file capabilities")
+		rpmMacros := `%_netsharedpath /sys:/proc
+%_install_langs C:en:en_US:en_US.UTF-8
+%__brp_mangle_shebangs %{nil}
+%_missing_build_ids_terminate_build 0
+%_file_context_file %{nil}
+`
+		// Create /etc directory structure first
+		etcPath := c.MountPath() + "/etc"
+		rpmPath := etcPath + "/rpm"
+		if err := os.MkdirAll(rpmPath, 0755); err != nil {
+			log.Warn("Failed to create /etc/rpm directory", "error", err)
+		}
+
+		if err := c.WriteFile(config.File{
+			Path:    "/etc/rpm/macros.image-build",
+			Content: rpmMacros,
+		}); err != nil {
+			log.Warn("Failed to write RPM macros", "error", err)
+		}
 	}
 
 	// Write repository configurations (e.g., yum repos)
@@ -214,10 +240,10 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 func (b *Builder) runCommands(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	log.Info("Starting Run Commands:", "commands", b.cfg.Layer.Actions.Commands)
-	
+
 	for _, cmd := range b.cfg.Layer.Actions.Commands {
 		log.Debug("Executing", "command", cmd)
-		
+
 		switch cmd.Type() {
 		case config.CommandRun:
 			// Parse the command string into parts (handles quoting properly)
@@ -229,19 +255,19 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 			if err := c.Run(ctx, parts, container.RunModeContainer, out); err != nil {
 				return fmt.Errorf("run %s: %w", cmd.Run, err)
 			}
-			
+
 		case config.CommandScript:
 			// Execute a multi-line script
 			out := container.NewBufLogWriter("stdout")
 			if err := c.RunScript(ctx, cmd.Script, out); err != nil {
 				return fmt.Errorf("run script: %w", err)
 			}
-			
+
 		default:
 			return fmt.Errorf("command has no run or script")
 		}
 	}
-	
+
 	log.Info("Done Run Commands:", "commands", b.cfg.Layer.Actions.Commands)
 	return nil
 }

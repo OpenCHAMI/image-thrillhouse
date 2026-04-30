@@ -28,6 +28,10 @@ func (w *dnfLogWriter) Write(p []byte) (n int, err error) {
 // The buffer is reset after processing.
 func (w *dnfLogWriter) Flush(err error) {
 	output := w.buf.String()
+
+	// Log full raw output for debugging
+	slog.Debug("DNF raw output", "output", output)
+
 	w.buf.Reset()
 
 	var installed []string
@@ -62,8 +66,11 @@ func (w *dnfLogWriter) Flush(err error) {
 		slog.Warn("dnf warning", "msg", w)
 	}
 	if err != nil {
+		// Log all errors
 		for _, e := range errors {
 			slog.Error("dnf error", "msg", e)
 		}
+		// Always log the full output when there's an error for debugging
+		slog.Error("DNF command failed", "full_output", output, "exit_error", err)
 	}
 }

@@ -132,6 +132,8 @@ func (d *DnfBackend) InstallRootCommands(install config.Install, rootPath string
 		cmd := make([]string, 0, 12+len(install.Packages))
 		cmd = append(cmd, "dnf", "-q")
 		cmd = d.addOptionFlags(cmd)
+		// Add RPM options to work around overlay filesystem issues
+		cmd = append(cmd, "--setopt=tsflags=nodocs")
 		cmd = append(cmd, "--installroot", rootPath, "install", "-y")
 		cmd = append(cmd, install.Packages...)
 		cmds = append(cmds, cmd)
