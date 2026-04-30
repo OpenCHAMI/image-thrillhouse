@@ -84,7 +84,8 @@ WORKDIR /home/builder
 
 # DNF/RHEL 9 stage: for building RHEL 9/Rocky 9/Alma 9 images (default)
 FROM almalinux:9 AS dnf
-RUN dnf install -y \
+# curl doesn't like curl-minimum hence allowerasing
+RUN dnf install -y --allowerasing \
     buildah \
     dnf \
     dnf-plugins-core \
@@ -143,3 +144,4 @@ RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage
 
 USER builder
 WORKDIR /home/builder
+
