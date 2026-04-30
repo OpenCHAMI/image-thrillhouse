@@ -201,6 +201,33 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 		if !b.backend.SupportsInstallRoot() {
 			return fmt.Errorf("backend %s does not support scratch builds", b.cfg.Layer.Manager.Name)
 		}
+
+		// For DNF scratch builds, initialize the base directory structure first
+		// This works around issues with the filesystem package failing to unpack
+		if b.cfg.Layer.Manager.Name == "dnf" {
+			log.Debug("Pre-creating base directory structure for DNF scratch build")
+			mountPath := c.MountPath()
+			baseDirs := []string{
+				"/dev", "/proc", "/sys", "/tmp", "/run", "/var", "/var/lib", "/var/lib/rpm",
+				"/etc", "/etc/yum.repos.d", "/usr", "/usr/bin", "/usr/lib", "/usr/lib64",
+				"/usr/sbin", "/usr/share", "/boot", "/home", "/root", "/opt", "/srv", "/media", "/mnt",
+			}
+			for _, dir := range baseDirs {
+				fullPath := mountPath + dir
+				if err := os.MkdirAll(fullPath, 0755); err != nil {
+					log.Warn("Failed to create base directory", "dir", dir, "error", err)
+				}
+			}
+
+			// Initialize RPM database
+			log.Debug("Initializing RPM database")
+			rpmdbCmd := []string{"rpm", "--root", mountPath, "--initdb"}
+			out := b.backend.OutputWriter()
+			if err := c.Run(ctx, rpmdbCmd, container.RunModeHost, out); err != nil {
+				log.Warn("Failed to initialize RPM database", "error", err)
+			}
+		}
+
 		// Get commands to run on the host targeting the container mount
 		cmds := b.backend.InstallRootCommands(b.cfg.Layer.Actions.Install, c.MountPath())
 		for _, cmd := range cmds {

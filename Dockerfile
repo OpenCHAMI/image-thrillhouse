@@ -30,8 +30,8 @@ COPY --from=builder /src/image-build /usr/local/bin/image-build
 RUN useradd -m --uid 1001 builder
 
 RUN touch /etc/subgid /etc/subuid && \
-    echo builder:10000:65536 > /etc/subuid && \
-    echo builder:10000:65536 > /etc/subgid && \
+    echo builder:100000:65536 > /etc/subuid && \
+    echo builder:100000:65536 > /etc/subgid && \
     chmod 644 /etc/subuid /etc/subgid
 
 RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
@@ -70,11 +70,11 @@ RUN touch /etc/subgid /etc/subuid && \
     	chmod 0755 "$(command -v newuidmap)" && \
     	chmod 0755 "$(command -v newgidmap)" && \
 	chmod 644 /etc/subgid /etc/subuid && \
-	echo builder:10000:65536 > /etc/subuid && \
-	echo builder:10000:65536 > /etc/subgid
+	echo builder:100000:65536 > /etc/subuid && \
+	echo builder:100000:65536 > /etc/subgid
 
 RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
-    printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n\n[storage.options]\nmount_program = "/usr/bin/fuse-overlayfs"\n' > /etc/containers/storage.conf && \
+    printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > /etc/containers/storage.conf && \
     chown -R builder:builder /home/builder /run/containers /var/lib/containers
 
 RUN echo "user_allow_other" >> /etc/fuse.conf
@@ -82,9 +82,9 @@ RUN echo "user_allow_other" >> /etc/fuse.conf
 USER builder
 WORKDIR /home/builder
 
+
 # DNF/RHEL 9 stage: for building RHEL 9/Rocky 9/Alma 9 images (default)
 FROM almalinux:9 AS dnf
-# curl doesn't like curl-minimum hence allowerasing
 RUN dnf install -y --allowerasing \
     buildah \
     dnf \
@@ -103,8 +103,8 @@ COPY --from=builder /src/image-build /usr/local/bin/image-build
 RUN useradd -m --uid 1001 builder
 
 RUN touch /etc/subgid /etc/subuid && \
-    echo builder:10000:65536 > /etc/subuid && \
-    echo builder:10000:65536 > /etc/subgid && \
+    echo builder:100000:65536 > /etc/subuid && \
+    echo builder:100000:65536 > /etc/subgid && \
     chmod 644 /etc/subuid /etc/subgid
 
 RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
@@ -113,6 +113,7 @@ RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage
 
 USER builder
 WORKDIR /home/builder
+
 
 # DNF/RHEL 10 stage: for building RHEL 10/Rocky 10/Alma 10 images
 FROM almalinux:10 AS dnf10
@@ -134,8 +135,8 @@ COPY --from=builder /src/image-build /usr/local/bin/image-build
 RUN useradd -m --uid 1001 builder
 
 RUN touch /etc/subgid /etc/subuid && \
-    echo builder:10000:65536 > /etc/subuid && \
-    echo builder:10000:65536 > /etc/subgid && \
+    echo builder:100000:65536 > /etc/subuid && \
+    echo builder:100000:65536 > /etc/subgid && \
     chmod 644 /etc/subuid /etc/subgid
 
 RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
