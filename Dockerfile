@@ -23,16 +23,23 @@ RUN zypper install -y \
     shadow \
     gpgme \
     device-mapper \
+    libcap-progs \
     && zypper clean --all
 
 COPY --from=builder /src/image-build /usr/local/bin/image-build
 
-RUN useradd -m --uid 1001 builder
+# Allow non-root to run buildah commands
+RUN setcap cap_setuid=ep "$(command -v newuidmap)" && \
+    setcap cap_setgid=ep "$(command -v newgidmap)" && \
+    chmod 0755 "$(command -v newuidmap)" && \
+    chmod 0755 "$(command -v newgidmap)" && \
+    echo "builder:2000:50000" > /etc/subuid && \
+    echo "builder:2000:50000" > /etc/subgid
 
-RUN touch /etc/subgid /etc/subuid && \
-    echo builder:100000:65536 > /etc/subuid && \
-    echo builder:100000:65536 > /etc/subgid && \
-    chmod 644 /etc/subuid /etc/subgid
+# Create local user for rootless image builds
+RUN useradd --uid 1002 builder && \
+    mkdir -p /home/builder && \
+    chown -R builder /home/builder
 
 RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
     printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > /etc/containers/storage.conf && \
@@ -40,6 +47,10 @@ RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage
 
 USER builder
 WORKDIR /home/builder
+
+ENV BUILDAH_ISOLATION=chroot
+
+ENTRYPOINT ["/usr/bin/buildah", "unshare"]
 
 # APT stage: for building Debian/Ubuntu images with APT/mmdebstrap
 FROM debian:bookworm-slim AS apt
@@ -62,7 +73,7 @@ COPY --from=builder /src/image-build /usr/local/bin/image-build
 
 RUN chcon -t container_runtime_exec_t /usr/local/bin/image-build 2>/dev/null || true
 
-RUN useradd -m --uid 1001 builder
+RUN useradd -m --uid 1002 builder
 
 RUN touch /etc/subgid /etc/subuid && \
 	setcap cap_setuid=ep "$(command -v newuidmap)" && \
@@ -70,8 +81,8 @@ RUN touch /etc/subgid /etc/subuid && \
     	chmod 0755 "$(command -v newuidmap)" && \
     	chmod 0755 "$(command -v newgidmap)" && \
 	chmod 644 /etc/subgid /etc/subuid && \
-	echo builder:100000:65536 > /etc/subuid && \
-	echo builder:100000:65536 > /etc/subgid
+	echo builder:2000:50000 > /etc/subuid && \
+	echo builder:2000:50000 > /etc/subgid
 
 RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
     printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > /etc/containers/storage.conf && \
@@ -100,12 +111,18 @@ RUN dnf install -y --allowerasing \
 
 COPY --from=builder /src/image-build /usr/local/bin/image-build
 
-RUN useradd -m --uid 1001 builder
+# Allow non-root to run buildah commands
+RUN setcap cap_setuid=ep "$(command -v newuidmap)" && \
+    setcap cap_setgid=ep "$(command -v newgidmap)" && \
+    chmod 0755 "$(command -v newuidmap)" && \
+    chmod 0755 "$(command -v newgidmap)" && \
+    rpm --restore shadow-utils && \
+    echo "builder:2000:50000" > /etc/subuid && \
+    echo "builder:2000:50000" > /etc/subgid
 
-RUN touch /etc/subgid /etc/subuid && \
-    echo builder:100000:65536 > /etc/subuid && \
-    echo builder:100000:65536 > /etc/subgid && \
-    chmod 644 /etc/subuid /etc/subgid
+# Create local user for rootless image builds
+RUN useradd --uid 1002 builder && \
+    chown -R builder /home/builder
 
 RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
     printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > /etc/containers/storage.conf && \
@@ -113,6 +130,10 @@ RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage
 
 USER builder
 WORKDIR /home/builder
+
+ENV BUILDAH_ISOLATION=chroot
+
+ENTRYPOINT ["/usr/bin/buildah", "unshare"]
 
 
 # DNF/RHEL 10 stage: for building RHEL 10/Rocky 10/Alma 10 images
@@ -132,12 +153,18 @@ RUN dnf install -y \
 
 COPY --from=builder /src/image-build /usr/local/bin/image-build
 
-RUN useradd -m --uid 1001 builder
+# Allow non-root to run buildah commands
+RUN setcap cap_setuid=ep "$(command -v newuidmap)" && \
+    setcap cap_setgid=ep "$(command -v newgidmap)" && \
+    chmod 0755 "$(command -v newuidmap)" && \
+    chmod 0755 "$(command -v newgidmap)" && \
+    rpm --restore shadow-utils && \
+    echo "builder:2000:50000" > /etc/subuid && \
+    echo "builder:2000:50000" > /etc/subgid
 
-RUN touch /etc/subgid /etc/subuid && \
-    echo builder:100000:65536 > /etc/subuid && \
-    echo builder:100000:65536 > /etc/subgid && \
-    chmod 644 /etc/subuid /etc/subgid
+# Create local user for rootless image builds
+RUN useradd --uid 1002 builder && \
+    chown -R builder /home/builder
 
 RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage && \
     printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > /etc/containers/storage.conf && \
@@ -146,3 +173,6 @@ RUN mkdir -p /etc/containers /run/containers/storage /var/lib/containers/storage
 USER builder
 WORKDIR /home/builder
 
+ENV BUILDAH_ISOLATION=chroot
+
+ENTRYPOINT ["/usr/bin/buildah", "unshare"]
