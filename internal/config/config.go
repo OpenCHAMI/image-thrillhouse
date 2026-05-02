@@ -3,7 +3,10 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
+	"html/template"
+	"log/slog"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -125,8 +128,19 @@ func (c *Command) Type() CommandType {
 	return CommandRun
 }
 
+// hasTemplateDirectives reports whether the given file content contains Go
+// text/template directives (i.e., contains "{{"). It is used by LoadConfig
+// to warn when a template-looking config is loaded without vars.
+func hasTemplateDirectives(content []byte) bool {
+	return bytes.Contains(content, []byte("{{"))
+}
+
 // LoadConfig reads and parses a YAML configuration file from the given path.
 // It also validates the configuration structure and required fields.
+//
+// If the file contains template directives ("{{") but no variables are being
+// supplied, a warning is logged — callers that need rendering should use
+// LoadConfigWithVars instead.
 //
 // Returns an error if:
 //   - The file cannot be read
@@ -138,6 +152,10 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	if hasTemplateDirectives(c) {
+		slog.Warn("config contains template directives but no vars provided, use --var or --var-file", "path", path)
+	}
+
 	var cfg Config
 	if err := yaml.Unmarshal(c, &cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
@@ -147,6 +165,53 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// LoadConfigWithVars reads a YAML config file, renders it as a Go template
+// against the provided variables, then unmarshals and validates the result.
+func LoadConfigWithVars(path string, vars map[string]string) (*Config, error) {
+	rendered, err := RenderConfig(path, vars)
+	if err != nil {
+		return nil, err
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(rendered), &cfg); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+// RenderConfig reads the file at path and renders it as a Go text/template
+// using the provided vars. Missing keys are treated as errors so that typos
+// in variable names fail loudly rather than silently producing empty values.
+func RenderConfig(path string, vars map[string]string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+
+	data := make(map[string]interface{})
+	for k, v := range vars {
+		data[k] = v
+	}
+
+	t, err := template.New("config").Option("missingkey=error").Parse(string(raw))
+	if err != nil {
+		return "", fmt.Errorf("parse template: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("execute template: %w", err)
+	}
+
+	return buf.String(), nil
 }
 
 // OpenSCAP defines security scanning configuration using OpenSCAP tools.

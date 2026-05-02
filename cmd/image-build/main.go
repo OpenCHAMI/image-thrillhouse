@@ -31,9 +31,12 @@ import (
 
 // Global CLI flags that are shared across all subcommands
 var (
-	cfgPath   string // Path to the YAML configuration file
-	logLevel  string // Logging level: debug, info, warn, error
-	logFormat string // Logging format: json or text
+	cfgPath      string   // Path to the YAML configuration file
+	logLevel     string   // Logging level: debug, info, warn, error
+	logFormat    string   // Logging format: json or text
+	varFile      string   // Path to a variables file (yaml or json) used for templating
+	vars         []string // Variable overrides in key=value format
+	renderOutput string   // Output path for the render command (default: stdout)
 )
 
 // rootCmd is the base command that is run when no subcommands are provided.
@@ -73,6 +76,14 @@ This checks:
   - Package manager is supported
   - Publisher types are valid`,
 	RunE: runValidate,
+}
+
+// renderCmd renders a config file template against the provided variables
+// and prints (or writes) the result without executing a build.
+var renderCmd = &cobra.Command{
+	Use:   "render",
+	Short: "Render a config file template and print the result",
+	RunE:  runRender,
 }
 
 // versionCmd prints the version information for the image-build tool.
@@ -219,9 +230,16 @@ func init() {
 	buildCmd.Flags().StringVarP(&cfgPath, "config", "c", "./test.yaml", "path to YAML config")
 	validateCmd.Flags().StringVarP(&cfgPath, "config", "c", "./test.yaml", "path to YAML config")
 
+	// Render-specific flags (templating: variables file + key=value overrides)
+	renderCmd.Flags().StringVarP(&cfgPath, "config", "c", "./test.yaml", "path to YAML config")
+	renderCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
+	renderCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
+	renderCmd.Flags().StringVarP(&renderOutput, "output", "o", "", "output file (default: stdout)")
+
 	// Register all subcommands under the root command
 	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(validateCmd)
+	rootCmd.AddCommand(renderCmd)
 	rootCmd.AddCommand(versionCmd)
 }
 
@@ -241,10 +259,24 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Load the YAML configuration file
-	cfg, err := config.LoadConfig(cfgPath)
-	if err != nil {
-		return err
+	// Load the YAML configuration file, optionally rendering it as a template
+	// when --var-file or --var flags were provided.
+	var cfg *config.Config
+	if varFile != "" || len(vars) != 0 {
+		mergedVars, err := config.LoadVars(varFile, vars)
+		if err != nil {
+			return fmt.Errorf("load vars: %w", err)
+		}
+		cfg, err = config.LoadConfigWithVars(cfgPath, mergedVars)
+		if err != nil {
+			return err
+		}
+	} else {
+		var err error
+		cfg, err = config.LoadConfig(cfgPath)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Create the package manager backend (dnf, zypper, apt, etc.)
@@ -294,6 +326,36 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	// Log success message
 	slog.Info("config is valid", "path", cfgPath)
+	return nil
+}
+
+// runRender renders a config file template against the provided variables
+// (from --var-file and/or --var key=value pairs) and writes the result to
+// stdout, or to the path provided via --output.
+func runRender(cmd *cobra.Command, args []string) error {
+	if err := setupLogger(logLevel, logFormat); err != nil {
+		return err
+	}
+
+	mergedVars, err := config.LoadVars(varFile, vars)
+	if err != nil {
+		return fmt.Errorf("load vars: %w", err)
+	}
+
+	rendered, err := config.RenderConfig(cfgPath, mergedVars)
+	if err != nil {
+		return fmt.Errorf("render config: %w", err)
+	}
+
+	if renderOutput != "" {
+		if err := os.WriteFile(renderOutput, []byte(rendered), 0644); err != nil {
+			return fmt.Errorf("write output: %w", err)
+		}
+		slog.Info("rendered config written", "path", renderOutput)
+	} else {
+		fmt.Print(rendered)
+	}
+
 	return nil
 }
 
