@@ -168,8 +168,9 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 // LoadConfigWithVars reads a YAML config file, renders it as a Go template
-// against the provided variables, then unmarshals and validates the result.
-func LoadConfigWithVars(path string, vars map[string]string) (*Config, error) {
+// against the provided variables (arbitrary YAML/JSON-shaped data), then
+// unmarshals and validates the result.
+func LoadConfigWithVars(path string, vars map[string]interface{}) (*Config, error) {
 	rendered, err := RenderConfig(path, vars)
 	if err != nil {
 		return nil, err
@@ -188,17 +189,13 @@ func LoadConfigWithVars(path string, vars map[string]string) (*Config, error) {
 }
 
 // RenderConfig reads the file at path and renders it as a Go text/template
-// using the provided vars. Missing keys are treated as errors so that typos
-// in variable names fail loudly rather than silently producing empty values.
-func RenderConfig(path string, vars map[string]string) (string, error) {
+// using the provided vars (arbitrary YAML/JSON-shaped data). Missing keys are
+// treated as errors so that typos in variable names fail loudly rather than
+// silently producing empty values.
+func RenderConfig(path string, vars map[string]interface{}) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
-	}
-
-	data := make(map[string]interface{})
-	for k, v := range vars {
-		data[k] = v
 	}
 
 	t, err := template.New("config").Option("missingkey=error").Parse(string(raw))
@@ -207,7 +204,7 @@ func RenderConfig(path string, vars map[string]string) (string, error) {
 	}
 
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, data); err != nil {
+	if err := t.Execute(&buf, vars); err != nil {
 		return "", fmt.Errorf("execute template: %w", err)
 	}
 
