@@ -5,9 +5,9 @@ package config
 import (
 	"bytes"
 	"fmt"
-	"html/template"
 	"log/slog"
 	"os"
+	"text/template"
 
 	"gopkg.in/yaml.v3"
 )
