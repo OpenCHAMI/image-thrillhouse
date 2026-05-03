@@ -280,7 +280,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	// Always load vars (possibly empty). Templating is supported in both
 	// single-config and manifest modes.
-	mergedVars, err := config.LoadVars(varFile, vars)
+	mergedVars, err := config.LoadVars([]string{varFile}, vars)
 	if err != nil {
 		return fmt.Errorf("load vars: %w", err)
 	}
@@ -305,6 +305,15 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("get layer: %w", err)
 		}
 
+		// Load layer-specific var files and merge with CLI vars.
+		// Layer var files have lower priority than CLI vars.
+		layerVars, err := config.LoadVars(layer.VarFiles, nil)
+		if err != nil {
+			return fmt.Errorf("load layer vars: %w", err)
+		}
+		mergedVars = config.MergeVars(layerVars, mergedVars)
+
+		// Build the full list of var files (CLI + layer) for tag computation.
 		allVarFiles := []string{}
 		if varFile != "" {
 			allVarFiles = append(allVarFiles, varFile)
@@ -363,7 +372,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Load any provided vars (possibly empty) and render+validate the config.
-	mergedVars, err := config.LoadVars(varFile, vars)
+	mergedVars, err := config.LoadVars([]string{varFile}, vars)
 	if err != nil {
 		return fmt.Errorf("load vars: %w", err)
 	}
@@ -391,7 +400,7 @@ func runRender(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mergedVars, err := config.LoadVars(varFile, vars)
+	mergedVars, err := config.LoadVars([]string{varFile}, vars)
 	if err != nil {
 		return fmt.Errorf("load vars: %w", err)
 	}

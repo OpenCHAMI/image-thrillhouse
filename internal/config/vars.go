@@ -9,13 +9,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func LoadVars(varFile string, cliVars []string) (map[string]interface{}, error) {
+func LoadVars(varFiles []string, cliVars []string) (map[string]interface{}, error) {
 	merged := make(map[string]interface{})
 
-	if varFile != "" {
-		fileVars, err := loadVarFile(varFile)
+	for _, vf := range varFiles {
+		fileVars, err := loadVarFile(vf)
 		if err != nil {
-			return nil, fmt.Errorf("load var file: %w", err)
+			return nil, fmt.Errorf("load var file %s: %w", vf, err)
 		}
 		merged = deepMerge(merged, fileVars)
 	}
@@ -29,6 +29,10 @@ func LoadVars(varFile string, cliVars []string) (map[string]interface{}, error) 
 	}
 
 	return merged, nil
+}
+
+func MergeVars(base, override map[string]interface{}) map[string]interface{} {
+	return deepMerge(base, override)
 }
 
 func loadVarFile(path string) (map[string]interface{}, error) {
