@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"regexp"
 	"text/template"
 
 	"gopkg.in/yaml.v3"
@@ -127,26 +128,23 @@ func (c *Command) Type() CommandType {
 	return CommandRun
 }
 
-// hasTemplateDirectives reports whether the given file content contains Go
-// text/template directives (i.e., contains "{{"). It is used by LoadConfig
-// to warn when a template-looking config is loaded without vars.
-func hasTemplateDirectives(content []byte) bool {
-	return bytes.Contains(content, []byte("{{"))
-}
-
-// LoadConfigRaw reads and unmarshals a YAML configuration file from the given
-// path without validating it. The raw form is used to hash the unrendered
-// template for deterministic tag computation (see internal/manifest), so this
-// function intentionally skips Validate — render-then-validate happens in
-// LoadConfigWithVars.
+// LoadConfigRaw reads a YAML configuration file from the given path and
+// unmarshals it without validating it. Before unmarshalling, any Go
+// text/template directives ("{{ ... }}") are replaced with a placeholder
+// string so that the raw template can be parsed as valid YAML — this is used
+// by the manifest layer to hash the unrendered template for deterministic
+// tag computation. Validation only happens in LoadConfigWithVars after
+// rendering.
 func LoadConfigRaw(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
+	cleaned := replaceTtemplatePlaceholders(data)
+
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := yaml.Unmarshal(cleaned, &cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return &cfg, nil
@@ -217,4 +215,10 @@ func (m *Meta) TLSVerify() bool {
 		return *m.FromTLSVerify
 	}
 	return true // default to verify
+}
+
+func replaceTtemplatePlaceholders(data []byte) []byte {
+	// replace {{ ... }} with a placeholder string
+	re := regexp.MustCompile(`\{\{[^}]*\}\}`)
+	return re.ReplaceAll(data, []byte("__placeholder__"))
 }
