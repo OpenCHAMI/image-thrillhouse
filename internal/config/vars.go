@@ -13,6 +13,9 @@ func LoadVars(varFiles []string, cliVars []string) (map[string]interface{}, erro
 	merged := make(map[string]interface{})
 
 	for _, vf := range varFiles {
+		if vf == "" {
+			continue // skip empty strings
+		}
 		fileVars, err := loadVarFile(vf)
 		if err != nil {
 			return nil, fmt.Errorf("load var file %s: %w", vf, err)
