@@ -50,7 +50,7 @@ func hashLayer(h io.Writer, layer LayerInput) error {
 	}
 
 	// src files and URLs from config
-	cfg, err := config.LoadConfig(layer.ConfigPath)
+	cfg, err := config.LoadConfigRaw(layer.ConfigPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}

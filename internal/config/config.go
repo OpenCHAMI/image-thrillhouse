@@ -5,7 +5,6 @@ package config
 import (
 	"bytes"
 	"fmt"
-	"log/slog"
 	"os"
 	"text/template"
 
@@ -135,35 +134,21 @@ func hasTemplateDirectives(content []byte) bool {
 	return bytes.Contains(content, []byte("{{"))
 }
 
-// LoadConfig reads and parses a YAML configuration file from the given path.
-// It also validates the configuration structure and required fields.
-//
-// If the file contains template directives ("{{") but no variables are being
-// supplied, a warning is logged — callers that need rendering should use
-// LoadConfigWithVars instead.
-//
-// Returns an error if:
-//   - The file cannot be read
-//   - The YAML is invalid
-//   - Validation fails (missing required fields, etc.)
-func LoadConfig(path string) (*Config, error) {
-	c, err := os.ReadFile(path)
+// LoadConfigRaw reads and unmarshals a YAML configuration file from the given
+// path without validating it. The raw form is used to hash the unrendered
+// template for deterministic tag computation (see internal/manifest), so this
+// function intentionally skips Validate — render-then-validate happens in
+// LoadConfigWithVars.
+func LoadConfigRaw(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
-	if hasTemplateDirectives(c) {
-		slog.Warn("config contains template directives but no vars provided, use --var or --var-file", "path", path)
-	}
-
 	var cfg Config
-	if err := yaml.Unmarshal(c, &cfg); err != nil {
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
-	}
-
 	return &cfg, nil
 }
 
