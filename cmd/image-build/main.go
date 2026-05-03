@@ -230,14 +230,14 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "json", "log format (json, text)")
 
 	// Build-specific flags (only available to build and validate commands)
-	buildCmd.Flags().StringVarP(&cfgPath, "config", "c", "./test.yaml", "path to YAML config")
+	buildCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
 	buildCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file")
 	buildCmd.Flags().StringVar(&layerName, "layer", "", "layer name to build (requires --manifest)")
 
-	validateCmd.Flags().StringVarP(&cfgPath, "config", "c", "./test.yaml", "path to YAML config")
+	validateCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
 
 	// Render-specific flags (templating: variables file + key=value overrides)
-	renderCmd.Flags().StringVarP(&cfgPath, "config", "c", "./test.yaml", "path to YAML config")
+	renderCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
 	renderCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
 	renderCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 	renderCmd.Flags().StringVarP(&renderOutput, "output", "o", "", "output file (default: stdout)")
