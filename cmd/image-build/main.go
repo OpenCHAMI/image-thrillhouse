@@ -305,28 +305,29 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("get layer: %w", err)
 		}
 
-		// Load layer-specific var files and merge with CLI vars.
-		// Layer var files have lower priority than CLI vars.
+		// CLI-supplied var files (used by ComputeBuildVars when hashing the
+		// raw template).
+		globalVarFiles := []string{}
+		if varFile != "" {
+			globalVarFiles = append(globalVarFiles, varFile)
+		}
+
+		// Load layer-specific var files and merge under the CLI vars. Layer
+		// var files have lower priority than CLI vars.
 		layerVars, err := config.LoadVars(layer.VarFiles, nil)
 		if err != nil {
 			return fmt.Errorf("load layer vars: %w", err)
 		}
 		mergedVars = config.MergeVars(layerVars, mergedVars)
 
-		// Build the full list of var files (CLI + layer) for tag computation.
-		allVarFiles := []string{}
-		if varFile != "" {
-			allVarFiles = append(allVarFiles, varFile)
-		}
-		allVarFiles = append(allVarFiles, layer.VarFiles...)
-
-		computedTag, err := dag.ComputeTag(layerName, allVarFiles)
+		// Compute deterministic tags for this layer and all its parents, then
+		// inject them into the vars so the template can reference parent tags.
+		buildVars, err := manifest.ComputeBuildVars(dag, layerName, globalVarFiles)
 		if err != nil {
-			return fmt.Errorf("compute tag: %w", err)
+			return fmt.Errorf("compute build vars: %w", err)
 		}
-		slog.Info("computed tag", "layer", layerName, "tag", computedTag)
+		mergedVars = config.MergeVars(mergedVars, buildVars)
 
-		mergedVars["tag"] = computedTag
 		configPath = layer.Config
 	}
 

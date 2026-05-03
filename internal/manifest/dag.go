@@ -2,6 +2,8 @@ package manifest
 
 import (
 	"fmt"
+	"log/slog"
+	"strings"
 
 	"github.com/travisbcotton/image-build/internal/tag"
 )
@@ -134,4 +136,44 @@ func (d *DAG) ComputeTag(name string, globalVarFiles []string) (string, error) {
 	}
 
 	return tag.Compute(layerInput, ancestorInputs)
+}
+
+// in manifest package or a new internal/build package
+func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string) (map[string]interface{}, error) {
+	layer, err := dag.Get(layerName)
+	if err != nil {
+		return nil, fmt.Errorf("get layer: %w", err)
+	}
+
+	allVarFiles := append(globalVarFiles, layer.VarFiles...)
+
+	vars := make(map[string]interface{})
+
+	// compute this layer's tag
+	layerTag, err := dag.ComputeTag(layerName, allVarFiles)
+	if err != nil {
+		return nil, fmt.Errorf("compute tag for %s: %w", layerName, err)
+	}
+	vars["tag"] = layerTag
+	slog.Info("computed tag", "layer", layerName, "tag", layerTag)
+
+	// compute parent tags
+	for _, depName := range layer.DependsOn {
+		depLayer, err := dag.Get(depName)
+		if err != nil {
+			return nil, fmt.Errorf("get dep layer: %w", err)
+		}
+
+		depVarFiles := append(globalVarFiles, depLayer.VarFiles...)
+		depTag, err := dag.ComputeTag(depName, depVarFiles)
+		if err != nil {
+			return nil, fmt.Errorf("compute tag for dep %s: %w", depName, err)
+		}
+
+		varName := strings.ReplaceAll(depName, "-", "_") + "_tag"
+		vars[varName] = depTag
+		slog.Debug("computed parent tag", "layer", depName, "var", varName, "tag", depTag)
+	}
+
+	return vars, nil
 }
