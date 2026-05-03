@@ -22,6 +22,7 @@ import (
 	"github.com/travisbcotton/image-build/internal/backend/zypper"
 	"github.com/travisbcotton/image-build/internal/builder"
 	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-build/internal/manifest"
 	"github.com/travisbcotton/image-build/internal/publisher"
 	"github.com/travisbcotton/image-build/internal/publisher/local"
 	"github.com/travisbcotton/image-build/internal/publisher/registry"
@@ -37,6 +38,8 @@ var (
 	varFile      string   // Path to a variables file (yaml or json) used for templating
 	vars         []string // Variable overrides in key=value format
 	renderOutput string   // Output path for the render command (default: stdout)
+	manifestPath string   // Path to a manifest file describing a DAG of layers
+	layerName    string   // Layer name (within the manifest) to build
 )
 
 // rootCmd is the base command that is run when no subcommands are provided.
@@ -228,6 +231,9 @@ func init() {
 
 	// Build-specific flags (only available to build and validate commands)
 	buildCmd.Flags().StringVarP(&cfgPath, "config", "c", "./test.yaml", "path to YAML config")
+	buildCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file")
+	buildCmd.Flags().StringVar(&layerName, "layer", "", "layer name to build (requires --manifest)")
+
 	validateCmd.Flags().StringVarP(&cfgPath, "config", "c", "./test.yaml", "path to YAML config")
 
 	// Render-specific flags (templating: variables file + key=value overrides)
@@ -259,24 +265,67 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Load the YAML configuration file, optionally rendering it as a template
-	// when --var-file or --var flags were provided.
-	var cfg *config.Config
-	if varFile != "" || len(vars) != 0 {
-		mergedVars, err := config.LoadVars(varFile, vars)
+	// Validate mutually-exclusive flag combinations. Either a single config
+	// file is provided, or a manifest + layer pair driving a manifest-based
+	// build — never both.
+	if manifestPath != "" && cfgPath != "" {
+		return fmt.Errorf("--config and --manifest are mutually exclusive")
+	}
+	if manifestPath != "" && layerName == "" {
+		return fmt.Errorf("--layer is required when using --manifest")
+	}
+	if layerName != "" && manifestPath == "" {
+		return fmt.Errorf("--manifest is required when using --layer")
+	}
+
+	// Always load vars (possibly empty). Templating is supported in both
+	// single-config and manifest modes.
+	mergedVars, err := config.LoadVars(varFile, vars)
+	if err != nil {
+		return fmt.Errorf("load vars: %w", err)
+	}
+
+	// In manifest mode, locate the requested layer in the DAG, merge in the
+	// layer's own var files, and inject a deterministic computed tag derived
+	// from the hashed (raw) config + vars.
+	configPath := cfgPath
+	if manifestPath != "" {
+		m, err := manifest.Load(manifestPath)
 		if err != nil {
-			return fmt.Errorf("load vars: %w", err)
+			return fmt.Errorf("load manifest: %w", err)
 		}
-		cfg, err = config.LoadConfigWithVars(cfgPath, mergedVars)
+
+		dag, err := manifest.NewDAG(m)
 		if err != nil {
-			return err
+			return fmt.Errorf("build dag: %w", err)
 		}
-	} else {
-		var err error
-		cfg, err = config.LoadConfig(cfgPath)
+
+		layer, err := dag.Get(layerName)
 		if err != nil {
-			return err
+			return fmt.Errorf("get layer: %w", err)
 		}
+
+		allVarFiles := []string{}
+		if varFile != "" {
+			allVarFiles = append(allVarFiles, varFile)
+		}
+		allVarFiles = append(allVarFiles, layer.VarFiles...)
+
+		computedTag, err := dag.ComputeTag(layerName, allVarFiles)
+		if err != nil {
+			return fmt.Errorf("compute tag: %w", err)
+		}
+		slog.Info("computed tag", "layer", layerName, "tag", computedTag)
+
+		mergedVars["tag"] = computedTag
+		configPath = layer.Config
+	}
+
+	// Load and render the configuration with the merged vars (vars may be
+	// empty when neither --var nor --var-file was provided).
+	cfg, err := config.LoadConfigWithVars(configPath, mergedVars)
+	if err != nil {
+		return err
 	}
 
 	// Create the package manager backend (dnf, zypper, apt, etc.)
@@ -313,8 +362,13 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Load and validate the configuration
-	cfg, err := config.LoadConfig(cfgPath)
+	// Load any provided vars (possibly empty) and render+validate the config.
+	mergedVars, err := config.LoadVars(varFile, vars)
+	if err != nil {
+		return fmt.Errorf("load vars: %w", err)
+	}
+
+	cfg, err := config.LoadConfigWithVars(cfgPath, mergedVars)
 	if err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
