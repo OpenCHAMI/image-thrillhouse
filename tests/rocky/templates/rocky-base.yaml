@@ -1,0 +1,48 @@
+meta:
+  name: rocky-base
+  tags: 
+    - "{{ .tag }}"
+  from: scratch
+
+layer:
+  manager:
+    name: dnf
+    config: |
+      [main]
+      gpgcheck=1
+      installonly_limit=3
+      clean_requirements_on_remove=True
+      best=True
+      skip_if_unavailable=False
+      reposdir={{ .reposdir }}
+  repos: 
+    - path: {{ .reposdir }}/rocky-baseos.repo
+      content: |
+        [rocky-baseos]
+        name=rocky-baseos
+        baseurl={{ .repobase }}/{{ .releasever }}/BaseOS/{{ .arch }}/os
+        enabled=1
+        gpgcheck=1
+        gpgkey={{ .repobase }}/RPM-GPG-KEY-Rocky-{{ .releasever }}
+    - path: {{ .reposdir }}/rocky-appstream.repo
+      content: |
+        [rocky-appstream]
+        name=rocky-appstream
+        baseurl={{ .repobase }}/{{ .releasever }}/AppStream/{{ .arch }}/os/
+        enabled=1
+        gpgcheck=1
+        gpgkey={{ .repobase }}/RPM-GPG-KEY-Rocky-{{ .releasever }}
+  files: []
+  actions:
+    install:
+      packages:
+        - kernel
+        - systemd
+      groups:
+        - Minimal Install
+    commands:
+      - run: systemctl disable firewalld
+      - script: |
+          #!/bin/bash
+          echo hello
+          dnf clean all

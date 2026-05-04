@@ -1,0 +1,12 @@
+layers:
+  - config: /data/debian/templates/bookworm-base.yaml
+    name: bookworm-base
+    var_files:
+      - /data/debian/templates/vars.yaml
+    depends_on: []
+  - config: /data/debian/templates/bookworm-compute.yaml
+    name: bookworm-compute
+    var_files:
+      - /data/debian/templates/vars.yaml
+    depends_on:
+      - bookworm-base

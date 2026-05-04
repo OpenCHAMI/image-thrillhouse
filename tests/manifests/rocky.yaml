@@ -1,0 +1,12 @@
+layers:
+  - config: /data/rocky/templates/rocky-base.yaml
+    name: rocky-base
+    var_files:
+      - /data/rocky/templates/aarch64.yaml
+    depends_on: []
+  - config: /data/rocky/templates/rocky-compute.yaml
+    name: rocky-compute
+    var_files:
+      - /data/rocky/templates/aarch64.yaml
+    depends_on:
+      - rocky-base
