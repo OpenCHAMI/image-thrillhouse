@@ -326,6 +326,12 @@ func (c *Container) GetID() string {
 	return c.Builder.ContainerID
 }
 
+// GetParent returns the source ("from") image used to create this container.
+func (c *Container) GetParent() string {
+
+	return c.Builder.FromImage
+}
+
 // GetName returns the container name.
 func (c *Container) GetName() string {
 

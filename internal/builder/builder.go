@@ -65,7 +65,7 @@ func (b *Builder) Build(ctx context.Context) error {
 	defer c.Delete() // Always clean up the container when done
 
 	log := slog.With("component", "builder")
-	log.Debug("Created container", "id", c.GetID(), "name", c.GetName(), "mountPath", c.MountPath())
+	log.Debug("Created container", "id", c.GetID(), "name", c.GetName(), "from", c.GetParent())
 
 	// Apply package manager configuration (e.g., dnf.conf)
 	if err := b.applyManagerConfig(ctx, c); err != nil {
