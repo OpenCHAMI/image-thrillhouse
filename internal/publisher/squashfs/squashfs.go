@@ -27,10 +27,7 @@ func New(path string) *SquashfsPublisher {
 }
 
 // Publish creates a SquashFS image from the container filesystem.
-// The output file will be named: <path>/<name>-<tag>.squashfs
-//
-// For example, if path="/output", name="rocky-base", tag="9.5",
-// the output will be: /output/rocky-base-9.5.squashfs
+// The output file will be named: rootfs
 //
 // Note: Labels are not embedded in SquashFS files as they are filesystem images,
 // not OCI container images. Labels are only relevant for container registries.
@@ -40,7 +37,7 @@ func New(path string) *SquashfsPublisher {
 //   - Output directory must be writable
 func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
 	log := slog.With("component", "publisher")
-	output := fmt.Sprintf("%s/%s-%s.squashfs", s.path, name, tags[0])
+	output := fmt.Sprintf("%s/rootfs", s.path)
 	log.Info("Creating squashfs", "squashfs", output, "source", c.MountPath())
 	
 	// Create output directory if it doesn't exist
