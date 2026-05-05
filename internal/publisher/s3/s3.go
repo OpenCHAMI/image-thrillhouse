@@ -11,10 +11,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/travisbcotton/image-build/internal/container"
 )
@@ -104,13 +105,13 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 		osName = "linux"
 	}
 
-	// Step 6: Create S3 session
-	sess, err := s.createS3Session()
+	// Step 6: Create S3 client
+	client, err := s.createS3Client(ctx)
 	if err != nil {
-		return fmt.Errorf("create S3 session: %w", err)
+		return fmt.Errorf("create S3 client: %w", err)
 	}
 
-	uploader := s3manager.NewUploader(sess)
+	uploader := manager.NewUploader(client)
 
 	// Step 7: Upload rootfs
 	rootfsKey := fmt.Sprintf("%s%s-%s-%s", s.prefix, osName, name, tag)
@@ -221,37 +222,51 @@ func (s *S3Publisher) detectOS(mountPath string) (string, error) {
 	return "", fmt.Errorf("ID not found in os-release")
 }
 
-// createS3Session creates an AWS session with custom endpoint support
-func (s *S3Publisher) createS3Session() (*session.Session, error) {
-	config := &aws.Config{
-		Region:           aws.String("us-east-1"), // Default region, not critical for custom endpoints
-		Endpoint:         aws.String(s.endpoint),
-		S3ForcePathStyle: aws.Bool(true), // Required for some S3-compatible services
-		Credentials:      credentials.NewStaticCredentials(s.accessKey, s.secretKey, ""),
-	}
+// createS3Client creates an AWS SDK v2 S3 client with custom endpoint support
+func (s *S3Publisher) createS3Client(ctx context.Context) (*s3.Client, error) {
+	// Create custom endpoint resolver for non-AWS S3 endpoints
+	customResolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+		if service == s3.ServiceID {
+			return aws.Endpoint{
+				URL:               s.endpoint,
+				HostnameImmutable: true,
+				Source:            aws.EndpointSourceCustom,
+			}, nil
+		}
+		return aws.Endpoint{}, &aws.EndpointNotFoundError{}
+	})
 
-	// For non-AWS endpoints, disable SSL verification if using http://
-	if strings.HasPrefix(s.endpoint, "http://") {
-		config.DisableSSL = aws.Bool(true)
-	}
-
-	sess, err := session.NewSession(config)
+	// Load default config with custom credentials
+	cfg, err := config.LoadDefaultConfig(ctx,
+		config.WithRegion("us-east-1"), // Default region, not critical for custom endpoints
+		config.WithEndpointResolverWithOptions(customResolver),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			s.accessKey,
+			s.secretKey,
+			"",
+		)),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("create session: %w", err)
+		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	return sess, nil
+	// Create S3 client with path-style addressing for S3-compatible services
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = true
+	})
+
+	return client, nil
 }
 
 // uploadFile uploads a file to S3
-func (s *S3Publisher) uploadFile(ctx context.Context, uploader *s3manager.Uploader, filePath, key string) error {
+func (s *S3Publisher) uploadFile(ctx context.Context, uploader *manager.Uploader, filePath, key string) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("open file: %w", err)
 	}
 	defer file.Close()
 
-	_, err = uploader.UploadWithContext(ctx, &s3manager.UploadInput{
+	_, err = uploader.Upload(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 		Body:   file,
