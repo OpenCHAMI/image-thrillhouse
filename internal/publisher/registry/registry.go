@@ -52,3 +52,7 @@ func (r *RegistryPublisher) Publish(ctx context.Context, c container.Container, 
 	}
 	return nil
 }
+
+func (l *RegistryPublisher) Exists(ctx context.Context, name string, tags []string) (bool, error) {
+	return false, nil
+}

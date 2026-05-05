@@ -43,3 +43,7 @@ func (l *LocalPublisher) Publish(ctx context.Context, c container.Container, nam
 	log.Info("Committed locally", "images", images, "containerID", id)
 	return nil
 }
+
+func (l *LocalPublisher) Exists(ctx context.Context, name string, tags []string) (bool, error) {
+	return false, nil
+}

@@ -82,3 +82,7 @@ func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, 
 	log.Info("Published squashfs", "squashfs", output)
 	return nil
 }
+
+func (l *SquashfsPublisher) Exists(ctx context.Context, name string, tags []string) (bool, error) {
+	return false, nil
+}

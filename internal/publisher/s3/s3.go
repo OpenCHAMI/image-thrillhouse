@@ -277,3 +277,9 @@ func (s *S3Publisher) uploadFile(ctx context.Context, uploader *manager.Uploader
 
 	return nil
 }
+
+// Exists is a placeholder that always returns false; remote-existence checks
+// against S3 are not yet implemented.
+func (s *S3Publisher) Exists(ctx context.Context, name string, tags []string) (bool, error) {
+	return false, nil
+}

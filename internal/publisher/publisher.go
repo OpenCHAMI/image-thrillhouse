@@ -30,4 +30,9 @@ type Publisher interface {
 	//
 	// Returns an error if publishing fails.
 	Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error
+
+	// Exists reports whether an image with the given name and tags is already
+	// present at the publish destination. Implementations may return false
+	// when the destination has no notion of "exists" (e.g., local storage).
+	Exists(ctx context.Context, name string, tags []string) (bool, error)
 }
