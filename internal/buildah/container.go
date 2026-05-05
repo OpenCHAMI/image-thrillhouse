@@ -329,6 +329,9 @@ func (c *Container) GetID() string {
 // GetParent returns the source ("from") image used to create this container.
 func (c *Container) GetParent() string {
 
+	if c.fromScratch {
+		return "scratch"
+	}
 	return c.Builder.FromImage
 }
 
