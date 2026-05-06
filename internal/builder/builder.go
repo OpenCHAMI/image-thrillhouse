@@ -14,6 +14,7 @@ import (
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
 	"github.com/travisbcotton/image-build/internal/labels"
+	"github.com/travisbcotton/image-build/internal/oscap"
 	"github.com/travisbcotton/image-build/internal/publisher"
 
 	ibuildah "github.com/travisbcotton/image-build/internal/buildah"
@@ -98,6 +99,11 @@ func (b *Builder) Build(ctx context.Context) error {
 		return fmt.Errorf("write repos: %w", err)
 	}
 
+	// Import GPG keys for repositories
+	if err := b.importGPGKeys(ctx, c); err != nil {
+		return fmt.Errorf("import GPG keys: %w", err)
+	}
+
 	// Write custom files to the container
 	if err := b.writeFiles(c); err != nil {
 		return fmt.Errorf("write files: %w", err)
@@ -111,6 +117,16 @@ func (b *Builder) Build(ctx context.Context) error {
 	// Run custom commands
 	if err := b.runCommands(ctx, c); err != nil {
 		return fmt.Errorf("run commands: %w", err)
+	}
+
+	// Remove packages if specified
+	if err := b.removePackages(ctx, c); err != nil {
+		return fmt.Errorf("remove packages: %w", err)
+	}
+
+	// Run OpenSCAP security scanning if configured
+	if err := b.runOpenSCAP(ctx, c); err != nil {
+		return fmt.Errorf("OpenSCAP scanning: %w", err)
 	}
 
 	// Generate image labels
@@ -161,6 +177,56 @@ func (b *Builder) writeRepos(c container.Container) error {
 			return fmt.Errorf("write repo %s: %w", repo.Path, err)
 		}
 	}
+	return nil
+}
+
+// importGPGKeys imports GPG keys for repositories that specify them.
+// This allows automatic verification of package signatures.
+// Keys are imported using backend-specific commands:
+//   - RPM-based (dnf, zypper): rpm --import
+//   - APT-based (apt, mmdebstrap): gpg --dearmor to /etc/apt/trusted.gpg.d/
+//
+// If no GPG key is specified for a repo, it's skipped (user must handle GPG in repo config).
+func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) error {
+	log := slog.With("component", "builder")
+	
+	// Determine if this is a scratch build
+	isScratch := b.cfg.Meta.From == "scratch"
+	rootPath := ""
+	if isScratch {
+		rootPath = c.MountPath()
+	}
+	
+	for _, repo := range b.cfg.Layer.Repos {
+		// Skip repos without GPG keys
+		if repo.GPGKey == "" {
+			continue
+		}
+		
+		log.Info("Importing GPG key for repository", "repo", repo.Path, "key", repo.GPGKey)
+		
+		cmd := b.backend.ImportGPGKeyCommand(repo.GPGKey, rootPath)
+		if cmd == nil {
+			log.Warn("Backend does not support GPG key import", "backend", b.cfg.Layer.Manager.Name)
+			continue
+		}
+		
+		// For scratch builds, run on host; for parent builds, run in container
+		runMode := container.RunModeContainer
+		if isScratch {
+			runMode = container.RunModeHost
+		}
+		
+		out := container.NewBufLogWriter("stdout")
+		if err := c.Run(ctx, cmd, runMode, out); err != nil {
+			log.Warn("Failed to import GPG key (continuing)", "repo", repo.Path, "error", err)
+			// Don't fail the build if GPG import fails - the repo might work without it
+			// or the user might have configured GPG checking differently
+		} else {
+			log.Info("Successfully imported GPG key", "repo", repo.Path)
+		}
+	}
+	
 	return nil
 }
 
@@ -296,5 +362,70 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 	}
 
 	log.Info("Done Run Commands:", "commands", b.cfg.Layer.Actions.Commands)
+	return nil
+}
+
+// removePackages removes packages from the container if specified in the configuration.
+// Uses rpm -e --nodeps for RPM-based systems or dpkg --remove for Debian-based systems.
+// This is useful for minimizing image size by removing unnecessary packages.
+func (b *Builder) removePackages(ctx context.Context, c container.Container) error {
+	log := slog.With("component", "builder")
+	
+	packages := b.cfg.Layer.Actions.Install.RemovePackages
+	if len(packages) == 0 {
+		return nil
+	}
+	
+	log.Info("Removing packages", "count", len(packages), "packages", packages)
+	
+	cmd := b.backend.RemovePackagesCommand(packages)
+	if cmd == nil {
+		log.Warn("Backend does not support package removal")
+		return nil
+	}
+	
+	out := container.NewBufLogWriter("stdout")
+	if err := c.Run(ctx, cmd, container.RunModeContainer, out); err != nil {
+		log.Warn("Failed to remove some packages (may be expected)", "error", err)
+		// Don't fail the build if package removal fails - some packages may not exist
+		return nil
+	}
+	
+	log.Info("Successfully removed packages")
+	return nil
+}
+
+// runOpenSCAP executes OpenSCAP security scanning if configured.
+// This performs security compliance checking and vulnerability assessment.
+//
+// Supports:
+//   - Installing OpenSCAP tools (install_scap)
+//   - Running XCCDF security benchmark scans (scap_benchmark)
+//   - Running OVAL vulnerability evaluations (oval_eval)
+//
+// Results are saved in the container at the configured paths (default: /root/)
+func (b *Builder) runOpenSCAP(ctx context.Context, c container.Container) error {
+	log := slog.With("component", "builder")
+	
+	// Skip if OpenSCAP is not configured
+	if b.cfg.Layer.OpenSCAP == nil {
+		return nil
+	}
+	
+	oscapCfg := b.cfg.Layer.OpenSCAP
+	
+	// Skip if no OpenSCAP operations are requested
+	if !oscapCfg.InstallSCAP && !oscapCfg.SCAPBenchmark && !oscapCfg.OVALEval {
+		return nil
+	}
+	
+	log.Info("Starting OpenSCAP security scanning")
+	
+	scanner := oscap.New(oscapCfg)
+	if err := scanner.Run(ctx, c, b.cfg.Layer.Manager.Name); err != nil {
+		return fmt.Errorf("OpenSCAP failed: %w", err)
+	}
+	
+	log.Info("OpenSCAP security scanning complete")
 	return nil
 }

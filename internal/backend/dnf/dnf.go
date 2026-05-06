@@ -231,6 +231,41 @@ func (d *DnfBackend) addOptionFlags(cmd []string) []string {
 	return cmd
 }
 
+// RemovePackagesCommand generates a command to remove packages using rpm.
+// Uses rpm -e --nodeps to remove packages without checking dependencies.
+// This is useful for removing unnecessary packages to minimize image size.
+//
+// Returns nil if no packages to remove.
+func (d *DnfBackend) RemovePackagesCommand(packages []string) []string {
+	if len(packages) == 0 {
+		return nil
+	}
+	
+	cmd := make([]string, 0, 3+len(packages))
+	cmd = append(cmd, "rpm", "-e", "--nodeps")
+	cmd = append(cmd, packages...)
+	return cmd
+}
+
+// ImportGPGKeyCommand generates a command to import a GPG key for repository signing.
+// For DNF (RPM-based), this uses rpm --import to import the GPG key.
+// For scratch builds, the --root flag targets the specified root path.
+//
+// Returns nil if keyURL is empty.
+func (d *DnfBackend) ImportGPGKeyCommand(keyURL string, rootPath string) []string {
+	if keyURL == "" {
+		return nil
+	}
+	
+	if rootPath != "" {
+		// Scratch build: use --root flag
+		return []string{"rpm", "--root", rootPath, "--import", keyURL}
+	}
+	
+	// Parent build: import directly
+	return []string{"rpm", "--import", keyURL}
+}
+
 // SupportsInstallRoot indicates that DNF supports scratch builds using --installroot.
 func (d *DnfBackend) SupportsInstallRoot() bool {
 	return true

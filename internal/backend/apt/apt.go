@@ -150,6 +150,51 @@ func (a *AptBackend) InstallRootCommands(install config.Install, rootPath string
 	return nil
 }
 
+// RemovePackagesCommand generates a command to remove packages using dpkg.
+// Uses dpkg --remove --force-depends to remove packages without checking dependencies.
+// This is useful for removing unnecessary packages to minimize image size.
+//
+// Returns nil if no packages to remove.
+func (a *AptBackend) RemovePackagesCommand(packages []string) []string {
+	if len(packages) == 0 {
+		return nil
+	}
+	
+	cmd := make([]string, 0, 3+len(packages))
+	cmd = append(cmd, "dpkg", "--remove", "--force-depends")
+	cmd = append(cmd, packages...)
+	return cmd
+}
+
+// ImportGPGKeyCommand generates a command to import a GPG key for APT repository signing.
+// For APT, this downloads the key and adds it to /etc/apt/trusted.gpg.d/
+// Modern APT uses gpg --dearmor for key format conversion.
+//
+// Returns nil if keyURL is empty.
+func (a *AptBackend) ImportGPGKeyCommand(keyURL string, rootPath string) []string {
+	if keyURL == "" {
+		return nil
+	}
+	
+	// For both scratch and parent builds, we use a shell script to download and import
+	// This approach works for modern APT (Debian 11+, Ubuntu 20.04+)
+	// The key is downloaded, dearmored if needed, and placed in trusted.gpg.d
+	
+	keyName := "image-build-repo.gpg"
+	if rootPath != "" {
+		keyName = rootPath + "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
+	} else {
+		keyName = "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
+	}
+	
+	// Use curl to download and gpg to dearmor (if ASCII-armored)
+	// The || true ensures we don't fail if it's already in binary format
+	script := fmt.Sprintf("curl -fsSL %s | gpg --dearmor -o %s 2>/dev/null || curl -fsSL %s -o %s", 
+		keyURL, keyName, keyURL, keyName)
+	
+	return []string{"sh", "-c", script}
+}
+
 // OutputWriter returns a writer that parses and formats APT command output.
 // The writer extracts useful information like installed packages and warnings.
 func (a *AptBackend) OutputWriter() container.OutputWriter {

@@ -32,10 +32,11 @@ type Meta struct {
 // Layer defines how to build the image layer.
 // It specifies the package manager, repositories, files, and actions to perform.
 type Layer struct {
-	Manager Manager `yaml:"manager"` // Package manager configuration
-	Repos   []Repo  `yaml:"repos"`   // Repository configurations
-	Files   []File  `yaml:"files"`   // Files to add to the image
-	Actions Actions `yaml:"actions"` // Installation and command actions
+	Manager Manager  `yaml:"manager"`  // Package manager configuration
+	Repos   []Repo   `yaml:"repos"`    // Repository configurations
+	Files   []File   `yaml:"files"`    // Files to add to the image
+	Actions Actions  `yaml:"actions"`  // Installation and command actions
+	OpenSCAP *OpenSCAP `yaml:"openscap"` // Optional: OpenSCAP security scanning configuration
 }
 
 // Manager specifies the package manager to use and its configuration.
@@ -61,6 +62,7 @@ type Repo struct {
 	Content string `yaml:"content"` // Inline repo file content
 	URL     string `yaml:"url"`     // URL to download repo file from
 	Src     string `yaml:"src"`     // Source repo file path on host
+	GPGKey  string `yaml:"gpg"`     // Optional: URL to GPG key for repository signing verification
 }
 
 // Actions defines what to install and what commands to run during the build.
@@ -72,9 +74,10 @@ type Actions struct {
 // Install specifies packages, groups, and modules to install.
 // Not all package managers support all options (e.g., zypper doesn't support groups).
 type Install struct {
-	Packages []string `yaml:"packages"` // Individual packages to install
-	Groups   []string `yaml:"groups"`   // Package groups to install (DNF only)
-	Modules  []Module `yaml:"modules"`  // DNF modules to enable/install (DNF only)
+	Packages       []string `yaml:"packages"`        // Individual packages to install
+	Groups         []string `yaml:"groups"`          // Package groups to install (DNF only)
+	Modules        []Module `yaml:"modules"`         // DNF modules to enable/install (DNF only)
+	RemovePackages []string `yaml:"remove_packages"` // Packages to remove after installation
 }
 
 // Module represents a DNF module operation.
@@ -144,6 +147,20 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// OpenSCAP defines security scanning configuration using OpenSCAP tools.
+// OpenSCAP provides security compliance checking and vulnerability assessment.
+type OpenSCAP struct {
+	InstallSCAP    bool   `yaml:"install_scap"`     // Install openscap-utils, scap-security-guide, bzip2
+	SCAPBenchmark  bool   `yaml:"scap_benchmark"`   // Run XCCDF security benchmark scan
+	OVALEval       bool   `yaml:"oval_eval"`        // Run OVAL vulnerability evaluation
+	Profile        string `yaml:"profile"`          // SCAP profile (e.g., xccdf_org.ssgproject.content_profile_stig)
+	BenchmarkPath  string `yaml:"benchmark_path"`   // Path to XCCDF XML file (e.g., /usr/share/xml/scap/ssg/content/ssg-rl9-ds.xml)
+	OVALUrl        string `yaml:"oval_url"`         // URL to download OVAL definitions (usually .bz2 compressed)
+	ResultsPath    string `yaml:"results_path"`     // Path to save scan results (default: /root/scan.xml)
+	RemediatePath  string `yaml:"remediate_path"`   // Path to save remediation script (default: /root/remediate.sh)
+	OVALResultPath string `yaml:"oval_result_path"` // Path to save OVAL results (default: /root/vulnerabilities.xml)
 }
 
 // TLSVerify returns whether to verify TLS certificates when pulling base images.

@@ -87,7 +87,8 @@ Create a config file `rocky-example.yaml`:
 ```yaml
 meta:
   name: rocky-base
-  tag: "9.5"
+  tags:
+    - "9.5"
   from: scratch
 
 layer:
@@ -150,8 +151,11 @@ Defines image metadata and the base image to build from.
 ```yaml
 meta:
   name: my-image           # Image name (required)
-  tag: "1.0"               # Image tag (required)
+  tags:                    # Image tags (required, can be multiple)
+    - "1.0"
+    - "latest"
   from: scratch            # Base image: 'scratch' or 'registry.io/image:tag'
+  from-tls-verify: true    # Optional: verify TLS when pulling base image (default: true)
 ```
 
 ### 2. Layer Section
@@ -210,11 +214,27 @@ All backends support configurable options to control package installation behavi
         [my-repo]
         name=My Repository
         baseurl=https://...
+        gpgcheck=1
+        gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-myrepo
+      gpg: https://example.com/RPM-GPG-KEY-myrepo  # Automatic GPG key import
     - path: /etc/yum.repos.d/other.repo
       src: ./local-file.repo       # Copy from local file
     - path: /etc/yum.repos.d/remote.repo
       url: https://example.com/repo.repo  # Download from URL
 ```
+
+**GPG Key Import:**
+
+The optional `gpg` field automatically imports GPG keys for repository verification:
+
+- **RPM-based (dnf, zypper)**: Uses `rpm --import <key-url>`
+- **APT-based (apt, mmdebstrap)**: Downloads key and adds to `/etc/apt/trusted.gpg.d/`
+- **Scratch builds**: Keys are imported with `--root` flag to target the new filesystem
+- **Parent builds**: Keys are imported directly into the running container
+
+If the `gpg` field is omitted, you must either:
+- Set `gpgcheck=0` in the repository configuration, or
+- Manually provide GPG keys through other means
 
 **Note**: Use exactly one of: `content`, `src`, or `url` per repo entry.
 
@@ -249,6 +269,10 @@ Define installation and commands:
         - name: nodejs
           stream: "18"
           action: install  # enable, install, disable
+      remove_packages:     # Packages to remove (for minimizing image size)
+        - kernel-debug
+        - man-pages
+        - linux-firmware
     commands:
       - run: systemctl enable myservice    # Simple command
       - script: |                          # Multi-line script
@@ -257,7 +281,87 @@ Define installation and commands:
           dnf clean all
 ```
 
-### 3. Publish Section
+**Package Removal:**
+
+The `remove_packages` option allows you to remove unnecessary packages after installation to minimize image size. This is useful for:
+- Removing debug packages (kernel-debug, kernel-debug-core)
+- Removing documentation (man-db, man-pages)
+- Removing unused firmware (linux-firmware, iwl7260-firmware)
+- Removing build tools after compilation
+
+**Technical Details:**
+- Uses `rpm -e --nodeps` for RPM-based systems (dnf, zypper)
+- Uses `dpkg --remove --force-depends` for Debian-based systems (apt, mmdebstrap)
+- Executed after all packages are installed
+- Non-fatal: Build continues if package removal fails (package may not exist)
+
+**Example minimal image strategy:**
+```yaml
+layer:
+  manager:
+    name: dnf
+    options:
+      install-weak-deps: "false"  # Don't install weak dependencies
+  actions:
+    install:
+      groups:
+        - Minimal Install
+      packages:
+        - kernel
+        - systemd
+      remove_packages:
+        # Debug packages
+        - kernel-debug
+        - kernel-debug-core
+        # Documentation
+        - man-db
+        - man-pages
+        # Unused firmware
+        - linux-firmware
+        # Boot rescue images
+        - dracut-config-rescue
+```
+
+### 3. OpenSCAP Security Scanning (Optional)
+
+Add security compliance checking and vulnerability assessment:
+
+```yaml
+layer:
+  openscap:
+    # Install OpenSCAP tools (openscap-utils, scap-security-guide, bzip2)
+    install_scap: true
+    
+    # Run XCCDF security benchmark scan
+    scap_benchmark: true
+    profile: "xccdf_org.ssgproject.content_profile_stig"
+    benchmark_path: "/usr/share/xml/scap/ssg/content/ssg-rl9-ds.xml"
+    
+    # Run OVAL vulnerability evaluation
+    oval_eval: true
+    oval_url: "https://www.redhat.com/security/data/oval/v2/RHEL9/rhel-9.oval.xml.bz2"
+    
+    # Optional: Custom result paths (defaults shown)
+    results_path: "/root/scan.xml"
+    remediate_path: "/root/remediate.sh"
+    oval_result_path: "/root/vulnerabilities.xml"
+```
+
+**OpenSCAP Features:**
+- **XCCDF Benchmarks**: Test system against security profiles (e.g., DISA STIG, CIS, PCI-DSS)
+- **OVAL Evaluations**: Check for known vulnerabilities (CVEs) in installed packages
+- **Remediation Scripts**: Automatically generate scripts to fix security findings
+- **Compliance Reports**: Detailed XML reports saved in the container
+
+**Common SCAP Profiles:**
+- `xccdf_org.ssgproject.content_profile_stig` - DISA STIG (DoD requirements)
+- `xccdf_org.ssgproject.content_profile_cis` - CIS Benchmarks
+- `xccdf_org.ssgproject.content_profile_pci-dss` - PCI-DSS compliance
+- `xccdf_org.ssgproject.content_profile_ospp` - OSPP/Common Criteria
+
+Check available profiles: `oscap info /usr/share/xml/scap/ssg/content/ssg-rl9-ds.xml`
+
+### 4. Publish Section
 
 Define where to publish the built image:
 
@@ -268,12 +372,11 @@ publish:
   - type: squashfs         # Create SquashFS image
     path: /output/images   # Output directory
     
-  # Registry publishing (planned)
-  - type: registry
+  - type: registry         # Push to container registry
     url: registry.example.com/myorg
+    tls-verify: false      # Optional: disable TLS verification
     
-  # S3 publishing (planned)
-  - type: s3
+  - type: s3               # Upload to S3-compatible storage
     url: https://s3.example.com
     bucket: boot-images
     prefix: compute/
@@ -288,7 +391,7 @@ publish:
 - ✅ Package groups
 - ✅ Modules (enable/install/disable)
 - ✅ Repository management
-- ✅ Configurable options (5 options)
+- ✅ Configurable options (6 options)
 
 ### Zypper (openSUSE, SLES)
 
@@ -561,6 +664,9 @@ See the `tests/` directory for complete examples:
 - `tests/rocky/rocky-base-x86_64.yaml` - Rocky Linux base image from scratch
 - `tests/rocky/rocky-compute-x86_64.yaml` - Compute node image with additional packages
 - `tests/rocky/rocky-dnf-options-example.yaml` - DNF with configurable options
+- `tests/rocky/rocky-gpg-import-example.yaml` - **NEW**: Automatic GPG key import for repositories
+- `tests/rocky/rocky-oscap-example.yaml` - **NEW**: OpenSCAP security scanning example
+- `tests/rocky/rocky-remove-packages-example.yaml` - **NEW**: Package removal for minimal images
 - `tests/debian/bookworm-base.yaml` - Debian base using mmdebstrap
 - `tests/debian/bookworm-apt-options-example.yaml` - APT with configurable options
 - `tests/opensuse/suse-base.yaml` - openSUSE base with Zypper
@@ -590,11 +696,16 @@ image-build/
 │   ├── container/             # Container abstractions
 │   │   ├── container.go       # Container interface
 │   │   └── logwriter.go       # Logging utilities
+│   ├── labels/                # Image label generation
+│   │   └── labels.go          # Label creation logic
+│   ├── oscap/                 # OpenSCAP security scanning
+│   │   └── oscap.go           # SCAP operations
 │   └── publisher/             # Image publishing
 │       ├── publisher.go       # Publisher interface
 │       ├── local/             # Local storage publisher
 │       ├── squashfs/          # SquashFS publisher
-│       └── registry/          # Registry publisher (planned)
+│       ├── registry/          # Registry publisher
+│       └── s3/                # S3 publisher
 └── tests/                     # Example configurations
 ```
 
@@ -668,14 +779,16 @@ publish:
 ### Feature Parity Status
 
 - ✅ Base layer builds
-- ✅ Multiple package managers (expanded)
+- ✅ Multiple package managers (expanded: dnf, zypper, apt, mmdebstrap)
 - ✅ Local publishing
 - ✅ SquashFS publishing
-- ⚠️ Registry publishing (in development)
-- ❌ Ansible layer support (planned)
-- ❌ S3 publishing (planned)
-- ❌ OpenSCAP scanning (planned)
-- ❌ Image labels/metadata (planned)
+- ✅ Registry publishing
+- ✅ S3 publishing with kernel/initramfs extraction
+- ✅ OpenSCAP security scanning (NEW)
+- ✅ Package removal (NEW)
+- ✅ GPG key import for repositories (NEW)
+- ✅ Image labels/metadata
+- ❌ Ansible layer support (intentionally not supported)
 
 ## Troubleshooting
 
@@ -726,16 +839,31 @@ sudo apt install squashfs-tools
 sudo zypper install squashfs
 ```
 
+### OpenSCAP Installation Issues
+
+If OpenSCAP packages are not found:
+```bash
+# Ensure AppStream repository is enabled (for RHEL/Rocky)
+dnf config-manager --set-enabled appstream
+
+# Manually install OpenSCAP
+dnf install openscap-utils scap-security-guide bzip2
+```
+
+For Debian/Ubuntu:
+```bash
+apt-get install libopenscap8 ssg-debian ssg-debderived bzip2
+```
+
 ## Contributing
 
-Contributions are welcome! Areas needing development:
+Contributions are welcome! Areas for potential improvement:
 
-1. **Registry Publisher**: Implement OCI registry push functionality
-2. **S3 Publisher**: Add S3 upload with kernel/initramfs extraction
-3. **OpenSCAP**: Security scanning and compliance checking
-4. **Ansible Support**: Ansible playbook execution against containers
-5. **Image Labels**: Automatic metadata label generation
-6. **Testing**: Expand test coverage
+1. **Additional Package Managers**: Add support for more package managers (pacman, apk, etc.)
+2. **Additional Publishers**: Cloud-specific publishers (Azure, GCP, etc.)
+3. **Testing**: Expand test coverage for new features
+4. **Documentation**: Improve examples and use cases
+5. **Performance**: Optimize build times for large images
 
 ## License
 

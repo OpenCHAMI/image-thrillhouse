@@ -51,6 +51,17 @@ type Backend interface {
 	// Returns a list of commands, where each command is a slice of arguments.
 	InstallRootCommands(install config.Install, rootPath string) [][]string
 
+	// RemovePackagesCommand generates a command to remove packages from the container.
+	// Uses rpm -e --nodeps for RPM-based systems (dnf, zypper).
+	// Returns a command as a slice of arguments, or nil if no packages to remove.
+	RemovePackagesCommand(packages []string) []string
+
+	// ImportGPGKeyCommand generates a command to import a GPG key for repository signing.
+	// The keyURL is the URL to download the GPG key from.
+	// For scratch builds, rootPath is the target root filesystem.
+	// Returns a command as a slice of arguments, or nil if not supported.
+	ImportGPGKeyCommand(keyURL string, rootPath string) []string
+
 	// OutputWriter returns a writer for capturing package manager output.
 	// This allows backends to format and filter package manager output.
 	OutputWriter() container.OutputWriter

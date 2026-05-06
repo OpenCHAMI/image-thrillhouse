@@ -117,6 +117,46 @@ func (d *MmdebstrapBackend) SupportsParentInstall() bool {
 	return true
 }
 
+// RemovePackagesCommand generates a command to remove packages using dpkg.
+// Uses dpkg --remove --force-depends to remove packages without checking dependencies.
+// This is useful for removing unnecessary packages to minimize image size.
+//
+// Returns nil if no packages to remove.
+func (m *MmdebstrapBackend) RemovePackagesCommand(packages []string) []string {
+	if len(packages) == 0 {
+		return nil
+	}
+	
+	cmd := make([]string, 0, 3+len(packages))
+	cmd = append(cmd, "dpkg", "--remove", "--force-depends")
+	cmd = append(cmd, packages...)
+	return cmd
+}
+
+// ImportGPGKeyCommand generates a command to import a GPG key for APT repository signing.
+// For mmdebstrap, GPG keys should typically be handled through the mirror's keyring.
+// This implementation provides basic support for custom keys.
+//
+// Returns nil if keyURL is empty.
+func (m *MmdebstrapBackend) ImportGPGKeyCommand(keyURL string, rootPath string) []string {
+	if keyURL == "" {
+		return nil
+	}
+	
+	keyName := "image-build-repo.gpg"
+	if rootPath != "" {
+		keyName = rootPath + "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
+	} else {
+		keyName = "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
+	}
+	
+	// Use curl to download and gpg to dearmor (if ASCII-armored)
+	script := fmt.Sprintf("curl -fsSL %s | gpg --dearmor -o %s 2>/dev/null || curl -fsSL %s -o %s", 
+		keyURL, keyName, keyURL, keyName)
+	
+	return []string{"sh", "-c", script}
+}
+
 // OutputWriter returns a writer that parses and formats mmdebstrap output.
 // The writer filters mmdebstrap's verbose output and logs relevant information.
 func (d *MmdebstrapBackend) OutputWriter() container.OutputWriter {
