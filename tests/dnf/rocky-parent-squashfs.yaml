@@ -1,0 +1,19 @@
+meta:
+  name: rocky-parent-squashfs
+  tags: 
+    - "9-squashfs"
+  from: docker://rockylinux:9-minimal
+
+layer:
+  manager:
+    name: dnf
+  actions:
+    install:
+      packages:
+        - curl
+        - ca-certificates
+
+publish:
+  - type: local
+  - type: squashfs
+    path: /output/rocky-parent.squashfs

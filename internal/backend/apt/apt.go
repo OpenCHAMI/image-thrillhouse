@@ -35,7 +35,7 @@ func New(options map[string]string) *AptBackend {
 		installSuggests:      false,
 		allowUnauthenticated: false,
 	}
-	
+
 	// Parse options
 	if options["install-recommends"] == "true" {
 		backend.installRecommends = true
@@ -46,7 +46,7 @@ func New(options map[string]string) *AptBackend {
 	if options["allow-unauthenticated"] == "true" {
 		backend.allowUnauthenticated = true
 	}
-	
+
 	return backend
 }
 
@@ -63,12 +63,12 @@ func (a *AptBackend) ValidateOptions(options map[string]string) error {
 		"install-suggests":      true,
 		"allow-unauthenticated": true,
 	}
-	
+
 	validValues := map[string]bool{
 		"true":  true,
 		"false": true,
 	}
-	
+
 	for key, value := range options {
 		if !validOptions[key] {
 			return fmt.Errorf("unknown option %q for apt backend", key)
@@ -77,7 +77,7 @@ func (a *AptBackend) ValidateOptions(options map[string]string) error {
 			return fmt.Errorf("option %q must be 'true' or 'false', got %q", key, value)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -104,11 +104,12 @@ func (a *AptBackend) ConfigFilePath() string {
 //  3. Installs all packages with 'apt-get install' and configured options
 //
 // Flags used:
-//   -y: Assume "yes" to all prompts (non-interactive)
-//   -q: Quiet mode for cleaner output
-//   --no-install-recommends: Don't install recommended packages (unless enabled)
-//   --no-install-suggests: Don't install suggested packages (unless enabled)
-//   --allow-unauthenticated: Allow packages without GPG verification (if enabled)
+//
+//	-y: Assume "yes" to all prompts (non-interactive)
+//	-q: Quiet mode for cleaner output
+//	--no-install-recommends: Don't install recommended packages (unless enabled)
+//	--no-install-suggests: Don't install suggested packages (unless enabled)
+//	--allow-unauthenticated: Allow packages without GPG verification (if enabled)
 func (a *AptBackend) InstallCommands(install config.Install) [][]string {
 	var cmds [][]string
 
@@ -125,7 +126,7 @@ func (a *AptBackend) InstallCommands(install config.Install) [][]string {
 	if len(install.Packages) > 0 {
 		cmd := make([]string, 0, 8+len(install.Packages))
 		cmd = append(cmd, "apt-get", "install", "-y", "-q")
-		
+
 		// Add option flags
 		if !a.installRecommends {
 			cmd = append(cmd, "--no-install-recommends")
@@ -136,7 +137,7 @@ func (a *AptBackend) InstallCommands(install config.Install) [][]string {
 		if a.allowUnauthenticated {
 			cmd = append(cmd, "--allow-unauthenticated")
 		}
-		
+
 		cmd = append(cmd, install.Packages...)
 		cmds = append(cmds, cmd)
 	}
@@ -199,4 +200,10 @@ func (a *AptBackend) ImportGPGKeyCommand(keyURL string, rootPath string) []strin
 // The writer extracts useful information like installed packages and warnings.
 func (a *AptBackend) OutputWriter() container.OutputWriter {
 	return &aptLogWriter{}
+}
+
+// IsAcceptableExitCode checks if an APT exit code should be tolerated.
+// APT generally has reliable exit codes, so we don't tolerate non-zero exits.
+func (a *AptBackend) IsAcceptableExitCode(exitCode int, output string) bool {
+	return false
 }

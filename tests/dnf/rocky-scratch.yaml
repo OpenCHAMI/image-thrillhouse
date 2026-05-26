@@ -1,7 +1,7 @@
 meta:
-  name: rocky-base
+  name: rocky-scratch-base
   tags: 
-    - "aarch64-9.5"
+    - "9.5"
   from: scratch
 
 layer:
@@ -15,12 +15,14 @@ layer:
       best=True
       skip_if_unavailable=False
       reposdir=/etc/image-build/yum.repos.d
+    options:
+      releasever: "9"
   repos: 
     - path: /etc/image-build/yum.repos.d/rocky-baseos.repo
       content: |
         [rocky-baseos]
         name=rocky-baseos
-        baseurl=https://dl.rockylinux.org/pub/rocky/9/BaseOS/aarch64/os
+        baseurl=https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os
         enabled=1
         gpgcheck=1
         gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9
@@ -28,21 +30,16 @@ layer:
       content: |
         [rocky-appstream]
         name=rocky-appstream
-        baseurl=https://dl.rockylinux.org/pub/rocky/9/AppStream/aarch64/os/
+        baseurl=https://dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/
         enabled=1
         gpgcheck=1
         gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9
-  files: []
   actions:
     install:
       packages:
-        - kernel
+        - bash
         - systemd
-      groups:
-        - Minimal Install
-    commands:
-      - run: systemctl disable firewalld
-      - script: |
-          #!/bin/bash
-          echo hello
-          dnf clean all
+        - kernel
+
+publish:
+  - type: local

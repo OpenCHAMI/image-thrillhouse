@@ -1,0 +1,20 @@
+meta:
+  name: alma-parent-modules
+  tags: 
+    - "9-modules"
+  from: docker://almalinux:9
+
+layer:
+  manager:
+    name: dnf
+  actions:
+    install:
+      packages:
+        - httpd
+      modules:
+        - name: nodejs
+          stream: "18"
+          action: enable
+
+publish:
+  - type: local

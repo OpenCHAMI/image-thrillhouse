@@ -1,0 +1,21 @@
+meta:
+  name: rocky-parent-multi-publish
+  tags: 
+    - "9-multi"
+  from: docker://rockylinux:9-minimal
+
+layer:
+  manager:
+    name: dnf
+  actions:
+    install:
+      packages:
+        - bash
+        - coreutils
+
+publish:
+  - type: local
+  - type: tarball
+    path: /output/rocky-parent.tar
+  - type: squashfs
+    path: /output/rocky-parent.squashfs

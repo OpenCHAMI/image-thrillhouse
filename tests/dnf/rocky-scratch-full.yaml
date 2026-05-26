@@ -1,0 +1,56 @@
+meta:
+  name: rocky-scratch-full
+  tags: 
+    - "9.5"
+  from: scratch
+
+layer:
+  manager:
+    name: dnf
+    config: |
+      [main]
+      gpgcheck=1
+      installonly_limit=3
+      clean_requirements_on_remove=True
+      best=True
+      skip_if_unavailable=False
+      reposdir=/etc/image-build/yum.repos.d
+    options:
+      releasever: "9"
+      install-weak-deps: "false"
+  repos: 
+    - path: /etc/image-build/yum.repos.d/rocky-baseos.repo
+      content: |
+        [rocky-baseos]
+        name=rocky-baseos
+        baseurl=https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os
+        enabled=1
+        gpgcheck=1
+        gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9
+    - path: /etc/image-build/yum.repos.d/rocky-appstream.repo
+      content: |
+        [rocky-appstream]
+        name=rocky-appstream
+        baseurl=https://dl.rockylinux.org/pub/rocky/9/AppStream/x86_64/os/
+        enabled=1
+        gpgcheck=1
+        gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9
+  actions:
+    install:
+      packages:
+        - bash
+        - systemd
+        - kernel
+        - curl
+        - wget
+        - vim-minimal
+    files:
+      - path: /etc/test-file.txt
+        content: |
+          This is a test file
+          Created during image build
+      - path: /opt/test/.gitkeep
+        content: ""
+
+publish:
+  - type: local

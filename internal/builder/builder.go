@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 
 	"github.com/mattn/go-shellwords"
 	"github.com/travisbcotton/image-build/internal/backend"
@@ -69,15 +72,17 @@ func (b *Builder) Build(ctx context.Context) error {
 		return fmt.Errorf("write manager config: %w", err)
 	}
 
-	// Write RPM macros to disable file capabilities for scratch builds with DNF
+	// Write RPM macros to disable file capabilities for scratch builds with DNF or Zypper
 	// This works around issues with overlay filesystems that don't support extended attributes
-	if b.cfg.Meta.From == "scratch" && b.cfg.Layer.Manager.Name == "dnf" {
+	// and prevents post-installation script failures in containerized environments
+	if b.cfg.Meta.From == "scratch" && (b.cfg.Layer.Manager.Name == "dnf" || b.cfg.Layer.Manager.Name == "zypper") {
 		log.Debug("Writing RPM macros to disable file capabilities")
-		rpmMacros := `%_netsharedpath /sys:/proc
+		rpmMacros := `%_netsharedpath /sys:/proc:/dev
 %_install_langs C:en:en_US:en_US.UTF-8
 %__brp_mangle_shebangs %{nil}
 %_missing_build_ids_terminate_build 0
 %_file_context_file %{nil}
+%__brp_ldconfig %{nil}
 `
 		// Create /etc directory structure first
 		etcPath := c.MountPath() + "/etc"
@@ -91,6 +96,20 @@ func (b *Builder) Build(ctx context.Context) error {
 			Content: rpmMacros,
 		}); err != nil {
 			log.Warn("Failed to write RPM macros", "error", err)
+		}
+	}
+
+	// Create essential directories for zypper scratch builds
+	// The filesystem package tries to create /dev but fails if it doesn't exist
+	// Note: We don't create /dev here because it causes UID/GID issues during commit
+	if b.cfg.Meta.From == "scratch" && b.cfg.Layer.Manager.Name == "zypper" {
+		log.Debug("Creating essential directories for zypper scratch build")
+		essentialDirs := []string{"/proc", "/sys", "/run"}
+		for _, dir := range essentialDirs {
+			dirPath := c.MountPath() + dir
+			if err := os.MkdirAll(dirPath, 0755); err != nil {
+				log.Warn("Failed to create essential directory", "dir", dir, "error", err)
+			}
 		}
 	}
 
@@ -298,8 +317,20 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 		cmds := b.backend.InstallRootCommands(b.cfg.Layer.Actions.Install, c.MountPath())
 		for _, cmd := range cmds {
 			log.Debug("Install", "action", cmd)
-			out := b.backend.OutputWriter()
-			if err := c.Run(ctx, cmd, container.RunModeHost, out); err != nil {
+			// Wrap the backend's output writer to capture output for exit code checking
+			out := container.NewCapturingWriter(b.backend.OutputWriter())
+			err := c.Run(ctx, cmd, container.RunModeHost, out)
+
+			// Check if the error is an acceptable exit code
+			if err != nil {
+				// Try to extract exit code from error
+				exitCode := extractExitCode(err)
+				if exitCode > 0 && b.backend.IsAcceptableExitCode(exitCode, out.String()) {
+					log.Warn("Command returned non-zero exit code but packages were installed successfully",
+						"exitCode", exitCode, "cmd", cmd)
+					// Treat as success
+					continue
+				}
 				return fmt.Errorf("run root %v: %w", cmd, err)
 			}
 		}

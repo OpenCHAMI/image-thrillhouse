@@ -1,0 +1,31 @@
+meta:
+  name: debian-scratch-full
+  tags: 
+    - "bookworm"
+  from: scratch
+
+layer:
+  manager:
+    name: mmdebstrap
+    options:
+      suite: "bookworm"
+      mirror: "http://deb.debian.org/debian"
+      variant: "minbase"
+  actions:
+    install:
+      packages:
+        - bash
+        - coreutils
+        - curl
+        - wget
+        - nano
+    files:
+      - path: /etc/test-file.txt
+        content: |
+          This is a test file for Debian
+          Created during image build
+      - path: /opt/test/.gitkeep
+        content: ""
+
+publish:
+  - type: local

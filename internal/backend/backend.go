@@ -65,4 +65,12 @@ type Backend interface {
 	// OutputWriter returns a writer for capturing package manager output.
 	// This allows backends to format and filter package manager output.
 	OutputWriter() container.OutputWriter
+
+	// IsAcceptableExitCode checks if a non-zero exit code should be tolerated.
+	// Some package managers return non-zero exit codes for non-fatal issues
+	// (e.g., post-installation script failures when packages installed successfully).
+	// The output parameter contains the command output which may be used to determine
+	// if the operation actually succeeded despite the non-zero exit code.
+	// Returns true if the exit code should be treated as success.
+	IsAcceptableExitCode(exitCode int, output string) bool
 }

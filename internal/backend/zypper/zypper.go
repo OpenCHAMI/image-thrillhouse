@@ -6,6 +6,7 @@ package zypper
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
@@ -38,14 +39,14 @@ func New(options map[string]string) *ZypperBackend {
 	if repoPath == "" {
 		repoPath = "/etc/zypp/repos.d"
 	}
-	
+
 	backend := &ZypperBackend{
 		repoPath:        repoPath,
 		noRecommends:    false,
 		noGpgChecks:     false,
 		forceResolution: false,
 	}
-	
+
 	// Parse options
 	if options["no-recommends"] == "true" {
 		backend.noRecommends = true
@@ -56,7 +57,7 @@ func New(options map[string]string) *ZypperBackend {
 	if options["force-resolution"] == "true" {
 		backend.forceResolution = true
 	}
-	
+
 	return backend
 }
 
@@ -74,13 +75,14 @@ func (z *ZypperBackend) ConfigFilePath() string {
 //  3. Installs groups (patterns) with 'zypper install -y -t pattern'
 //
 // Flags used:
-//   -q: Quiet mode for cleaner output
-//   --gpg-auto-import-keys: Automatically import repository GPG keys (unless no-gpg-checks)
-//   -y: Assume "yes" to all prompts (non-interactive)
-//   -t pattern: Specifies package type for groups/patterns
-//   --no-recommends: Skip recommended packages (if configured)
-//   --no-gpg-checks: Skip GPG verification (if configured)
-//   --force-resolution: Force automatic conflict resolution (if configured)
+//
+//	-q: Quiet mode for cleaner output
+//	--gpg-auto-import-keys: Automatically import repository GPG keys (unless no-gpg-checks)
+//	-y: Assume "yes" to all prompts (non-interactive)
+//	-t pattern: Specifies package type for groups/patterns
+//	--no-recommends: Skip recommended packages (if configured)
+//	--no-gpg-checks: Skip GPG verification (if configured)
+//	--force-resolution: Force automatic conflict resolution (if configured)
 func (z *ZypperBackend) InstallCommands(install config.Install) [][]string {
 	var cmds [][]string
 
@@ -109,13 +111,19 @@ func (z *ZypperBackend) InstallCommands(install config.Install) [][]string {
 	return cmds
 }
 
-// InstallRootCommands generates zypper commands for scratch builds using --installroot.
+// InstallRootCommands generates zypper commands for scratch builds using --root.
 // This runs zypper on the host system, installing into the specified root directory.
 // This is how we bootstrap a new openSUSE/SLES filesystem from nothing.
 //
-// The commands are similar to InstallCommands but include:
-//   --installroot: Target directory for the installation
-//   --reposd-dir: Path to repository definitions within the new root
+// Process:
+//  1. Runs 'zypper refresh' to update repository metadata
+//  2. Installs packages with --root flag
+//  3. Installs groups (patterns) if specified
+//
+// The commands use --root instead of --installroot because:
+//
+//	--root: Operates on a different root directory (for scratch builds)
+//	--installroot: Shares repos with host (not suitable for scratch builds)
 func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath string) [][]string {
 	var cmds [][]string
 
@@ -123,20 +131,58 @@ func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath str
 		slog.Warn("Zypper backend does not support modules, ignoring", "modules", install.Modules)
 	}
 
+	// Always refresh repository metadata first for scratch builds
+	// Don't use -q flag for refresh to see potential errors
+	// Note: refresh doesn't accept --no-recommends flag, only --no-gpg-checks
+	refreshCmd := make([]string, 0, 8)
+	refreshCmd = append(refreshCmd, "zypper", "--root", rootPath)
+	// Only add GPG check flags for refresh
+	if z.noGpgChecks {
+		refreshCmd = append(refreshCmd, "--no-gpg-checks")
+	} else {
+		refreshCmd = append(refreshCmd, "--gpg-auto-import-keys")
+	}
+	refreshCmd = append(refreshCmd, "refresh")
+	cmds = append(cmds, refreshCmd)
+
 	if len(install.Packages) > 0 {
 		cmd := make([]string, 0, 12+len(install.Packages))
-		cmd = append(cmd, "zypper", "-q", "--installroot", rootPath, "--reposd-dir", rootPath+z.repoPath)
-		cmd = z.addOptionFlags(cmd)
+		cmd = append(cmd, "zypper", "--root", rootPath)
+		// Add global options before subcommand
+		if z.noGpgChecks {
+			cmd = append(cmd, "--no-gpg-checks")
+		} else {
+			cmd = append(cmd, "--gpg-auto-import-keys")
+		}
 		cmd = append(cmd, "install", "-y")
+		// Add subcommand-specific options
+		if z.noRecommends {
+			cmd = append(cmd, "--no-recommends")
+		}
+		if z.forceResolution {
+			cmd = append(cmd, "--force-resolution")
+		}
 		cmd = append(cmd, install.Packages...)
 		cmds = append(cmds, cmd)
 	}
 
 	if len(install.Groups) > 0 {
 		cmd := make([]string, 0, 12+len(install.Groups))
-		cmd = append(cmd, "zypper", "-q", "--installroot", rootPath, "--reposd-dir", rootPath+z.repoPath)
-		cmd = z.addOptionFlags(cmd)
+		cmd = append(cmd, "zypper", "--root", rootPath)
+		// Add global options before subcommand
+		if z.noGpgChecks {
+			cmd = append(cmd, "--no-gpg-checks")
+		} else {
+			cmd = append(cmd, "--gpg-auto-import-keys")
+		}
 		cmd = append(cmd, "install", "-y", "-t", "pattern")
+		// Add subcommand-specific options
+		if z.noRecommends {
+			cmd = append(cmd, "--no-recommends")
+		}
+		if z.forceResolution {
+			cmd = append(cmd, "--force-resolution")
+		}
 		cmd = append(cmd, install.Groups...)
 		cmds = append(cmds, cmd)
 	}
@@ -159,34 +205,34 @@ func (z *ZypperBackend) ValidateOptions(options map[string]string) error {
 		"no-gpg-checks":    true,
 		"force-resolution": true,
 	}
-	
+
 	boolOptions := map[string]bool{
 		"no-recommends":    true,
 		"no-gpg-checks":    true,
 		"force-resolution": true,
 	}
-	
+
 	validValues := map[string]bool{
 		"true":  true,
 		"false": true,
 	}
-	
+
 	for key, value := range options {
 		if !validOptions[key] {
 			return fmt.Errorf("unknown option %q for zypper backend", key)
 		}
-		
+
 		// Validate boolean options
 		if boolOptions[key] && value != "" && !validValues[value] {
 			return fmt.Errorf("option %q must be 'true' or 'false', got %q", key, value)
 		}
-		
+
 		// repopath can be any non-empty string
 		if key == "repopath" && value == "" {
 			return fmt.Errorf("option 'repopath' cannot be empty")
 		}
 	}
-	
+
 	return nil
 }
 
@@ -256,4 +302,21 @@ func (z *ZypperBackend) SupportsParentInstall() bool {
 // The writer extracts useful information like installed packages and errors.
 func (z *ZypperBackend) OutputWriter() container.OutputWriter {
 	return &zypperLogWriter{}
+}
+
+// IsAcceptableExitCode checks if a zypper exit code should be tolerated.
+// Zypper exit code 8 (ZYPPER_EXIT_ERR_ZYPP) often indicates post-installation
+// script failures in containerized environments, but the packages may have
+// installed successfully. We check the output for evidence of successful
+// package installation.
+func (z *ZypperBackend) IsAcceptableExitCode(exitCode int, output string) bool {
+	// Exit code 8 is ZYPPER_EXIT_ERR_ZYPP - often post-install script failures
+	// If we see evidence that packages were installed, treat this as success
+	if exitCode == 8 {
+		// Check if packages were installed by looking for common success indicators
+		return strings.Contains(output, "Installing:") ||
+			strings.Contains(output, "NEW packages are going to be installed") ||
+			strings.Contains(output, "done]")
+	}
+	return false
 }

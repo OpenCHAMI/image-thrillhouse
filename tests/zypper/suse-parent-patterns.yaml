@@ -1,0 +1,18 @@
+meta:
+  name: opensuse-parent-patterns
+  tags: 
+    - "leap-15.6-patterns"
+  from: docker://opensuse/leap:15.6
+
+layer:
+  manager:
+    name: zypper
+  actions:
+    install:
+      packages:
+        - bash
+      patterns:
+        - devel_basis
+
+publish:
+  - type: local

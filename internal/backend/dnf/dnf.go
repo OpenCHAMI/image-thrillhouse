@@ -277,7 +277,13 @@ func (d *DnfBackend) SupportsParentInstall() bool {
 }
 
 // OutputWriter returns a custom log writer for DNF output.
-// This writer filters and formats DNF's output for better readability.
+// The writer parses DNF's output to extract package information and errors.
 func (d *DnfBackend) OutputWriter() container.OutputWriter {
 	return &dnfLogWriter{}
+}
+
+// IsAcceptableExitCode checks if a DNF exit code should be tolerated.
+// DNF generally has reliable exit codes, so we don't tolerate non-zero exits.
+func (d *DnfBackend) IsAcceptableExitCode(exitCode int, output string) bool {
+	return false
 }

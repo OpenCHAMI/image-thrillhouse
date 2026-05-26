@@ -1,0 +1,23 @@
+meta:
+  name: opensuse-parent-files
+  tags: 
+    - "leap-15.6-files"
+  from: docker://opensuse/leap:15.6
+
+layer:
+  manager:
+    name: zypper
+  actions:
+    install:
+      packages:
+        - curl
+    files:
+      - path: /etc/custom.conf
+        content: |
+          # openSUSE custom config
+          SETTING=value
+    commands:
+      - run: echo "Configuration applied"
+
+publish:
+  - type: local

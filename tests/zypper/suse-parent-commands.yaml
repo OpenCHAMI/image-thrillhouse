@@ -1,0 +1,20 @@
+meta:
+  name: opensuse-parent-commands
+  tags: 
+    - "leap-15.6-commands"
+  from: docker://opensuse/leap:15.6
+
+layer:
+  manager:
+    name: zypper
+  actions:
+    commands:
+      - run: echo "Testing zypper commands"
+      - run: mkdir -p /opt/suse-app
+      - script: |
+          #!/bin/bash
+          echo "Multi-line script"
+          touch /opt/suse-app/test.txt
+
+publish:
+  - type: local

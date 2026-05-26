@@ -1,16 +1,32 @@
 meta:
-  name: rocky-invalid
+  name: invalid-dnf-test
   tags: 
-    - "9"
-  from: rockylinux:9
+    - "9.5"
+  from: scratch
+
 layer:
   manager:
     name: dnf
+    config: |
+      [main]
+      gpgcheck=1
+      reposdir=/etc/image-build/yum.repos.d
     options:
-      invalid-dnf-option: "true"
+      releasever: "9"
+      invalid_option: "should_fail"
+  repos: 
+    - path: /etc/image-build/yum.repos.d/rocky-baseos.repo
+      content: |
+        [rocky-baseos]
+        name=rocky-baseos
+        baseurl=https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os
+        enabled=1
+        gpgcheck=1
+        gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9
   actions:
     install:
       packages:
-        - vim
+        - bash
+
 publish:
   - type: local

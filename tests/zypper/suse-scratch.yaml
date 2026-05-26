@@ -1,5 +1,5 @@
 meta:
-  name: invalid-zypper-test
+  name: opensuse-scratch-base
   tags: 
     - "leap-15.6"
   from: scratch
@@ -10,8 +10,10 @@ layer:
     config: |
       [main]
       solver.onlyRequires = true
+      rpm.install.excludedocs = no
     options:
-      invalid_option: "should_fail"
+      no-gpg-checks: "true"
+      no-recommends: "true"
   repos:
     - path: /etc/zypp/repos.d/opensuse-oss.repo
       content: |
@@ -19,12 +21,13 @@ layer:
         name=openSUSE Leap 15.6 OSS
         baseurl=https://download.opensuse.org/distribution/leap/15.6/repo/oss/
         enabled=1
-        gpgcheck=1
-        gpgkey=https://download.opensuse.org/distribution/leap/15.6/repo/oss/repodata/repomd.xml.key
+        gpgcheck=0
   actions:
     install:
       packages:
         - bash
+        - systemd
+        - coreutils
 
 publish:
   - type: local

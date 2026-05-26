@@ -1,5 +1,5 @@
 meta:
-  name: conflicting-dnf-test
+  name: rocky-scratch-options
   tags: 
     - "9.5"
   from: scratch
@@ -13,8 +13,9 @@ layer:
       reposdir=/etc/image-build/yum.repos.d
     options:
       releasever: "9"
+      install-weak-deps: "false"
       best: "true"
-      nobest: "true"
+      allowerasing: "true"
   repos: 
     - path: /etc/image-build/yum.repos.d/rocky-baseos.repo
       content: |
@@ -28,6 +29,7 @@ layer:
     install:
       packages:
         - bash
+        - curl
 
 publish:
   - type: local

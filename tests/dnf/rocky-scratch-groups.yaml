@@ -1,7 +1,7 @@
 meta:
-  name: rocky-base
+  name: rocky-scratch-groups
   tags: 
-    - "x86_64-9.5"
+    - "9.5"
   from: scratch
 
 layer:
@@ -15,6 +15,8 @@ layer:
       best=True
       skip_if_unavailable=False
       reposdir=/etc/image-build/yum.repos.d
+    options:
+      releasever: "9"
   repos: 
     - path: /etc/image-build/yum.repos.d/rocky-baseos.repo
       content: |
@@ -32,17 +34,13 @@ layer:
         enabled=1
         gpgcheck=1
         gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9
-  files: []
   actions:
     install:
       packages:
-        - kernel
+        - bash
         - systemd
       groups:
-        - Minimal Install
-    commands:
-      - run: systemctl disable firewalld
-      - script: |
-          #!/bin/bash
-          echo hello
-          dnf clean all
+        - core
+
+publish:
+  - type: local

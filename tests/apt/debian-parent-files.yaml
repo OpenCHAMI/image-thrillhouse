@@ -1,0 +1,25 @@
+meta:
+  name: ubuntu-parent-files
+  tags: 
+    - "22.04-files"
+  from: docker://ubuntu:22.04
+
+layer:
+  manager:
+    name: apt
+    config: |
+      APT::Sandbox::User "root";
+  actions:
+    install:
+      packages:
+        - curl
+    files:
+      - path: /etc/custom.conf
+        content: |
+          # Custom configuration
+          KEY=value
+    commands:
+      - run: echo "Test file created"
+
+publish:
+  - type: local

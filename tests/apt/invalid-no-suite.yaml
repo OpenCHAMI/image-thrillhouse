@@ -1,0 +1,18 @@
+meta:
+  name: invalid-no-suite
+  tags: 
+    - "test"
+  from: scratch
+
+layer:
+  manager:
+    name: mmdebstrap
+    options:
+      mirror: "http://deb.debian.org/debian"
+  actions:
+    install:
+      packages:
+        - bash
+
+publish:
+  - type: local

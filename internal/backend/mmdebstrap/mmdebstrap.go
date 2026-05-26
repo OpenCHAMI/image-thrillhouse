@@ -49,10 +49,9 @@ func New(options map[string]string) *MmdebstrapBackend {
 }
 
 // ConfigFilePath returns the path where configuration should be written.
-// Note: This returns the DNF path which appears to be a bug or placeholder.
 // mmdebstrap doesn't use a persistent config file like DNF.
 func (d *MmdebstrapBackend) ConfigFilePath() string {
-	return "/etc/dnf/dnf.conf"
+	return "mmdebstrap doesn't use a persistent config file"
 }
 
 // InstallCommands is not supported by mmdebstrap backend and returns nil.
@@ -67,10 +66,12 @@ func (m *MmdebstrapBackend) InstallCommands(install config.Install) [][]string {
 // This creates a minimal base system from scratch using the configured suite and mirror.
 //
 // Command format:
-//   mmdebstrap --mode=<mode> --variant=<variant> --include=<packages> <suite> <rootPath> <mirror>
+//
+//	mmdebstrap --mode=<mode> --variant=<variant> --include=<packages> <suite> <rootPath> <mirror>
 //
 // Example:
-//   mmdebstrap --mode=fakechroot --variant=minbase --include=bash,coreutils bookworm /root http://deb.debian.org/debian
+//
+//	mmdebstrap --mode=fakechroot --variant=minbase --include=bash,coreutils bookworm /root http://deb.debian.org/debian
 func (m *MmdebstrapBackend) InstallRootCommands(install config.Install, rootPath string) [][]string {
 	cmd := make([]string, 0)
 	cmd = append(cmd, "mmdebstrap")
@@ -94,14 +95,34 @@ func (m *MmdebstrapBackend) InstallRootCommands(install config.Install, rootPath
 //   - suite: Must be specified (e.g., bookworm, bullseye, jammy)
 //   - mirror: Must be specified (e.g., http://deb.debian.org/debian)
 //
-// Returns an error if either required option is missing.
+// Optional options:
+//   - variant: Bootstrap variant (e.g., minbase, buildd)
+//   - mode: Execution mode (e.g., fakechroot, unshare)
+//
+// Returns an error if either required option is missing or if an unknown option is provided.
 func (m *MmdebstrapBackend) ValidateOptions(options map[string]string) error {
+	// Check required options
 	if options["suite"] == "" {
 		return fmt.Errorf("mmdebstrap requires options.suite (e.g. bookworm)")
 	}
 	if options["mirror"] == "" {
 		return fmt.Errorf("mmdebstrap requires options.mirror (e.g. http://deb.debian.org/debian)")
 	}
+
+	// Validate that only known options are provided
+	validOptions := map[string]bool{
+		"suite":   true,
+		"mirror":  true,
+		"variant": true,
+		"mode":    true,
+	}
+
+	for key := range options {
+		if !validOptions[key] {
+			return fmt.Errorf("unknown option %q for mmdebstrap backend", key)
+		}
+	}
+
 	return nil
 }
 
@@ -161,4 +182,10 @@ func (m *MmdebstrapBackend) ImportGPGKeyCommand(keyURL string, rootPath string) 
 // The writer filters mmdebstrap's verbose output and logs relevant information.
 func (d *MmdebstrapBackend) OutputWriter() container.OutputWriter {
 	return &mmdebstrapLogWriter{}
+}
+
+// IsAcceptableExitCode checks if an mmdebstrap exit code should be tolerated.
+// mmdebstrap generally has reliable exit codes, so we don't tolerate non-zero exits.
+func (d *MmdebstrapBackend) IsAcceptableExitCode(exitCode int, output string) bool {
+	return false
 }
