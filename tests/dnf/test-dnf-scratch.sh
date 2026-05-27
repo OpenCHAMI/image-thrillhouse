@@ -74,7 +74,7 @@ validate_config() {
 
 echo "Building image-build container (if needed)..."
 if ! podman image exists image-build:test && ! podman image exists localhost/image-build:test; then
-    cd "${SCRIPT_DIR}" && podman build --target dnf -t image-build:test -f Dockerfile . > "${OUTPUT_DIR}/container-build.log" 2>&1
+    cd "${SCRIPT_DIR}" && podman build -t image-build:test -f Dockerfile . > "${OUTPUT_DIR}/container-build.log" 2>&1
     echo "✓ Container built"
 else
     echo "✓ Container already exists"

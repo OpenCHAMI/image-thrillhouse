@@ -78,7 +78,7 @@ validate_config() {
 
 echo "Building image-build container for Zypper (if needed)..."
 if ! podman image exists image-build:test-zypper && ! podman image exists localhost/image-build:test-zypper; then
-    cd "${SCRIPT_DIR}" && podman build --target zypper -t image-build:test-zypper -f Dockerfile . > "${OUTPUT_DIR}/container-build.log" 2>&1
+    cd "${SCRIPT_DIR}" && podman build -t image-build:test-zypper -f Dockerfile . > "${OUTPUT_DIR}/container-build.log" 2>&1
     echo "✓ Container built"
 else
     echo "✓ Container already exists"

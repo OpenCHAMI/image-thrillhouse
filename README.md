@@ -417,39 +417,31 @@ publish:
 
 ## Container Images
 
-The Dockerfile provides multiple build targets optimized for different Linux distributions. A single Go binary is compiled once and copied into each package-manager-specific runtime image.
+The Dockerfile provides a unified image based on Debian Bookworm that includes all supported package managers (DNF, Zypper, APT, mmdebstrap). A single Go binary is compiled and included in the image.
 
-### Available Build Targets
+### Available Image
 
-**DNF-based (RHEL/Rocky/AlmaLinux/Fedora):**
-- **`dnf`** (default) - AlmaLinux 10 base that can build images for **any RHEL version**
-  - Use `options: { releasever: "9" }` in config for RHEL/Rocky/Alma 9
-  - Use `options: { releasever: "10" }` in config for RHEL/Rocky/Alma 10
-  - Use `options: { releasever: "40" }` in config for Fedora 40
-  - The `releasever` option tells DNF which release version to target
+**Unified multi-package-manager image:**
+- **Base:** Debian Bookworm (12)
+- **Included package managers:** DNF, Zypper, APT, mmdebstrap
+- **Capabilities:** Can build images for any supported distribution
 
-**APT-based (Debian/Ubuntu):**
-- **`apt`** - Debian Bookworm (12) base for building Debian/Ubuntu images
+**DNF (RHEL/Rocky/AlmaLinux/Fedora):**
+- Use `options: { releasever: "9" }` in config for RHEL/Rocky/Alma 9
+- Use `options: { releasever: "10" }` in config for RHEL/Rocky/Alma 10
+- Use `options: { releasever: "40" }` in config for Fedora 40
+- The `releasever` option tells DNF which release version to target
 
-**Zypper-based (SUSE/openSUSE):**
-- **`zypper`** - openSUSE Leap base for building SUSE/openSUSE images
-
-### Building Target-Specific Images
+### Building the Image
 
 ```bash
-# Build default DNF image (can build any RHEL version via releasever)
+# Build the unified image
 podman build -t image-builder:latest .
-
-# Build APT image (for Debian/Ubuntu)
-podman build --target apt -t image-builder:debian .
-
-# Build Zypper image (for SUSE/openSUSE)
-podman build --target zypper -t image-builder:suse .
 ```
 
-### Multi-Version Support with Single DNF Image
+### Multi-Version Support
 
-The DNF image uses AlmaLinux 10 as the base but can build images for any RHEL/Fedora version using the `releasever` option:
+The unified image can build images for any RHEL/Fedora version using the `releasever` option:
 
 **Example: Building Rocky Linux 9**
 ```yaml
@@ -516,34 +508,42 @@ layer:
 The `releasever` option is passed to DNF as `--releasever` and tells it which release version to use when resolving dependencies and accessing repositories. This allows a single builder image to create images for any RHEL-family distribution version.
 
 **Benefits:**
-- ✅ **Single builder image** - No need for separate rhel9/rhel10 images
+- ✅ **Single builder image** - One image includes all package managers
 - ✅ **Simpler maintenance** - One Dockerfile, one build
-- ✅ **Version flexibility** - Build any RHEL version from config
-- ✅ **Smaller storage** - Only one base image to store
+- ✅ **Version flexibility** - Build any distribution from config
+- ✅ **Smaller storage** - Only one image to store
 
 ### Architecture
 
 ```
 Single Go Builder (golang:1.26-bookworm)
-   ├─> zypper (opensuse/leap:latest)
-   ├─> apt (debian:bookworm-slim)
-   └─> dnf (almalinux:10) ← default, supports all RHEL versions via releasever
+   └─> Unified Image (debian:bookworm-slim)
+       ├─> dnf (supports all RHEL versions via releasever)
+       ├─> zypper (for SUSE/openSUSE)
+       ├─> apt (for Debian/Ubuntu)
+       └─> mmdebstrap (for Debian/Ubuntu scratch builds)
 ```
 
-The Go binary is compiled once and copied into each package-manager-specific base image, saving ~500MB-1GB per image compared to building separately.
+The Go binary is compiled once and copied into the unified base image that includes all package managers.
 
-### Why Multiple Base Images?
+### Why a Unified Image?
 
-When building images **from scratch** (using `from: scratch` in config), the package manager runs on the **host** using `--installroot` to bootstrap a new filesystem. Different distributions have subtle differences in:
+When building images **from scratch** (using `from: scratch` in config), the package manager runs on the **host** using `--installroot` to bootstrap a new filesystem. By including all package managers in a single image, you can:
+
+- Build images for any distribution without switching container images
+- Maintain a single image for your CI/CD pipelines
+- Reduce storage and maintenance overhead
+
+Different distributions have subtle differences in:
 
 - Package metadata formats and repository structures
 - GPG key handling and signature verification
 - Dependency resolution algorithms
 - Default configuration files
 
-Using the **native package manager** from the target distribution family ensures maximum compatibility and reduces the risk of issues during scratch builds.
+Having the **native package manager** available ensures maximum compatibility and reduces the risk of issues during scratch builds.
 
-**For parent image builds** (building on top of an existing image), the package manager runs **inside** the container, so the base image choice matters less - the native tools in the parent image are used.
+**For parent image builds** (building on top of an existing image), the package manager runs **inside** the container, so the native tools in the parent image are used.
 
 ## Running in Container
 
@@ -552,8 +552,7 @@ Using the **native package manager** from the target distribution family ensures
 The recommended way to run image-build is using the pre-built container from GitHub Container Registry:
 
 ```bash
-# For any RHEL/Rocky/Alma/Fedora version (default)
-# Specify releasever in your config file
+# For any distribution (unified image includes all package managers)
 podman run --rm \
   --device /dev/fuse \
   --cap-add=SYS_ADMIN \
@@ -561,42 +560,14 @@ podman run --rm \
   --cap-add=SETGID \
   --security-opt seccomp=unconfined \
   --security-opt label=disable \
-  -v $(pwd)/rocky9.yaml:/config.yaml:Z \
+  -v $(pwd)/my-image.yaml:/config.yaml:Z \
   -v $(pwd)/output:/output:Z \
   ghcr.io/openchami/image-builder:latest \
-  image-build build --config /config.yaml --log-level info
-
-# For Debian/Ubuntu builds
-podman run --rm \
-  --device /dev/fuse \
-  --cap-add=SYS_ADMIN \
-  --cap-add=SETUID \
-  --cap-add=SETGID \
-  --security-opt seccomp=unconfined \
-  --security-opt label=disable \
-  -v $(pwd)/my-image.yaml:/config.yaml:Z \
-  -v $(pwd)/output:/output:Z \
-  ghcr.io/openchami/image-builder:debian \
-  image-build build --config /config.yaml --log-level info
-
-# For SUSE/openSUSE builds
-podman run --rm \
-  --device /dev/fuse \
-  --cap-add=SYS_ADMIN \
-  --cap-add=SETUID \
-  --cap-add=SETGID \
-  --security-opt seccomp=unconfined \
-  --security-opt label=disable \
-  -v $(pwd)/my-image.yaml:/config.yaml:Z \
-  -v $(pwd)/output:/output:Z \
-  ghcr.io/openchami/image-builder:suse \
   image-build build --config /config.yaml --log-level info
 ```
 
 **Available image tags:**
-- `ghcr.io/openchami/image-builder:latest` - DNF-based (AlmaLinux 10 - for any RHEL/Fedora version)
-- `ghcr.io/openchami/image-builder:debian` - APT-based (for Debian/Ubuntu)
-- `ghcr.io/openchami/image-builder:suse` - Zypper-based (for SUSE/openSUSE)
+- `ghcr.io/openchami/image-builder:latest` - Unified image with all package managers
 - `ghcr.io/openchami/image-builder:v0.1.0` - Specific version (when tagged)
 
 ### Development Usage (Local Build)
@@ -607,11 +578,13 @@ If you've built a local container for development:
 podman run --rm \
   --device /dev/fuse \
   --cap-add=SYS_ADMIN \
+  --cap-add=SETUID \
+  --cap-add=SETGID \
   --security-opt seccomp=unconfined \
   --security-opt label=disable \
   -v $(pwd)/my-image.yaml:/config.yaml:Z \
   -v $(pwd)/output:/output:Z \
-  image-build-go:dev \
+  image-builder:latest \
   image-build build --config /config.yaml --log-level info
 ```
 

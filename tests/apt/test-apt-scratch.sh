@@ -74,7 +74,7 @@ validate_config() {
 
 echo "Building image-build container for APT (if needed)..."
 if ! podman image exists image-build:test-apt && ! podman image exists localhost/image-build:test-apt; then
-    cd "${SCRIPT_DIR}" && podman build --target apt -t image-build:test-apt -f Dockerfile . > "${OUTPUT_DIR}/container-build.log" 2>&1
+    cd "${SCRIPT_DIR}" && podman build -t image-build:test-apt -f Dockerfile . > "${OUTPUT_DIR}/container-build.log" 2>&1
     echo "✓ Container built"
 else
     echo "✓ Container already exists"
