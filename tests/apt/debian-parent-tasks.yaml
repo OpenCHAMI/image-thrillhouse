@@ -1,0 +1,20 @@
+meta:
+  name: debian-parent-tasks
+  tags: 
+    - "bookworm-tasks"
+  from: docker://debian:bookworm
+
+layer:
+  manager:
+    name: apt
+    config: |
+      APT::Sandbox::User "root";
+  actions:
+    install:
+      packages:
+        - bash
+      tasks:
+        - standard
+
+publish:
+  - type: local

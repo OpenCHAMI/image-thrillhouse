@@ -1,0 +1,22 @@
+meta:
+  name: debian-scratch-mirror
+  tags: 
+    - "bookworm"
+  from: scratch
+
+layer:
+  manager:
+    name: mmdebstrap
+    options:
+      suite: "bookworm"
+      mirror: "http://ftp.us.debian.org/debian"
+      variant: "minbase"
+      mode: "unshare"
+  actions:
+    install:
+      packages:
+        - bash
+        - systemd
+
+publish:
+  - type: local

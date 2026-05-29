@@ -1,0 +1,20 @@
+meta:
+  name: ubuntu-parent-basic
+  tags: 
+    - "22.04-custom"
+  from: docker://ubuntu:22.04
+
+layer:
+  manager:
+    name: apt
+    config: |
+      APT::Sandbox::User "root";
+  actions:
+    install:
+      packages:
+        - vim
+        - wget
+        - git
+
+publish:
+  - type: local

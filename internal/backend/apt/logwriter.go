@@ -1,4 +1,4 @@
-// internal/backend/apt/logwriter.go
+// Package apt implements the APT package manager backend for Debian and Ubuntu systems.
 package apt
 
 import (
@@ -7,14 +7,27 @@ import (
 	"strings"
 )
 
+// aptLogWriter buffers and parses APT command output.
+// It extracts useful information such as installed packages, warnings, and errors
+// from the verbose output of apt-get commands.
 type aptLogWriter struct {
 	buf bytes.Buffer
 }
 
+// Write buffers the output data for later processing by Flush.
+// Implements io.Writer interface.
 func (w *aptLogWriter) Write(p []byte) (n int, err error) {
 	return w.buf.Write(p)
 }
 
+// Flush processes the buffered output and logs relevant information.
+// It parses the APT output to extract:
+//   - New packages installed
+//   - Additional dependencies installed
+//   - Warnings (W: prefix or invoke-rc.d warnings)
+//   - Errors (E: prefix, only logged if err parameter is non-nil)
+//
+// The buffer is reset after processing.
 func (w *aptLogWriter) Flush(err error) {
 	output := w.buf.String()
 	w.buf.Reset()

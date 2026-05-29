@@ -1,4 +1,4 @@
-// internal/backend/zypper/logwriter.go
+// Package zypper implements the Zypper package manager backend for openSUSE and SLES.
 package zypper
 
 import (
@@ -7,14 +7,30 @@ import (
 	"strings"
 )
 
+// zypperLogWriter buffers and parses Zypper command output.
+// It extracts package information, download sizes, and errors from Zypper's output.
 type zypperLogWriter struct {
 	buf bytes.Buffer
 }
 
+// Write buffers the output data for later processing by Flush.
+// Implements io.Writer interface.
 func (w *zypperLogWriter) Write(p []byte) (n int, err error) {
 	return w.buf.Write(p)
 }
 
+// Flush processes the buffered Zypper output and logs relevant information.
+// It parses Zypper's output format to extract:
+//   - New packages being installed (after "NEW packages are going to be installed")
+//   - Overall download size
+//   - Errors (e.g., "No provider of" messages)
+//
+// The parser uses state machine logic to track which section of output it's in:
+//   - inNewPackages: Collecting package names from the install list
+//   - inOther: Skipping recommended/suggested package sections
+//
+// Empty lines reset the state. Indented lines contain package names or additional info.
+// The buffer is reset after processing.
 func (w *zypperLogWriter) Flush(err error) {
 	output := w.buf.String()
 	w.buf.Reset()

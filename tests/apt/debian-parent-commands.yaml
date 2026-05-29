@@ -1,0 +1,22 @@
+meta:
+  name: debian-parent-commands
+  tags: 
+    - "bookworm-commands"
+  from: docker://debian:bookworm-slim
+
+layer:
+  manager:
+    name: apt
+    config: |
+      APT::Sandbox::User "root";
+  actions:
+    commands:
+      - run: echo "Testing commands"
+      - run: mkdir -p /opt/app
+      - script: |
+          #!/bin/bash
+          echo "Multi-line script test"
+          touch /opt/app/marker
+
+publish:
+  - type: local

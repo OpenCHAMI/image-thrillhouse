@@ -1,0 +1,18 @@
+meta:
+  name: opensuse-parent-basic
+  tags: 
+    - "leap-15.6-custom"
+  from: docker://opensuse/leap:15.6
+
+layer:
+  manager:
+    name: zypper
+  actions:
+    install:
+      packages:
+        - vim
+        - wget
+        - git
+
+publish:
+  - type: local

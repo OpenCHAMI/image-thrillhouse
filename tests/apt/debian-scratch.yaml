@@ -1,0 +1,21 @@
+meta:
+  name: debian-scratch-base
+  tags: 
+    - "bookworm"
+  from: scratch
+
+layer:
+  manager:
+    name: mmdebstrap
+    options:
+      suite: "bookworm"
+      mirror: "http://deb.debian.org/debian"
+  actions:
+    install:
+      packages:
+        - bash
+        - coreutils
+        - util-linux
+
+publish:
+  - type: local

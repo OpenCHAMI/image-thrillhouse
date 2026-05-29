@@ -1,0 +1,33 @@
+meta:
+  name: opensuse-scratch-patterns
+  tags: 
+    - "leap-15.6"
+  from: scratch
+
+layer:
+  manager:
+    name: zypper
+    config: |
+      [main]
+      solver.onlyRequires = true
+      rpm.install.excludedocs = no
+    options:
+      no-gpg-checks: "true"
+  repos:
+    - path: /etc/zypp/repos.d/opensuse-oss.repo
+      content: |
+        [opensuse-oss]
+        name=openSUSE Leap 15.6 OSS
+        baseurl=https://download.opensuse.org/distribution/leap/15.6/repo/oss/
+        enabled=1
+        gpgcheck=0
+  actions:
+    install:
+      packages:
+        - bash
+        - systemd
+      patterns:
+        - base
+
+publish:
+  - type: local

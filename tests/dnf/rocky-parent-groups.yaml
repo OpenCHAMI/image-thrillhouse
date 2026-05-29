@@ -1,0 +1,18 @@
+meta:
+  name: rocky-parent-groups
+  tags: 
+    - "9-groups"
+  from: docker://rockylinux:9
+
+layer:
+  manager:
+    name: dnf
+  actions:
+    install:
+      packages:
+        - bash
+      groups:
+        - "Development Tools"
+
+publish:
+  - type: local

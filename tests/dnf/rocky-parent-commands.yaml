@@ -1,0 +1,20 @@
+meta:
+  name: rocky-parent-commands
+  tags: 
+    - "9-commands"
+  from: docker://rockylinux:9
+
+layer:
+  manager:
+    name: dnf
+  actions:
+    commands:
+      - run: echo "Test command execution"
+      - run: mkdir -p /opt/custom
+      - script: |
+          #!/bin/bash
+          echo "Multi-line script"
+          touch /opt/custom/test.txt
+
+publish:
+  - type: local

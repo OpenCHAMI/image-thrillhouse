@@ -1,3 +1,5 @@
+// Package buildah provides container operations using the Buildah library.
+// It wraps Buildah's functionality for creating, mounting, and manipulating containers.
 package buildah
 
 import (
@@ -20,14 +22,26 @@ import (
 	"github.com/travisbcotton/image-build/internal/container"
 )
 
+// Container wraps a Buildah builder and implements the container.Container interface.
+// It provides methods for running commands, writing files, and committing images.
 type Container struct {
-	Name        string
-	fromScratch bool
-	mountPath   string
-	Builder     *buildah.Builder
-	Store       storage.Store
+	Name        string           // Container name
+	fromScratch bool             // True if building from scratch
+	mountPath   string           // Path where the container filesystem is mounted on the host
+	Builder     *buildah.Builder // Underlying Buildah builder instance
+	Store       storage.Store    // Container storage backend
 }
 
+// NewContainer creates a new container from the specified base image.
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - name: Name for the container
+//   - from: Base image to build from (e.g., "scratch", "ubuntu:latest", "registry.io/myimage:tag")
+//   - tlsverify: Whether to skip TLS verification when pulling images
+//
+// The container is created, mounted, and ready to use. The caller is responsible
+// for calling Delete() when done to clean up resources.
 func NewContainer(ctx context.Context, name string, from string, tlsverify bool) (container.Container, error) {
 	// get container store
 	store, err := openStore()
@@ -60,6 +74,18 @@ func NewContainer(ctx context.Context, name string, from string, tlsverify bool)
 	}, nil
 }
 
+// Run executes a command in the container or on the host.
+//
+// The execution mode depends on whether the container was created from scratch
+// and the specified RunMode:
+//
+//   - RunModeHost: Runs the command on the host system (used for --installroot operations)
+//   - RunModeContainer: Runs the command inside the container using buildah run
+//
+// For scratch builds in RunModeContainer, the container must have a shell and basic utilities.
+// The command runs with elevated capabilities needed for package installation.
+//
+// Output is written to the provided OutputWriter, which is flushed after execution.
 func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMode, out container.OutputWriter) error {
 	if c.fromScratch {
 		switch mode {
@@ -68,6 +94,12 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 			command := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
 			command.Stdout = out
 			command.Stderr = out
+			// Set environment variables for RPM/DNF to work in containers
+			command.Env = append(os.Environ(),
+				"LANG=C.UTF-8",
+				"LC_ALL=C.UTF-8",
+				"RPM_INSTALL_PREFIX="+c.MountPath(),
+			)
 			err := command.Run()
 			out.Flush(err)
 			//dnfOut.Flush(err)
@@ -110,6 +142,15 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 	return nil
 }
 
+// RunScript writes a shell script to the container and executes it.
+//
+// The script is:
+//  1. Written to a temporary file in /tmp
+//  2. Made executable with chmod +x
+//  3. Executed
+//  4. Removed after execution
+//
+// This is useful for running complex multi-line scripts without escaping issues.
 func (c *Container) RunScript(ctx context.Context, script string, out container.OutputWriter) error {
 	// write script to temp file in container
 	tmpPath := fmt.Sprintf("/tmp/image-build-script-%d.sh", time.Now().UnixNano())
@@ -138,6 +179,15 @@ func (c *Container) RunScript(ctx context.Context, script string, out container.
 	return nil
 }
 
+// WriteFile writes a file into the container filesystem.
+//
+// The file content can be provided in three ways (checked in this order):
+//  1. Content: Inline string content (useful for YAML multiline blocks)
+//  2. Src: Path to a file on the host filesystem
+//  3. URL: HTTP URL to fetch the content from
+//
+// The file is written through a temporary file on the host and then added
+// to the container using Buildah's Add method.
 func (c *Container) WriteFile(file config.File) error {
 	var content []byte
 	var err error
@@ -190,12 +240,34 @@ func (c *Container) WriteFile(file config.File) error {
 	return nil
 }
 
+// Commit commits the container as an image to local storage.
+// This is a convenience wrapper around CommitWithLabels that passes no labels.
 func (c *Container) Commit(ctx context.Context, name, tag string) (string, error) {
+	return c.CommitWithLabels(ctx, name, tag, nil)
+}
+
+// CommitWithLabels commits the container as an image with labels to local storage.
+//
+// The image is tagged as "localhost/<name>:<tag>" in the local container storage.
+// Labels are applied to the image metadata before committing.
+//
+// Returns the container ID on success.
+func (c *Container) CommitWithLabels(ctx context.Context, name, tag string, labels map[string]string) (string, error) {
 	log := slog.With("component", "container")
-	log.Debug("Commit Container", "ID", c.GetID(), "Name", c.GetName(), "as", name, ":", tag)
+	log.Debug("Commit Container", "ID", c.GetID(), "Name", c.GetName(), "as", name, ":", tag, "labels", len(labels))
+
 	options := buildah.CommitOptions{
 		AdditionalTags: []string{fmt.Sprintf("localhost/%s:%s", name, tag)},
 	}
+
+	// Add labels if provided
+	if len(labels) > 0 {
+		// Apply labels using buildah config
+		for key, value := range labels {
+			c.Builder.SetLabel(key, value)
+		}
+	}
+
 	_, _, _, err := c.Builder.Commit(ctx, nil, options)
 	if err != nil {
 		return "", fmt.Errorf("commit: %w", err)
@@ -203,6 +275,9 @@ func (c *Container) Commit(ctx context.Context, name, tag string) (string, error
 	return c.GetID(), nil
 }
 
+// Delete cleans up the container and releases all resources.
+// This unmounts the container filesystem, deletes the container, and shuts down the storage.
+// Should be called when the container is no longer needed.
 func (c *Container) Delete() {
 	log := slog.With("component", "container")
 	log.Debug("Deleting Container", "ID", c.GetID(), "Name", c.GetName())
@@ -211,20 +286,30 @@ func (c *Container) Delete() {
 	c.Store.Shutdown(false)
 }
 
+// MountPath returns the host filesystem path where the container is mounted.
+// This path can be used to directly manipulate files in the container filesystem.
 func (c *Container) MountPath() string {
 	return c.mountPath
 }
 
+// GetID returns the unique container ID.
 func (c *Container) GetID() string {
 
 	return c.Builder.ContainerID
 }
 
+// GetName returns the container name.
 func (c *Container) GetName() string {
 
 	return c.Builder.Container
 }
 
+// GetIsolation returns the isolation mode to use for running commands.
+// The mode can be controlled via the BUILDAH_ISOLATION environment variable:
+//   - "chroot": Use chroot isolation
+//   - "rootless": Use OCI rootless isolation
+//   - "oci": Use standard OCI runtime
+//   - default: Let Buildah choose the appropriate mode
 func (c *Container) GetIsolation() define.Isolation {
 	if iso := os.Getenv("BUILDAH_ISOLATION"); iso != "" {
 		switch iso {
@@ -239,6 +324,15 @@ func (c *Container) GetIsolation() define.Isolation {
 	return define.IsolationDefault
 }
 
+// CommitToRegistry commits the container directly to a remote registry.
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - ref: Registry reference (e.g., "registry.io/repo/image:tag")
+//   - tlsVerify: Whether to verify TLS certificates when pushing
+//
+// This bypasses local storage and pushes directly to the registry,
+// which can be more efficient for CI/CD pipelines.
 func (c *Container) CommitToRegistry(ctx context.Context, ref string, tlsVerify bool) error {
 	imageRef, err := docker.ParseReference("//" + ref)
 	if err != nil {
