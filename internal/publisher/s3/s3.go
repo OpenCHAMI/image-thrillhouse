@@ -63,7 +63,7 @@ func New(endpoint, bucket, prefix, accessKey, secretKey string) *S3Publisher {
 func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
 	// Use the first tag for the image name
 	tag := tags[0]
-	
+
 	log := slog.With("component", "publisher", "type", "s3")
 	log.Info("Publishing to S3", "bucket", s.bucket, "prefix", s.prefix)
 
