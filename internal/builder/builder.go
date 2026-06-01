@@ -5,9 +5,11 @@ package builder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 
 	"github.com/mattn/go-shellwords"
 	"github.com/travisbcotton/image-build/internal/backend"
@@ -456,4 +458,18 @@ func (b *Builder) runOpenSCAP(ctx context.Context, c container.Container) error 
 
 	log.Info("OpenSCAP security scanning complete")
 	return nil
+}
+
+// extractExitCode returns the exit code from an error produced by running a
+// command (e.g. via exec.Cmd.Run). It unwraps the error chain to find an
+// *exec.ExitError. If no exit code can be determined, it returns -1.
+func extractExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
 }
