@@ -24,7 +24,7 @@ run_test() {
     local test_name="$1"
     local config_file="$2"
     
-    ((TOTAL_TESTS++))
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
     echo "[$TOTAL_TESTS] Testing: $test_name"
     echo "  Config: $config_file"
     
@@ -41,11 +41,11 @@ run_test() {
         image-build:test-apt \
         image-build build --config "/tests/$config_file" --log-level info > "${OUTPUT_DIR}/${test_name}.log" 2>&1; then
         echo "  ✓ PASSED"
-        ((PASSED_TESTS++))
+        PASSED_TESTS=$((PASSED_TESTS + 1))
         return 0
     else
         echo "  ✗ FAILED (see ${OUTPUT_DIR}/${test_name}.log)"
-        ((FAILED_TESTS++))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         return 1
     fi
 }
@@ -55,7 +55,7 @@ validate_config() {
     local test_name="$1"
     local config_file="$2"
     
-    ((TOTAL_TESTS++))
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
     echo "[$TOTAL_TESTS] Validating: $test_name"
     
     if podman run --rm \
@@ -63,11 +63,11 @@ validate_config() {
         image-build:test-apt \
         image-build validate --config "/tests/$config_file" > "${OUTPUT_DIR}/${test_name}-validate.log" 2>&1; then
         echo "  ✓ PASSED"
-        ((PASSED_TESTS++))
+        PASSED_TESTS=$((PASSED_TESTS + 1))
         return 0
     else
         echo "  ✗ FAILED (see ${OUTPUT_DIR}/${test_name}-validate.log)"
-        ((FAILED_TESTS++))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         return 1
     fi
 }
@@ -114,31 +114,31 @@ echo "════════════════════════�
 echo ""
 
 # Test 5: Missing required option (suite)
-((TOTAL_TESTS++))
+TOTAL_TESTS=$((TOTAL_TESTS + 1))
 echo "[$TOTAL_TESTS] Testing: missing-suite-option"
 if podman run --rm \
     -v "${SCRIPT_DIR}/tests:/tests:Z" \
     image-build:test-apt \
     image-build validate --config "/tests/apt/invalid-no-suite.yaml" > "${OUTPUT_DIR}/invalid-no-suite.log" 2>&1; then
     echo "  ✗ FAILED (should have rejected config without suite)"
-    ((FAILED_TESTS++))
+    FAILED_TESTS=$((FAILED_TESTS + 1))
 else
     echo "  ✓ PASSED (correctly rejected missing suite)"
-    ((PASSED_TESTS++))
+    PASSED_TESTS=$((PASSED_TESTS + 1))
 fi
 
 # Test 6: Invalid mmdebstrap option
-((TOTAL_TESTS++))
+TOTAL_TESTS=$((TOTAL_TESTS + 1))
 echo "[$TOTAL_TESTS] Testing: invalid-mmdebstrap-option"
 if podman run --rm \
     -v "${SCRIPT_DIR}/tests:/tests:Z" \
     image-build:test-apt \
     image-build validate --config "/tests/apt/invalid-option.yaml" > "${OUTPUT_DIR}/invalid-option.log" 2>&1; then
     echo "  ✗ FAILED (should have rejected invalid option)"
-    ((FAILED_TESTS++))
+    FAILED_TESTS=$((FAILED_TESTS + 1))
 else
     echo "  ✓ PASSED (correctly rejected invalid option)"
-    ((PASSED_TESTS++))
+    PASSED_TESTS=$((PASSED_TESTS + 1))
 fi
 
 echo ""

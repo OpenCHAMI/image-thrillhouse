@@ -24,7 +24,7 @@ run_test() {
     local test_name="$1"
     local config_file="$2"
     
-    ((TOTAL_TESTS++))
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
     echo "[$TOTAL_TESTS] Testing: $test_name"
     echo "  Config: $config_file"
     
@@ -41,11 +41,11 @@ run_test() {
         image-build:test \
         image-build build --config "/tests/$config_file" --log-level info > "${OUTPUT_DIR}/${test_name}.log" 2>&1; then
         echo "  ✓ PASSED"
-        ((PASSED_TESTS++))
+        PASSED_TESTS=$((PASSED_TESTS + 1))
         return 0
     else
         echo "  ✗ FAILED (see ${OUTPUT_DIR}/${test_name}.log)"
-        ((FAILED_TESTS++))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         return 1
     fi
 }
@@ -55,7 +55,7 @@ validate_config() {
     local test_name="$1"
     local config_file="$2"
     
-    ((TOTAL_TESTS++))
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
     echo "[$TOTAL_TESTS] Validating: $test_name"
     
     if podman run --rm \
@@ -63,11 +63,11 @@ validate_config() {
         image-build:test \
         image-build validate --config "/tests/$config_file" > "${OUTPUT_DIR}/${test_name}-validate.log" 2>&1; then
         echo "  ✓ PASSED"
-        ((PASSED_TESTS++))
+        PASSED_TESTS=$((PASSED_TESTS + 1))
         return 0
     else
         echo "  ✗ FAILED (see ${OUTPUT_DIR}/${test_name}-validate.log)"
-        ((FAILED_TESTS++))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         return 1
     fi
 }
@@ -114,31 +114,31 @@ echo "════════════════════════�
 echo ""
 
 # Test 5: Invalid DNF option (should fail validation)
-((TOTAL_TESTS++))
+TOTAL_TESTS=$((TOTAL_TESTS + 1))
 echo "[$TOTAL_TESTS] Testing: invalid-dnf-option"
 if podman run --rm \
     -v "${SCRIPT_DIR}/tests:/tests:Z" \
     image-build:test \
     image-build validate --config "/tests/rocky/invalid-dnf-test.yaml" > "${OUTPUT_DIR}/invalid-option.log" 2>&1; then
     echo "  ✗ FAILED (should have rejected invalid option)"
-    ((FAILED_TESTS++))
+    FAILED_TESTS=$((FAILED_TESTS + 1))
 else
     echo "  ✓ PASSED (correctly rejected invalid option)"
-    ((PASSED_TESTS++))
+    PASSED_TESTS=$((PASSED_TESTS + 1))
 fi
 
 # Test 6: Conflicting DNF options (should fail validation)
-((TOTAL_TESTS++))
+TOTAL_TESTS=$((TOTAL_TESTS + 1))
 echo "[$TOTAL_TESTS] Testing: conflicting-dnf-options"
 if podman run --rm \
     -v "${SCRIPT_DIR}/tests:/tests:Z" \
     image-build:test \
     image-build validate --config "/tests/rocky/conflicting-dnf-test.yaml" > "${OUTPUT_DIR}/conflicting-options.log" 2>&1; then
     echo "  ✗ FAILED (should have rejected conflicting options)"
-    ((FAILED_TESTS++))
+    FAILED_TESTS=$((FAILED_TESTS + 1))
 else
     echo "  ✓ PASSED (correctly rejected conflicting options)"
-    ((PASSED_TESTS++))
+    PASSED_TESTS=$((PASSED_TESTS + 1))
 fi
 
 echo ""

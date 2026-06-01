@@ -100,19 +100,19 @@ run_test() {
     
     if [ ! -f "$script" ]; then
         echo -e "${RED}✗ Script not found: $script${NC}"
-        ((TOTAL_FAILED++))
+        TOTAL_FAILED=$((TOTAL_FAILED + 1))
         return 1
     fi
     
     if bash "$script"; then
         echo ""
         echo -e "${GREEN}✓ ${pkg} ${type} tests PASSED${NC}"
-        ((TOTAL_PASSED++))
+        TOTAL_PASSED=$((TOTAL_PASSED + 1))
         return 0
     else
         echo ""
         echo -e "${RED}✗ ${pkg} ${type} tests FAILED${NC}"
-        ((TOTAL_FAILED++))
+        TOTAL_FAILED=$((TOTAL_FAILED + 1))
         return 1
     fi
 }
@@ -137,12 +137,11 @@ if [ "$PARALLEL_SCRATCH" = true ]; then
 
     SCRATCH_FAILED=0
     for i in "${!PIDS[@]}"; do
-        ((TOTAL_TESTS_RUN = TOTAL_TESTS_RUN + 1)) || true
         if wait "${PIDS[$i]}"; then
-            ((TOTAL_PASSED++))
+            TOTAL_PASSED=$((TOTAL_PASSED + 1))
         else
-            ((SCRATCH_FAILED++))
-            ((TOTAL_FAILED++))
+            SCRATCH_FAILED=$((SCRATCH_FAILED + 1))
+            TOTAL_FAILED=$((TOTAL_FAILED + 1))
         fi
     done
 
