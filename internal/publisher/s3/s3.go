@@ -61,6 +61,9 @@ func New(endpoint, bucket, prefix, accessKey, secretKey string) *S3Publisher {
 //
 // Note: Labels are not uploaded to S3 as they are only relevant for OCI images.
 func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
+	if len(tags) == 0 {
+		return fmt.Errorf("s3 publisher requires at least one tag")
+	}
 	// Use the first tag for the image name
 	tag := tags[0]
 
@@ -193,7 +196,11 @@ func (s *S3Publisher) createSquashFS(ctx context.Context, mountPath, name, tag s
 
 	squashfsPath := tmpFile.Name()
 
-	cmd := exec.CommandContext(ctx, "mksquashfs", mountPath, squashfsPath, "-noappend", "-no-progress")
+	// `-e <patterns…>` must come last; excludes transient host mounts that
+	// can show through the buildah overlay while the container is still mounted.
+	cmd := exec.CommandContext(ctx, "mksquashfs", mountPath, squashfsPath,
+		"-noappend", "-no-progress",
+		"-e", "proc", "sys", "dev", "run")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		os.Remove(squashfsPath)
 		return "", fmt.Errorf("mksquashfs: %w (output: %s)", err, string(output))

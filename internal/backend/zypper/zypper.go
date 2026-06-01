@@ -257,14 +257,22 @@ func (z *ZypperBackend) addOptionFlags(cmd []string) []string {
 // Uses rpm -e --nodeps to remove packages without checking dependencies.
 // This is useful for removing unnecessary packages to minimize image size.
 //
+// If rootPath is non-empty, the command runs on the host targeting that
+// filesystem (rpm --root <path> -e --nodeps ...) so that scratch builds can
+// remove packages from the bootstrapped root before commit.
+//
 // Returns nil if no packages to remove.
-func (z *ZypperBackend) RemovePackagesCommand(packages []string) []string {
+func (z *ZypperBackend) RemovePackagesCommand(packages []string, rootPath string) []string {
 	if len(packages) == 0 {
 		return nil
 	}
-	
-	cmd := make([]string, 0, 3+len(packages))
-	cmd = append(cmd, "rpm", "-e", "--nodeps")
+
+	cmd := make([]string, 0, 5+len(packages))
+	cmd = append(cmd, "rpm")
+	if rootPath != "" {
+		cmd = append(cmd, "--root", rootPath)
+	}
+	cmd = append(cmd, "-e", "--nodeps")
 	cmd = append(cmd, packages...)
 	return cmd
 }

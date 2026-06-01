@@ -131,25 +131,33 @@ func (d *MmdebstrapBackend) SupportsInstallRoot() bool {
 	return true
 }
 
-// SupportsParentInstall returns true but logs a warning when used.
-// In practice, mmdebstrap should only be used for scratch builds.
+// SupportsParentInstall returns false because mmdebstrap can only bootstrap
+// a new filesystem; it cannot install into an existing image.
 // Use the apt backend for parent image builds.
 func (d *MmdebstrapBackend) SupportsParentInstall() bool {
-	return true
+	return false
 }
 
 // RemovePackagesCommand generates a command to remove packages using dpkg.
 // Uses dpkg --remove --force-depends to remove packages without checking dependencies.
 // This is useful for removing unnecessary packages to minimize image size.
 //
+// If rootPath is non-empty, the command runs on the host targeting that
+// filesystem (dpkg --root <path> ...). For mmdebstrap this is the common
+// case since the backend only supports scratch builds.
+//
 // Returns nil if no packages to remove.
-func (m *MmdebstrapBackend) RemovePackagesCommand(packages []string) []string {
+func (m *MmdebstrapBackend) RemovePackagesCommand(packages []string, rootPath string) []string {
 	if len(packages) == 0 {
 		return nil
 	}
-	
-	cmd := make([]string, 0, 3+len(packages))
-	cmd = append(cmd, "dpkg", "--remove", "--force-depends")
+
+	cmd := make([]string, 0, 5+len(packages))
+	cmd = append(cmd, "dpkg")
+	if rootPath != "" {
+		cmd = append(cmd, "--root", rootPath)
+	}
+	cmd = append(cmd, "--remove", "--force-depends")
 	cmd = append(cmd, packages...)
 	return cmd
 }

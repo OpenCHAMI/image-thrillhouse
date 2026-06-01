@@ -53,7 +53,7 @@ func NewContainer(ctx context.Context, name string, from string, tlsverify bool)
 	builder, err := buildah.NewBuilder(ctx, store, buildah.BuilderOptions{
 		FromImage: from,
 		SystemContext: &types.SystemContext{
-			DockerInsecureSkipTLSVerify: types.NewOptionalBool(tlsverify),
+			DockerInsecureSkipTLSVerify: types.NewOptionalBool(!tlsverify),
 		},
 	})
 	if err != nil {
@@ -89,6 +89,8 @@ func NewContainer(ctx context.Context, name string, from string, tlsverify bool)
 func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMode, out container.OutputWriter) error {
 	if c.fromScratch {
 		switch mode {
+		default:
+			return fmt.Errorf("run %v: unsupported run mode %d for scratch container", cmd, mode)
 		case container.RunModeHost:
 			// exec directly, used for dnf --installroot
 			command := exec.CommandContext(ctx, cmd[0], cmd[1:]...)

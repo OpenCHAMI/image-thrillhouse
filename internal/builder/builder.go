@@ -398,6 +398,11 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 // removePackages removes packages from the container if specified in the configuration.
 // Uses rpm -e --nodeps for RPM-based systems or dpkg --remove for Debian-based systems.
 // This is useful for minimizing image size by removing unnecessary packages.
+//
+// For scratch builds, the command runs on the host against the mounted root
+// (e.g. rpm --root <path> -e --nodeps ...) because a freshly-bootstrapped
+// scratch root may not be able to exec the package manager itself.
+// For parent builds, the command runs inside the container.
 func (b *Builder) removePackages(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 
@@ -408,17 +413,21 @@ func (b *Builder) removePackages(ctx context.Context, c container.Container) err
 
 	log.Info("Removing packages", "count", len(packages), "packages", packages)
 
-	cmd := b.backend.RemovePackagesCommand(packages)
+	rootPath := ""
+	runMode := container.RunModeContainer
+	if b.cfg.Meta.From == "scratch" {
+		rootPath = c.MountPath()
+		runMode = container.RunModeHost
+	}
+
+	cmd := b.backend.RemovePackagesCommand(packages, rootPath)
 	if cmd == nil {
-		log.Warn("Backend does not support package removal")
-		return nil
+		return fmt.Errorf("backend %s does not support package removal", b.cfg.Layer.Manager.Name)
 	}
 
 	out := container.NewBufLogWriter("stdout")
-	if err := c.Run(ctx, cmd, container.RunModeContainer, out); err != nil {
-		log.Warn("Failed to remove some packages (may be expected)", "error", err)
-		// Don't fail the build if package removal fails - some packages may not exist
-		return nil
+	if err := c.Run(ctx, cmd, runMode, out); err != nil {
+		return fmt.Errorf("remove packages %v: %w", packages, err)
 	}
 
 	log.Info("Successfully removed packages")

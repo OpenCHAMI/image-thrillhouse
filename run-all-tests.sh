@@ -123,34 +123,41 @@ if [ "$PARALLEL_SCRATCH" = true ]; then
     echo "Phase 1: Running scratch tests in parallel"
     echo "════════════════════════════════════════════════════════════════"
     echo ""
-    
-    # Run scratch tests in parallel
+
+    # Run scratch tests in parallel. Backgrounded run_test runs in a subshell,
+    # so any counter changes it makes are lost — we tally results here in the
+    # parent shell based on each child's exit code.
     PIDS=()
+    PIDS_PKG=()
     for pkg in "${TESTS[@]}"; do
         run_test "$pkg" "scratch" &
         PIDS+=($!)
+        PIDS_PKG+=("$pkg")
     done
-    
-    # Wait for all scratch tests
+
     SCRATCH_FAILED=0
-    for pid in "${PIDS[@]}"; do
-        if ! wait $pid; then
+    for i in "${!PIDS[@]}"; do
+        ((TOTAL_TESTS_RUN = TOTAL_TESTS_RUN + 1)) || true
+        if wait "${PIDS[$i]}"; then
+            ((TOTAL_PASSED++))
+        else
             ((SCRATCH_FAILED++))
+            ((TOTAL_FAILED++))
         fi
     done
-    
+
     if [ $SCRATCH_FAILED -gt 0 ]; then
         echo ""
         echo -e "${RED}✗ Some scratch tests failed. Stopping.${NC}"
         exit 1
     fi
-    
+
     echo ""
     echo "════════════════════════════════════════════════════════════════"
     echo "Phase 2: Running parent tests sequentially"
     echo "════════════════════════════════════════════════════════════════"
     echo ""
-    
+
     # Run parent tests sequentially
     for pkg in "${TESTS[@]}"; do
         run_test "$pkg" "parent" || true

@@ -51,10 +51,15 @@ type Backend interface {
 	// Returns a list of commands, where each command is a slice of arguments.
 	InstallRootCommands(install config.Install, rootPath string) [][]string
 
-	// RemovePackagesCommand generates a command to remove packages from the container.
-	// Uses rpm -e --nodeps for RPM-based systems (dnf, zypper).
+	// RemovePackagesCommand generates a command to remove packages from the
+	// container or, for scratch builds, from the bootstrapped root filesystem.
+	// Uses rpm -e --nodeps for RPM-based systems (dnf, zypper) and
+	// dpkg --remove for deb-based systems (apt).
+	// If rootPath is non-empty, the command targets that path on the host
+	// (e.g. rpm --root <path>). If rootPath is empty, the command is intended
+	// to run inside the container.
 	// Returns a command as a slice of arguments, or nil if no packages to remove.
-	RemovePackagesCommand(packages []string) []string
+	RemovePackagesCommand(packages []string, rootPath string) []string
 
 	// ImportGPGKeyCommand generates a command to import a GPG key for repository signing.
 	// The keyURL is the URL to download the GPG key from.

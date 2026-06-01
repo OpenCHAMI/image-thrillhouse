@@ -155,14 +155,22 @@ func (a *AptBackend) InstallRootCommands(install config.Install, rootPath string
 // Uses dpkg --remove --force-depends to remove packages without checking dependencies.
 // This is useful for removing unnecessary packages to minimize image size.
 //
+// If rootPath is non-empty, the command runs on the host targeting that
+// filesystem (dpkg --root <path> ...) so that scratch builds can remove
+// packages from the bootstrapped root before commit.
+//
 // Returns nil if no packages to remove.
-func (a *AptBackend) RemovePackagesCommand(packages []string) []string {
+func (a *AptBackend) RemovePackagesCommand(packages []string, rootPath string) []string {
 	if len(packages) == 0 {
 		return nil
 	}
-	
-	cmd := make([]string, 0, 3+len(packages))
-	cmd = append(cmd, "dpkg", "--remove", "--force-depends")
+
+	cmd := make([]string, 0, 5+len(packages))
+	cmd = append(cmd, "dpkg")
+	if rootPath != "" {
+		cmd = append(cmd, "--root", rootPath)
+	}
+	cmd = append(cmd, "--remove", "--force-depends")
 	cmd = append(cmd, packages...)
 	return cmd
 }
