@@ -1,0 +1,92 @@
+name: Build Debian Package
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.2'
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Update debian/changelog
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TIMESTAMP=$(date -R)
+          cat > debian/changelog << EOF
+          image-build (${VERSION}-1) unstable; urgency=medium
+
+            * Release version ${VERSION}
+
+           -- Travis Cotton <travis@example.com>  ${TIMESTAMP}
+
+          EOF
+          cat debian/changelog
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            debhelper \
+            dh-golang \
+            golang-go \
+            build-essential \
+            fakeroot \
+            devscripts
+
+      - name: Build Debian package
+        run: |
+          dpkg-buildpackage -us -uc -b
+
+      - name: List generated packages
+        run: |
+          ls -lh ../*.deb
+
+      - name: Get package filename
+        id: package
+        run: |
+          DEB_FILE=$(ls ../*.deb | head -n 1)
+          DEB_NAME=$(basename "$DEB_FILE")
+          echo "file=$DEB_FILE" >> $GITHUB_OUTPUT
+          echo "name=$DEB_NAME" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.file }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: debian-package-${{ steps.version.outputs.version }}
+          path: ../*.deb
+          retention-days: 30
