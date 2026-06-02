@@ -54,7 +54,12 @@ func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, 
 	// Options:
 	//   -noappend: Always create a new image (don't append)
 	//   -no-progress: Disable progress bar (for cleaner logs)
-	cmd := exec.CommandContext(ctx, "mksquashfs", c.MountPath(), output, "-noappend", "-no-progress")
+	//   -e proc sys dev run: Exclude transient host mounts that may show
+	//       through the buildah overlay while the container is still mounted.
+	//       `-e` must come last; everything after it is an exclusion pattern.
+	cmd := exec.CommandContext(ctx, "mksquashfs", c.MountPath(), output,
+		"-noappend", "-no-progress",
+		"-e", "proc", "sys", "dev", "run")
 	cmd.Stdout = nil        // Suppress stdout
 	cmd.Stderr = os.Stderr  // Show errors
 	

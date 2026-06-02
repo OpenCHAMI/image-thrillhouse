@@ -181,3 +181,33 @@ func TestOutputWriter(t *testing.T) {
 		t.Error("OutputWriter() returned nil")
 	}
 }
+
+func TestIsAcceptableExitCode(t *testing.T) {
+	backend := New(nil)
+
+	tests := []struct {
+		name     string
+		exitCode int
+		output   string
+		want     bool
+	}{
+		{"zero exit not consulted but should not be acceptable here", 0, "", false},
+		{"unrelated failure", 1, "Installing: bash", false},
+		{"err_commit with install evidence", 8, "Installing: bash-5.1", true},
+		{"err_commit with NEW packages evidence", 8, "The following NEW packages are going to be installed:\n  bash", true},
+		{"err_commit without evidence", 8, "some unrelated zypper error", false},
+		{"reboot needed (102) is informational", 102, "", true},
+		{"restart needed (103) is informational", 103, "", true},
+		{"rpm script failed (107) is informational", 107, "warning: scriptlet failed", true},
+		{"unknown high code stays an error", 199, "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := backend.IsAcceptableExitCode(tt.exitCode, tt.output); got != tt.want {
+				t.Errorf("IsAcceptableExitCode(%d, %q) = %v, want %v",
+					tt.exitCode, tt.output, got, tt.want)
+			}
+		})
+	}
+}

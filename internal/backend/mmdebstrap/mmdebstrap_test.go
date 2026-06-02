@@ -92,9 +92,9 @@ func TestSupportsParentInstall(t *testing.T) {
 		"suite":  "bookworm",
 		"mirror": "http://deb.debian.org/debian",
 	})
-	// Currently returns true but logs warning
-	if !backend.SupportsParentInstall() {
-		t.Error("mmdebstrap SupportsParentInstall() should return true (even though not recommended)")
+	// mmdebstrap can only bootstrap from scratch; use apt for parent builds.
+	if backend.SupportsParentInstall() {
+		t.Error("mmdebstrap SupportsParentInstall() should return false")
 	}
 }
 

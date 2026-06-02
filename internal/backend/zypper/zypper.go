@@ -257,14 +257,22 @@ func (z *ZypperBackend) addOptionFlags(cmd []string) []string {
 // Uses rpm -e --nodeps to remove packages without checking dependencies.
 // This is useful for removing unnecessary packages to minimize image size.
 //
+// If rootPath is non-empty, the command runs on the host targeting that
+// filesystem (rpm --root <path> -e --nodeps ...) so that scratch builds can
+// remove packages from the bootstrapped root before commit.
+//
 // Returns nil if no packages to remove.
-func (z *ZypperBackend) RemovePackagesCommand(packages []string) []string {
+func (z *ZypperBackend) RemovePackagesCommand(packages []string, rootPath string) []string {
 	if len(packages) == 0 {
 		return nil
 	}
-	
-	cmd := make([]string, 0, 3+len(packages))
-	cmd = append(cmd, "rpm", "-e", "--nodeps")
+
+	cmd := make([]string, 0, 5+len(packages))
+	cmd = append(cmd, "rpm")
+	if rootPath != "" {
+		cmd = append(cmd, "--root", rootPath)
+	}
+	cmd = append(cmd, "-e", "--nodeps")
 	cmd = append(cmd, packages...)
 	return cmd
 }
@@ -305,15 +313,40 @@ func (z *ZypperBackend) OutputWriter() container.OutputWriter {
 }
 
 // IsAcceptableExitCode checks if a zypper exit code should be tolerated.
-// Zypper exit code 8 (ZYPPER_EXIT_ERR_ZYPP) often indicates post-installation
-// script failures in containerized environments, but the packages may have
-// installed successfully. We check the output for evidence of successful
-// package installation.
+//
+// Zypper distinguishes "error" exit codes (1..99) from "informational" exit
+// codes (100..149). The informational codes mean the requested operation
+// succeeded — they only carry an extra signal back to the caller. In a
+// container/image-build context where there is no init, no D-Bus, and the
+// image is about to be committed and never "run" in the chroot, several of
+// these signals are pure noise:
+//
+//   - 102 ZYPPER_EXIT_INF_REBOOT_NEEDED   — the image will be rebooted by
+//                                           whoever boots it; nothing to do
+//                                           here.
+//   - 103 ZYPPER_EXIT_INF_RESTART_NEEDED  — same; no zypper running to
+//                                           restart.
+//   - 107 ZYPPER_EXIT_INF_RPM_SCRIPT_FAILED — packages were installed but
+//                                           one or more RPM scriptlets
+//                                           (typically systemd's post-install
+//                                           talking to dbus) failed in the
+//                                           --root chroot. The on-disk
+//                                           state is correct; the scriptlets
+//                                           will re-run at first boot.
+//
+// Exit code 8 (ZYPPER_EXIT_ERR_COMMIT) is a real error in general, but in
+// older zypper versions it was also returned for post-install scriptlet
+// failures. We keep the existing output-sniffing heuristic for that case
+// for backward compatibility.
 func (z *ZypperBackend) IsAcceptableExitCode(exitCode int, output string) bool {
-	// Exit code 8 is ZYPPER_EXIT_ERR_ZYPP - often post-install script failures
-	// If we see evidence that packages were installed, treat this as success
-	if exitCode == 8 {
-		// Check if packages were installed by looking for common success indicators
+	switch exitCode {
+	case 102, 103, 107:
+		// Informational codes after a successful install. Safe to treat as
+		// success for an image build.
+		return true
+	case 8:
+		// Legacy: ZYPPER_EXIT_ERR_COMMIT can mean "post-install scriptlet
+		// failed but packages installed." Confirm via output sniffing.
 		return strings.Contains(output, "Installing:") ||
 			strings.Contains(output, "NEW packages are going to be installed") ||
 			strings.Contains(output, "done]")

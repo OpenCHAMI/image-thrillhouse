@@ -24,7 +24,7 @@ run_test() {
     local test_name="$1"
     local config_file="$2"
     
-    ((TOTAL_TESTS++))
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
     echo "[$TOTAL_TESTS] Testing: $test_name"
     echo "  Config: $config_file"
     
@@ -41,11 +41,11 @@ run_test() {
         image-build:test \
         image-build build --config "/tests/$config_file" --log-level info > "${OUTPUT_DIR}/${test_name}.log" 2>&1; then
         echo "  ✓ PASSED"
-        ((PASSED_TESTS++))
+        PASSED_TESTS=$((PASSED_TESTS + 1))
         return 0
     else
         echo "  ✗ FAILED (see ${OUTPUT_DIR}/${test_name}.log)"
-        ((FAILED_TESTS++))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         return 1
     fi
 }
@@ -55,7 +55,7 @@ validate_config() {
     local test_name="$1"
     local config_file="$2"
     
-    ((TOTAL_TESTS++))
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
     echo "[$TOTAL_TESTS] Validating: $test_name"
     
     if podman run --rm \
@@ -63,11 +63,11 @@ validate_config() {
         image-build:test \
         image-build validate --config "/tests/$config_file" > "${OUTPUT_DIR}/${test_name}-validate.log" 2>&1; then
         echo "  ✓ PASSED"
-        ((PASSED_TESTS++))
+        PASSED_TESTS=$((PASSED_TESTS + 1))
         return 0
     else
         echo "  ✗ FAILED (see ${OUTPUT_DIR}/${test_name}-validate.log)"
-        ((FAILED_TESTS++))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
         return 1
     fi
 }

@@ -63,6 +63,11 @@ func (w *BufLogWriter) String() string {
 // CapturingWriter wraps an OutputWriter and captures all output.
 // This allows backends to check the output content when determining
 // if an exit code should be tolerated.
+//
+// The captured buffer is owned by CapturingWriter, not the delegate, so
+// String() remains valid after Flush — by design, since callers typically
+// inspect output for acceptable-exit-code checks after the underlying
+// command has already returned and the delegate has been flushed.
 type CapturingWriter struct {
 	delegate OutputWriter
 	buf      bytes.Buffer

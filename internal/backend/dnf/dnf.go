@@ -112,11 +112,22 @@ func (d *DnfBackend) InstallCommands(install config.Install) [][]string {
 		cmd := make([]string, 0, 12)
 		cmd = append(cmd, "dnf", "-q")
 		cmd = d.addOptionFlags(cmd)
-		cmd = append(cmd, "module", "-y", mod.Action, fmt.Sprintf("%s:%s", mod.Name, mod.Stream))
+		cmd = append(cmd, "module", "-y", mod.Action, moduleSpec(mod))
 		cmds = append(cmds, cmd)
 	}
 
 	return cmds
+}
+
+// moduleSpec renders a module reference for `dnf module`. A stream is
+// optional: omitting it lets DNF use the module's default stream. An empty
+// stream must not produce a trailing colon (e.g. "nodejs:") because DNF
+// treats that differently than the bare module name.
+func moduleSpec(mod config.Module) string {
+	if mod.Stream == "" {
+		return mod.Name
+	}
+	return fmt.Sprintf("%s:%s", mod.Name, mod.Stream)
 }
 
 // InstallRootCommands generates DNF commands for scratch builds using --installroot.
@@ -154,7 +165,7 @@ func (d *DnfBackend) InstallRootCommands(install config.Install, rootPath string
 		cmd := make([]string, 0, 14)
 		cmd = append(cmd, "dnf", "-q")
 		cmd = d.addOptionFlags(cmd)
-		cmd = append(cmd, "--installroot", rootPath, "module", "-y", mod.Action, fmt.Sprintf("%s:%s", mod.Name, mod.Stream))
+		cmd = append(cmd, "--installroot", rootPath, "module", "-y", mod.Action, moduleSpec(mod))
 		cmds = append(cmds, cmd)
 	}
 
@@ -235,14 +246,22 @@ func (d *DnfBackend) addOptionFlags(cmd []string) []string {
 // Uses rpm -e --nodeps to remove packages without checking dependencies.
 // This is useful for removing unnecessary packages to minimize image size.
 //
+// If rootPath is non-empty, the command runs on the host targeting that
+// filesystem (rpm --root <path> -e --nodeps ...) so that scratch builds can
+// remove packages from the bootstrapped root before commit.
+//
 // Returns nil if no packages to remove.
-func (d *DnfBackend) RemovePackagesCommand(packages []string) []string {
+func (d *DnfBackend) RemovePackagesCommand(packages []string, rootPath string) []string {
 	if len(packages) == 0 {
 		return nil
 	}
-	
-	cmd := make([]string, 0, 3+len(packages))
-	cmd = append(cmd, "rpm", "-e", "--nodeps")
+
+	cmd := make([]string, 0, 5+len(packages))
+	cmd = append(cmd, "rpm")
+	if rootPath != "" {
+		cmd = append(cmd, "--root", rootPath)
+	}
+	cmd = append(cmd, "-e", "--nodeps")
 	cmd = append(cmd, packages...)
 	return cmd
 }
