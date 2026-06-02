@@ -159,10 +159,16 @@ jobs:
         run: |
           ls -lh ~/rpmbuild/RPMS/*/*.rpm
 
+      - name: Move packages to workspace
+        run: |
+          mkdir -p ./packages
+          cp ~/rpmbuild/RPMS/*/*.rpm ./packages/
+          ls -lh ./packages/
+
       - name: Get package filename
         id: package
         run: |
-          RPM_FILE=$(find ~/rpmbuild/RPMS -name "*.rpm" -type f | head -n 1)
+          RPM_FILE=$(ls ./packages/*.rpm | head -n 1)
           RPM_NAME=$(basename "$RPM_FILE")
           echo "file=$RPM_FILE" >> $GITHUB_OUTPUT
           echo "name=$RPM_NAME" >> $GITHUB_OUTPUT
@@ -171,7 +177,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rpm-package-${{ steps.version.outputs.version }}
-          path: ~/rpmbuild/RPMS/*/*.rpm
+          path: ./packages/*.rpm
           retention-days: 30
 
   create-release:
