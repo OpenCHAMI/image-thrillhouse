@@ -10,8 +10,18 @@ permissions:
 
 jobs:
   build-deb:
-    name: Build Debian Package
+    name: Build Debian Package (${{ matrix.arch }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            goarch: amd64
+            runner_arch: X64
+          - arch: arm64
+            goarch: arm64
+            runner_arch: ARM64
     
     steps:
       - name: Checkout code
@@ -60,9 +70,27 @@ jobs:
             libbtrfs-dev \
             libdevmapper-dev
 
-      - name: Build Debian package
+      - name: Install cross-compilation tools for arm64
+        if: matrix.arch == 'arm64'
         run: |
-          dpkg-buildpackage -us -uc -b
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            libgpgme-dev:arm64 \
+            libbtrfs-dev:arm64 \
+            libdevmapper-dev:arm64
+
+      - name: Build Debian package
+        env:
+          DEB_BUILD_OPTIONS: nocheck
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 1
+          CC: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
+          PKG_CONFIG_PATH: ${{ matrix.arch == 'arm64' && '/usr/lib/aarch64-linux-gnu/pkgconfig' || '' }}
+        run: |
+          dpkg-buildpackage -us -uc -b -a${{ matrix.arch }}
 
       - name: List generated packages
         run: |
@@ -85,13 +113,21 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: debian-package-${{ steps.version.outputs.version }}
+          name: debian-package-${{ steps.version.outputs.version }}-${{ matrix.arch }}
           path: ./packages/*.deb
           retention-days: 30
 
   build-rpm:
-    name: Build RPM Package
+    name: Build RPM Package (${{ matrix.arch }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+        include:
+          - arch: x86_64
+            goarch: amd64
+          - arch: aarch64
+            goarch: arm64
     
     steps:
       - name: Checkout code
@@ -123,6 +159,18 @@ jobs:
             libbtrfs-dev \
             libdevmapper-dev
 
+      - name: Install cross-compilation tools for aarch64
+        if: matrix.arch == 'aarch64'
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            libgpgme-dev:arm64 \
+            libbtrfs-dev:arm64 \
+            libdevmapper-dev:arm64
+
       - name: Create RPM build structure
         run: |
           mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
@@ -131,6 +179,12 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           sed -i "s/^Version:.*/Version:        ${VERSION}/" image-build.spec
+          # Update BuildArch if specified
+          if ! grep -q "^BuildArch:" image-build.spec; then
+            sed -i "/^Release:/a BuildArch:      ${{ matrix.arch }}" image-build.spec
+          else
+            sed -i "s/^BuildArch:.*/BuildArch:      ${{ matrix.arch }}/" image-build.spec
+          fi
           cat image-build.spec
 
       - name: Create source tarball
@@ -150,10 +204,16 @@ jobs:
       - name: Build RPM package
         env:
           PATH: ${{ env.PATH }}:${{ env.GOROOT }}/bin
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 1
+          CC: ${{ matrix.arch == 'aarch64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
+          PKG_CONFIG_PATH: ${{ matrix.arch == 'aarch64' && '/usr/lib/aarch64-linux-gnu/pkgconfig' || '' }}
         run: |
           which go
           go version
-          rpmbuild -bb --nodeps ~/rpmbuild/SPECS/image-build.spec
+          echo "Building for architecture: ${{ matrix.arch }}"
+          echo "GOARCH: ${GOARCH}"
+          rpmbuild -bb --nodeps --target=${{ matrix.arch }} ~/rpmbuild/SPECS/image-build.spec
 
       - name: List generated packages
         run: |
@@ -176,7 +236,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rpm-package-${{ steps.version.outputs.version }}
+          name: rpm-package-${{ steps.version.outputs.version }}-${{ matrix.arch }}
           path: ./packages/*.rpm
           retention-days: 30
 
@@ -194,16 +254,28 @@ jobs:
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Download Debian package
+      - name: Download Debian packages (amd64)
         uses: actions/download-artifact@v4
         with:
-          name: debian-package-${{ steps.version.outputs.version }}
+          name: debian-package-${{ steps.version.outputs.version }}-amd64
           path: ./packages
 
-      - name: Download RPM package
+      - name: Download Debian packages (arm64)
         uses: actions/download-artifact@v4
         with:
-          name: rpm-package-${{ steps.version.outputs.version }}
+          name: debian-package-${{ steps.version.outputs.version }}-arm64
+          path: ./packages
+
+      - name: Download RPM packages (x86_64)
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-package-${{ steps.version.outputs.version }}-x86_64
+          path: ./packages
+
+      - name: Download RPM packages (aarch64)
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-package-${{ steps.version.outputs.version }}-aarch64
           path: ./packages
 
       - name: List all packages
