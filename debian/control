@@ -2,9 +2,7 @@ Source: image-build
 Section: admin
 Priority: optional
 Maintainer: Travis Cotton <travis@example.com>
-Build-Depends: debhelper-compat (= 13),
-               dh-golang,
-               golang-go (>= 2:1.26~)
+Build-Depends: debhelper-compat (= 13)
 Standards-Version: 4.6.2
 Homepage: https://github.com/travisbcotton/image-build
 Vcs-Browser: https://github.com/travisbcotton/image-build

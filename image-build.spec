@@ -8,8 +8,7 @@ License:        MIT
 URL:            https://github.com/travisbcotton/image-build
 Source0:        %{name}-%{version}.tar.gz
 
-BuildRequires:  golang >= 1.26
-BuildRequires:  make
+# BuildRequires intentionally left empty - Go is installed via GitHub Actions
 Requires:       buildah
 Requires:       gpgme-devel
 Requires:       device-mapper-devel
