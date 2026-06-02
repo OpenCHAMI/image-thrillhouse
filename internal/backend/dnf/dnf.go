@@ -4,8 +4,12 @@
 package dnf
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
+	"os"
 
+	"github.com/travisbcotton/image-build/internal/backend/cmdutil"
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
 )
@@ -183,38 +187,21 @@ func (d *DnfBackend) InstallRootCommands(install config.Install, rootPath string
 //
 // Returns an error if an unknown option is provided or if a value is invalid.
 func (d *DnfBackend) ValidateOptions(options map[string]string) error {
-	validOptions := map[string]bool{
-		"install-weak-deps": true,
-		"best":              true,
-		"skip-broken":       true,
-		"allowerasing":      true,
-		"nobest":            true,
-		"releasever":        true,
+	schema := map[string]cmdutil.OptionKind{
+		"install-weak-deps": cmdutil.OptionBool,
+		"best":              cmdutil.OptionBool,
+		"skip-broken":       cmdutil.OptionBool,
+		"allowerasing":      cmdutil.OptionBool,
+		"nobest":            cmdutil.OptionBool,
+		"releasever":        cmdutil.OptionAny,
 	}
-
-	validValues := map[string]bool{
-		"true":  true,
-		"false": true,
+	if err := cmdutil.ValidateOptionSchema("dnf", options, schema); err != nil {
+		return err
 	}
-
-	for key, value := range options {
-		if !validOptions[key] {
-			return fmt.Errorf("unknown option %q for dnf backend", key)
-		}
-		// Skip validation for releasever - it can be any string
-		if key == "releasever" {
-			continue
-		}
-		if value != "" && !validValues[value] {
-			return fmt.Errorf("option %q must be 'true' or 'false', got %q", key, value)
-		}
-	}
-
-	// Validate conflicting options
+	// Cross-option conflict
 	if options["best"] == "true" && options["nobest"] == "true" {
 		return fmt.Errorf("options 'best' and 'nobest' cannot both be true")
 	}
-
 	return nil
 }
 
@@ -242,47 +229,56 @@ func (d *DnfBackend) addOptionFlags(cmd []string) []string {
 	return cmd
 }
 
-// RemovePackagesCommand generates a command to remove packages using rpm.
-// Uses rpm -e --nodeps to remove packages without checking dependencies.
-// This is useful for removing unnecessary packages to minimize image size.
-//
-// If rootPath is non-empty, the command runs on the host targeting that
-// filesystem (rpm --root <path> -e --nodeps ...) so that scratch builds can
-// remove packages from the bootstrapped root before commit.
-//
-// Returns nil if no packages to remove.
+// RemovePackagesCommand delegates to the shared RPM removal helper. See
+// cmdutil.RPMRemove for details (also used by the zypper backend).
 func (d *DnfBackend) RemovePackagesCommand(packages []string, rootPath string) []string {
-	if len(packages) == 0 {
-		return nil
-	}
-
-	cmd := make([]string, 0, 5+len(packages))
-	cmd = append(cmd, "rpm")
-	if rootPath != "" {
-		cmd = append(cmd, "--root", rootPath)
-	}
-	cmd = append(cmd, "-e", "--nodeps")
-	cmd = append(cmd, packages...)
-	return cmd
+	return cmdutil.RPMRemove(rootPath, packages)
 }
 
-// ImportGPGKeyCommand returns the rpm command that imports an already-fetched
-// key from keyPath. rpm accepts both armored and binary key formats, so no
-// pre-processing is required. For scratch builds, --root targets rootPath.
-//
-// keyPath is passed as an argv element, never through a shell, so no
-// shell-metacharacter interpolation is possible.
-//
-// Returns nil if keyPath is empty.
+// ImportGPGKeyCommand delegates to the shared RPM key-import helper. See
+// cmdutil.RPMImportKey (also used by the zypper backend).
 func (d *DnfBackend) ImportGPGKeyCommand(keyPath string, rootPath string) []string {
-	if keyPath == "" {
-		return nil
+	return cmdutil.RPMImportKey(rootPath, keyPath)
+}
+
+// Bootstrap prepares a fresh scratch root for DNF. It pre-creates the
+// canonical filesystem skeleton (since the `filesystem` rpm needs many of
+// these to already exist before unpacking), writes the shared RPM macros
+// that disable file capabilities + shebang mangling + ldconfig, and
+// initializes the RPM database. Directory-creation failures are logged
+// but not fatal — the install step will fail with a clearer error if any
+// of these are truly required.
+func (d *DnfBackend) Bootstrap(ctx context.Context, c container.Container, rootPath string) error {
+	log := slog.With("component", "backend", "backend", "dnf")
+
+	// Pre-create the base directory skeleton — DNF's filesystem package
+	// will otherwise stumble trying to unpack on top of nothing.
+	baseDirs := []string{
+		"/dev", "/proc", "/sys", "/tmp", "/run", "/var", "/var/lib", "/var/lib/rpm",
+		"/etc", "/etc/rpm", "/etc/yum.repos.d", "/usr", "/usr/bin", "/usr/lib", "/usr/lib64",
+		"/usr/sbin", "/usr/share", "/boot", "/home", "/root", "/opt", "/srv", "/media", "/mnt",
+	}
+	for _, dir := range baseDirs {
+		if err := os.MkdirAll(rootPath+dir, 0755); err != nil {
+			log.Warn("Failed to create base directory", "dir", dir, "error", err)
+		}
 	}
 
-	if rootPath != "" {
-		return []string{"rpm", "--root", rootPath, "--import", keyPath}
+	// Write the shared RPM macros into the scratch root.
+	if err := c.WriteFile(ctx, config.File{
+		Path:    "/etc/rpm/macros.image-build",
+		Content: cmdutil.RPMMacros,
+	}); err != nil {
+		log.Warn("Failed to write RPM macros", "error", err)
 	}
-	return []string{"rpm", "--import", keyPath}
+
+	// Initialize the RPM database.
+	log.Debug("Initializing RPM database")
+	out := d.OutputWriter()
+	if err := c.Run(ctx, []string{"rpm", "--root", rootPath, "--initdb"}, container.RunModeHost, out); err != nil {
+		log.Warn("Failed to initialize RPM database", "error", err)
+	}
+	return nil
 }
 
 // SupportsInstallRoot indicates that DNF supports scratch builds using --installroot.
@@ -298,7 +294,7 @@ func (d *DnfBackend) SupportsParentInstall() bool {
 // OutputWriter returns a custom log writer for DNF output.
 // The writer parses DNF's output to extract package information and errors.
 func (d *DnfBackend) OutputWriter() container.OutputWriter {
-	return &dnfLogWriter{}
+	return newDnfWriter()
 }
 
 // IsAcceptableExitCode checks if a DNF exit code should be tolerated.

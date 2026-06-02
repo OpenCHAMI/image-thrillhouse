@@ -2,91 +2,76 @@
 package apt
 
 import (
-	"bytes"
 	"log/slog"
 	"strings"
+
+	"github.com/travisbcotton/image-build/internal/container"
 )
 
-// aptLogWriter buffers and parses APT command output.
-// It extracts useful information such as installed packages, warnings, and errors
-// from the verbose output of apt-get commands.
-type aptLogWriter struct {
-	buf bytes.Buffer
+// aptClassifier parses apt-get output. It tracks two collection sections —
+// "The following NEW packages will be installed:" and "The following
+// additional packages will be installed:" — by watching for indented
+// continuation lines. It also collects W:/E: prefixed warnings and errors.
+type aptClassifier struct {
+	newPackages        []string
+	additionalPackages []string
+	warnings           []string
+	errors             []string
+	inNewPackages      bool
+	inAdditional       bool
 }
 
-// Write buffers the output data for later processing by Flush.
-// Implements io.Writer interface.
-func (w *aptLogWriter) Write(p []byte) (n int, err error) {
-	return w.buf.Write(p)
+func newAptWriter() *container.LineWriter {
+	return container.NewLineWriter(&aptClassifier{})
 }
 
-// Flush processes the buffered output and logs relevant information.
-// It parses the APT output to extract:
-//   - New packages installed
-//   - Additional dependencies installed
-//   - Warnings (W: prefix or invoke-rc.d warnings)
-//   - Errors (E: prefix, only logged if err parameter is non-nil)
-//
-// The buffer is reset after processing.
-func (w *aptLogWriter) Flush(err error) {
-	output := w.buf.String()
-	w.buf.Reset()
+// Line classifies a single line of apt-get output.
+func (c *aptClassifier) Line(line string, hadErr bool) {
+	trimmed := strings.TrimSpace(line)
 
-	var newPackages []string
-	var additionalPackages []string
-	var warnings []string
-	var errors []string
-
-	inNewPackages := false
-	inAdditional := false
-
-	for _, line := range strings.Split(output, "\n") {
-		trimmed := strings.TrimSpace(line)
-
-		// stop collecting package names when we hit a non-indented line
-		// or a line that doesn't look like package names
-		if inNewPackages || inAdditional {
-			if trimmed == "" || !strings.HasPrefix(line, " ") {
-				inNewPackages = false
-				inAdditional = false
-			}
-		}
-
-		switch {
-		case trimmed == "The following NEW packages will be installed:":
-			inNewPackages = true
-			inAdditional = false
-			continue
-		case trimmed == "The following additional packages will be installed:":
-			inAdditional = true
-			inNewPackages = false
-			continue
-		case inNewPackages:
-			newPackages = append(newPackages, strings.Fields(trimmed)...)
-			continue
-		case inAdditional:
-			additionalPackages = append(additionalPackages, strings.Fields(trimmed)...)
-			continue
-		case strings.Contains(trimmed, "invoke-rc.d: WARNING"):
-			warnings = append(warnings, trimmed)
-		case strings.HasPrefix(trimmed, "W:"):
-			warnings = append(warnings, strings.TrimPrefix(trimmed, "W: "))
-		case strings.HasPrefix(trimmed, "E:"):
-			errors = append(errors, strings.TrimPrefix(trimmed, "E: "))
+	// Continuing-collection bail-out: a blank line or a non-indented
+	// line ends the current section. Has to happen before the switch so
+	// the next iteration sees fresh state.
+	if c.inNewPackages || c.inAdditional {
+		if trimmed == "" || !strings.HasPrefix(line, " ") {
+			c.inNewPackages = false
+			c.inAdditional = false
 		}
 	}
 
-	if len(newPackages) > 0 {
-		slog.Info("packages installed", "packages", newPackages)
+	switch {
+	case trimmed == "The following NEW packages will be installed:":
+		c.inNewPackages = true
+		c.inAdditional = false
+	case trimmed == "The following additional packages will be installed:":
+		c.inAdditional = true
+		c.inNewPackages = false
+	case c.inNewPackages:
+		c.newPackages = append(c.newPackages, strings.Fields(trimmed)...)
+	case c.inAdditional:
+		c.additionalPackages = append(c.additionalPackages, strings.Fields(trimmed)...)
+	case strings.Contains(trimmed, "invoke-rc.d: WARNING"):
+		c.warnings = append(c.warnings, trimmed)
+	case strings.HasPrefix(trimmed, "W:"):
+		c.warnings = append(c.warnings, strings.TrimPrefix(trimmed, "W: "))
+	case strings.HasPrefix(trimmed, "E:"):
+		c.errors = append(c.errors, strings.TrimPrefix(trimmed, "E: "))
 	}
-	if len(additionalPackages) > 0 {
-		slog.Info("additional packages installed", "packages", additionalPackages)
+}
+
+// Done emits the summary logs.
+func (c *aptClassifier) Done(raw string, err error) {
+	if len(c.newPackages) > 0 {
+		slog.Info("packages installed", "packages", c.newPackages)
 	}
-	for _, w := range warnings {
+	if len(c.additionalPackages) > 0 {
+		slog.Info("additional packages installed", "packages", c.additionalPackages)
+	}
+	for _, w := range c.warnings {
 		slog.Warn("apt warning", "msg", w)
 	}
 	if err != nil {
-		for _, e := range errors {
+		for _, e := range c.errors {
 			slog.Error("apt error", "msg", e)
 		}
 	}

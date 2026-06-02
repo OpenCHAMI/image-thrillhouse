@@ -4,9 +4,10 @@
 package apt
 
 import (
-	"fmt"
+	"context"
 	"log/slog"
 
+	"github.com/travisbcotton/image-build/internal/backend/cmdutil"
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
 )
@@ -58,26 +59,18 @@ func New(options map[string]string) *AptBackend {
 //
 // Returns an error if an unknown option is provided or if a value is invalid.
 func (a *AptBackend) ValidateOptions(options map[string]string) error {
-	validOptions := map[string]bool{
-		"install-recommends":    true,
-		"install-suggests":      true,
-		"allow-unauthenticated": true,
+	schema := map[string]cmdutil.OptionKind{
+		"install-recommends":    cmdutil.OptionBool,
+		"install-suggests":      cmdutil.OptionBool,
+		"allow-unauthenticated": cmdutil.OptionBool,
 	}
+	return cmdutil.ValidateOptionSchema("apt", options, schema)
+}
 
-	validValues := map[string]bool{
-		"true":  true,
-		"false": true,
-	}
-
-	for key, value := range options {
-		if !validOptions[key] {
-			return fmt.Errorf("unknown option %q for apt backend", key)
-		}
-		if value != "" && !validValues[value] {
-			return fmt.Errorf("option %q must be 'true' or 'false', got %q", key, value)
-		}
-	}
-
+// Bootstrap is a no-op for apt — it does not support scratch builds, so
+// this method should never be invoked by the builder. Kept to satisfy the
+// Backend interface.
+func (a *AptBackend) Bootstrap(ctx context.Context, c container.Container, rootPath string) error {
 	return nil
 }
 
@@ -151,66 +144,22 @@ func (a *AptBackend) InstallRootCommands(install config.Install, rootPath string
 	return nil
 }
 
-// RemovePackagesCommand generates a command to remove packages using dpkg.
-// Uses dpkg --remove --force-depends to remove packages without checking dependencies.
-// This is useful for removing unnecessary packages to minimize image size.
-//
-// If rootPath is non-empty, the command runs on the host targeting that
-// filesystem (dpkg --root <path> ...) so that scratch builds can remove
-// packages from the bootstrapped root before commit.
-//
-// Returns nil if no packages to remove.
+// RemovePackagesCommand delegates to the shared dpkg removal helper (also
+// used by the mmdebstrap backend). See cmdutil.DPKGRemove.
 func (a *AptBackend) RemovePackagesCommand(packages []string, rootPath string) []string {
-	if len(packages) == 0 {
-		return nil
-	}
-
-	cmd := make([]string, 0, 5+len(packages))
-	cmd = append(cmd, "dpkg")
-	if rootPath != "" {
-		cmd = append(cmd, "--root", rootPath)
-	}
-	cmd = append(cmd, "--remove", "--force-depends")
-	cmd = append(cmd, packages...)
-	return cmd
+	return cmdutil.DPKGRemove(rootPath, packages)
 }
 
-// ImportGPGKeyCommand returns a command that installs an already-fetched
-// GPG key from keyPath into /etc/apt/trusted.gpg.d/. It dearmors the key
-// when needed and falls back to copying it as-is if it is already binary.
-//
-// The builder fetches the key in Go (see internal/builder.importGPGKeys)
-// and writes it to keyPath. Only that path and our own hardcoded
-// destination appear in the shell string, so a user-supplied URL can
-// never reach a shell — closing the prior injection vector.
-//
-// For scratch builds, rootPath is non-empty and the destination lives
-// under that root; the command runs on the host.
-//
-// Returns nil if keyPath is empty.
+// ImportGPGKeyCommand delegates to the shared apt key-import helper (also
+// used by the mmdebstrap backend). See cmdutil.APTImportKey.
 func (a *AptBackend) ImportGPGKeyCommand(keyPath string, rootPath string) []string {
-	if keyPath == "" {
-		return nil
-	}
-
-	final := "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
-	if rootPath != "" {
-		final = rootPath + "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
-	}
-
-	// keyPath and final are both produced by this codebase; neither is
-	// user-supplied. Try gpg --dearmor first (works on ASCII-armored input)
-	// and fall back to a plain copy for already-binary keys.
-	script := fmt.Sprintf("gpg --dearmor -o %q %q 2>/dev/null || cp %q %q",
-		final, keyPath, keyPath, final)
-
-	return []string{"sh", "-c", script}
+	return cmdutil.APTImportKey(rootPath, keyPath)
 }
 
 // OutputWriter returns a writer that parses and formats APT command output.
 // The writer extracts useful information like installed packages and warnings.
 func (a *AptBackend) OutputWriter() container.OutputWriter {
-	return &aptLogWriter{}
+	return newAptWriter()
 }
 
 // IsAcceptableExitCode checks if an APT exit code should be tolerated.

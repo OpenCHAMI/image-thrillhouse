@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-build/internal/fsutil"
 )
 
 // S3Publisher uploads boot images to S3-compatible storage.
@@ -195,17 +195,10 @@ func (s *S3Publisher) createSquashFS(ctx context.Context, mountPath, name, tag s
 	tmpFile.Close()
 
 	squashfsPath := tmpFile.Name()
-
-	// `-e <patterns…>` must come last; excludes transient host mounts that
-	// can show through the buildah overlay while the container is still mounted.
-	cmd := exec.CommandContext(ctx, "mksquashfs", mountPath, squashfsPath,
-		"-noappend", "-no-progress",
-		"-e", "proc", "sys", "dev", "run")
-	if output, err := cmd.CombinedOutput(); err != nil {
+	if err := fsutil.MakeSquashFS(ctx, mountPath, squashfsPath); err != nil {
 		os.Remove(squashfsPath)
-		return "", fmt.Errorf("mksquashfs: %w (output: %s)", err, string(output))
+		return "", err
 	}
-
 	return squashfsPath, nil
 }
 

@@ -2,86 +2,69 @@
 package zypper
 
 import (
-	"bytes"
 	"log/slog"
 	"strings"
+
+	"github.com/travisbcotton/image-build/internal/container"
 )
 
-// zypperLogWriter buffers and parses Zypper command output.
-// It extracts package information, download sizes, and errors from Zypper's output.
-type zypperLogWriter struct {
-	buf bytes.Buffer
+// zypperClassifier parses Zypper output. Two state flags track whether we
+// are currently inside the "NEW packages" section (whose lines we collect)
+// or one of the recommended/suggested sections (which we silently skip).
+//
+// The classifier needs both the raw line (to detect indentation) and the
+// trimmed value (for prefix matching); the LineWriter passes the raw line
+// and we trim once here.
+type zypperClassifier struct {
+	newPackages   []string
+	errors        []string
+	inNewPackages bool
+	inOther       bool
 }
 
-// Write buffers the output data for later processing by Flush.
-// Implements io.Writer interface.
-func (w *zypperLogWriter) Write(p []byte) (n int, err error) {
-	return w.buf.Write(p)
+func newZypperWriter() *container.LineWriter {
+	return container.NewLineWriter(&zypperClassifier{})
 }
 
-// Flush processes the buffered Zypper output and logs relevant information.
-// It parses Zypper's output format to extract:
-//   - New packages being installed (after "NEW packages are going to be installed")
-//   - Overall download size
-//   - Errors (e.g., "No provider of" messages)
-//
-// The parser uses state machine logic to track which section of output it's in:
-//   - inNewPackages: Collecting package names from the install list
-//   - inOther: Skipping recommended/suggested package sections
-//
-// Empty lines reset the state. Indented lines contain package names or additional info.
-// The buffer is reset after processing.
-func (w *zypperLogWriter) Flush(err error) {
-	output := w.buf.String()
-	w.buf.Reset()
-
-	var newPackages []string
-	var errors []string
-
-	inNewPackages := false
-	inOther := false
-
-	for _, line := range strings.Split(output, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			inNewPackages = false
-			inOther = false
-			continue
-		}
-
-		switch {
-		case strings.Contains(trimmed, "NEW packages are going to be installed"):
-			inNewPackages = true
-			inOther = false
-			continue
-		case strings.Contains(trimmed, "recommended packages were automatically selected"):
-			inNewPackages = false
-			inOther = true
-			continue
-		case strings.Contains(trimmed, "packages are suggested"):
-			inNewPackages = false
-			inOther = true
-			continue
-		case inNewPackages && strings.HasPrefix(line, " "):
-			newPackages = append(newPackages, strings.Fields(trimmed)...)
-			continue
-		case inOther && strings.HasPrefix(line, " "):
-			continue
-		case strings.HasPrefix(trimmed, "No provider of"):
-			errors = append(errors, trimmed)
-		case strings.HasPrefix(trimmed, "Overall download size:"):
-			slog.Info("zypper", "msg", trimmed)
-		case strings.HasPrefix(trimmed, "Continue?"):
-			// suppress
-			continue
-		}
+// Line classifies one line of Zypper output.
+func (c *zypperClassifier) Line(line string, hadErr bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		// Blank line resets section state — zypper uses indentation +
+		// blank lines to mark group boundaries.
+		c.inNewPackages = false
+		c.inOther = false
+		return
 	}
 
-	if len(newPackages) > 0 {
-		slog.Info("packages installed", "packages", newPackages)
+	switch {
+	case strings.Contains(trimmed, "NEW packages are going to be installed"):
+		c.inNewPackages = true
+		c.inOther = false
+	case strings.Contains(trimmed, "recommended packages were automatically selected"),
+		strings.Contains(trimmed, "packages are suggested"):
+		c.inNewPackages = false
+		c.inOther = true
+	case c.inNewPackages && strings.HasPrefix(line, " "):
+		c.newPackages = append(c.newPackages, strings.Fields(trimmed)...)
+	case c.inOther && strings.HasPrefix(line, " "):
+		// drop indented continuation lines from recommended/suggested sections
+	case strings.HasPrefix(trimmed, "No provider of"):
+		c.errors = append(c.errors, trimmed)
+	case strings.HasPrefix(trimmed, "Overall download size:"):
+		slog.Info("zypper", "msg", trimmed)
+	case strings.HasPrefix(trimmed, "Continue?"):
+		// suppress
+	}
+}
+
+// Done emits the summary logs after classification.
+func (c *zypperClassifier) Done(raw string, err error) {
+	if len(c.newPackages) > 0 {
+		slog.Info("packages installed", "packages", c.newPackages)
 	}
 	if err != nil {
-		for _, e := range errors {
+		for _, e := range c.errors {
 			slog.Error("zypper error", "msg", e)
 		}
 	}
