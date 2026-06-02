@@ -54,7 +54,11 @@ jobs:
             debhelper \
             build-essential \
             fakeroot \
-            devscripts
+            devscripts \
+            pkg-config \
+            libgpgme-dev \
+            libbtrfs-dev \
+            libdevmapper-dev
 
       - name: Build Debian package
         run: |
@@ -106,7 +110,12 @@ jobs:
       - name: Install RPM build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y rpm
+          sudo apt-get install -y \
+            rpm \
+            pkg-config \
+            libgpgme-dev \
+            libbtrfs-dev \
+            libdevmapper-dev
 
       - name: Create RPM build structure
         run: |
