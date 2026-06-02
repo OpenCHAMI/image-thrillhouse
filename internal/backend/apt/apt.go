@@ -175,32 +175,35 @@ func (a *AptBackend) RemovePackagesCommand(packages []string, rootPath string) [
 	return cmd
 }
 
-// ImportGPGKeyCommand generates a command to import a GPG key for APT repository signing.
-// For APT, this downloads the key and adds it to /etc/apt/trusted.gpg.d/
-// Modern APT uses gpg --dearmor for key format conversion.
+// ImportGPGKeyCommand returns a command that installs an already-fetched
+// GPG key from keyPath into /etc/apt/trusted.gpg.d/. It dearmors the key
+// when needed and falls back to copying it as-is if it is already binary.
 //
-// Returns nil if keyURL is empty.
-func (a *AptBackend) ImportGPGKeyCommand(keyURL string, rootPath string) []string {
-	if keyURL == "" {
+// The builder fetches the key in Go (see internal/builder.importGPGKeys)
+// and writes it to keyPath. Only that path and our own hardcoded
+// destination appear in the shell string, so a user-supplied URL can
+// never reach a shell — closing the prior injection vector.
+//
+// For scratch builds, rootPath is non-empty and the destination lives
+// under that root; the command runs on the host.
+//
+// Returns nil if keyPath is empty.
+func (a *AptBackend) ImportGPGKeyCommand(keyPath string, rootPath string) []string {
+	if keyPath == "" {
 		return nil
 	}
-	
-	// For both scratch and parent builds, we use a shell script to download and import
-	// This approach works for modern APT (Debian 11+, Ubuntu 20.04+)
-	// The key is downloaded, dearmored if needed, and placed in trusted.gpg.d
-	
-	keyName := "image-build-repo.gpg"
+
+	final := "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
 	if rootPath != "" {
-		keyName = rootPath + "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
-	} else {
-		keyName = "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
+		final = rootPath + "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
 	}
-	
-	// Use curl to download and gpg to dearmor (if ASCII-armored)
-	// The || true ensures we don't fail if it's already in binary format
-	script := fmt.Sprintf("curl -fsSL %s | gpg --dearmor -o %s 2>/dev/null || curl -fsSL %s -o %s", 
-		keyURL, keyName, keyURL, keyName)
-	
+
+	// keyPath and final are both produced by this codebase; neither is
+	// user-supplied. Try gpg --dearmor first (works on ASCII-armored input)
+	// and fall back to a plain copy for already-binary keys.
+	script := fmt.Sprintf("gpg --dearmor -o %q %q 2>/dev/null || cp %q %q",
+		final, keyPath, keyPath, final)
+
 	return []string{"sh", "-c", script}
 }
 

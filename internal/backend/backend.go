@@ -61,11 +61,25 @@ type Backend interface {
 	// Returns a command as a slice of arguments, or nil if no packages to remove.
 	RemovePackagesCommand(packages []string, rootPath string) []string
 
-	// ImportGPGKeyCommand generates a command to import a GPG key for repository signing.
-	// The keyURL is the URL to download the GPG key from.
-	// For scratch builds, rootPath is the target root filesystem.
+	// ImportGPGKeyCommand generates a command to install a GPG key into the
+	// container (or scratch root) from a *local* file.
+	//
+	// keyPath is the path to the key bytes on disk. Its interpretation
+	// depends on rootPath:
+	//   - If rootPath is non-empty (scratch build), keyPath is a *host* path
+	//     and the returned command is intended to run on the host with
+	//     --root semantics (e.g. rpm --root <rootPath> --import <keyPath>).
+	//   - If rootPath is empty (parent build), keyPath is a path *inside*
+	//     the container and the command runs inside the container.
+	//
+	// The builder is responsible for fetching the key over the network
+	// and placing it at keyPath before invoking the returned command. This
+	// keeps backends free of network handling and, importantly, makes it
+	// impossible for a user-supplied URL to be interpolated into a shell
+	// string — see internal/builder.importGPGKeys.
+	//
 	// Returns a command as a slice of arguments, or nil if not supported.
-	ImportGPGKeyCommand(keyURL string, rootPath string) []string
+	ImportGPGKeyCommand(keyPath string, rootPath string) []string
 
 	// OutputWriter returns a writer for capturing package manager output.
 	// This allows backends to format and filter package manager output.

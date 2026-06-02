@@ -76,12 +76,22 @@ func TestWithFile(t *testing.T) {
 
 ## Current Test Coverage
 
-- `internal/config` - Config loading and validation (10+ tests)
-- `internal/labels` - Label generation (12+ tests)
-- `internal/backend/apt` - APT package manager (25+ tests)
-- `internal/backend/dnf` - DNF package manager (20+ tests)
-- `internal/backend/zypper` - Zypper package manager (15+ tests)
-- `internal/backend/mmdebstrap` - mmdebstrap backend (15+ tests)
+Pure-Go packages (run with `go test ./...`):
+
+- `internal/config` - Config loading and validation
+- `internal/labels` - Label generation
+- `internal/backend/apt` - APT backend (option parsing, command generation)
+- `internal/backend/dnf` - DNF backend (option parsing, modules, command generation)
+- `internal/backend/zypper` - Zypper backend (option parsing, command generation, `IsAcceptableExitCode` for informational codes 8/102/103/107)
+- `internal/backend/mmdebstrap` - mmdebstrap backend
+
+Not unit-tested (covered by the integration scripts under `tests/` instead):
+
+- `internal/buildah` - cgo-dependent, requires Linux + gpgme/btrfs/devicemapper headers
+- `internal/builder` - depends on the buildah container
+- `internal/container` - logwriters are exercised indirectly
+- `internal/fetch` - HTTP fetch with ctx + timeout
+- `internal/publisher/*` - depend on either buildah, the filesystem, or external services (S3, a registry)
 
 ## Best Practices
 

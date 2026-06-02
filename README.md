@@ -22,10 +22,11 @@ For using pre-built containers (recommended):
 - FUSE device support for container builds
 
 For building from source:
-- Go 1.21 or later
+- Go 1.26 or later (see `go.mod`)
 - Buildah
 - Root or rootless container capabilities
 - `mksquashfs` (for SquashFS publishing)
+- C toolchain + `pkg-config` + `libgpgme-dev` + `libbtrfs-dev` + `libdevmapper-dev` (transitive cgo deps via containers/storage). On macOS these are not available, so the binary builds and tests in `internal/buildah` only work on Linux.
 
 ## Installation & Usage
 
@@ -225,15 +226,17 @@ All backends support configurable options to control package installation behavi
 
 **GPG Key Import:**
 
-The optional `gpg` field automatically imports GPG keys for repository verification:
+The optional `gpg` field automatically imports a GPG key for repository verification. The key URL is fetched by the builder over HTTP (with a 60-second timeout, respecting cancellation) and the key bytes are then installed into the appropriate trust store for the backend:
 
-- **RPM-based (dnf, zypper)**: Uses `rpm --import <key-url>`
-- **APT-based (apt, mmdebstrap)**: Downloads key and adds to `/etc/apt/trusted.gpg.d/`
-- **Scratch builds**: Keys are imported with `--root` flag to target the new filesystem
-- **Parent builds**: Keys are imported directly into the running container
+- **RPM-based (dnf, zypper)**: imported via `rpm --import`
+- **APT-based (apt, mmdebstrap)**: dearmored (if ASCII-armored) and placed in `/etc/apt/trusted.gpg.d/`
+- **Scratch builds**: the trust store under the new root filesystem is targeted on the host
+- **Parent builds**: the key is placed inside the container
+
+The user-supplied URL is **never** interpolated into a shell command — the fetch happens in Go and the backend only sees a local file path. Per-repo key-import failures are logged as warnings; the build continues so a repo that works without GPG (or whose key the user has installed by other means) is not blocked.
 
 If the `gpg` field is omitted, you must either:
-- Set `gpgcheck=0` in the repository configuration, or
+- Set `gpgcheck=0` (or the equivalent) in the repository configuration, or
 - Manually provide GPG keys through other means
 
 **Note**: Use exactly one of: `content`, `src`, or `url` per repo entry.
@@ -293,7 +296,9 @@ The `remove_packages` option allows you to remove unnecessary packages after ins
 - Uses `rpm -e --nodeps` for RPM-based systems (dnf, zypper)
 - Uses `dpkg --remove --force-depends` for Debian-based systems (apt, mmdebstrap)
 - Executed after all packages are installed
-- Non-fatal: Build continues if package removal fails (package may not exist)
+- For **scratch builds**, the command runs on the host targeting the mounted root (e.g. `rpm --root <mount> -e --nodeps …`) because a freshly-bootstrapped scratch root may not yet be able to exec the package manager.
+- For **parent builds**, the command runs inside the container.
+- **Failures fail the build.** A common mistake is listing a package that's not installed; the package manager will return non-zero and the build will stop with a clear error. List only packages you know are present after the install step.
 
 **Example minimal image strategy:**
 ```yaml
@@ -370,7 +375,8 @@ publish:
   - type: local            # Commit to local container storage
   
   - type: squashfs         # Create SquashFS image
-    path: /output/images   # Output directory
+    path: /output/images   # Output directory; file is written as
+                           # <meta.name>-<meta.tags[0]>.squashfs
     
   - type: registry         # Push to container registry
     url: registry.example.com/myorg
@@ -632,18 +638,44 @@ Prints version information.
 
 ## Examples
 
-See the `tests/` directory for complete examples:
+See the `tests/` directory for complete examples. The config files double as the corpus that the integration test suite exercises.
 
-- `tests/rocky/rocky-base-x86_64.yaml` - Rocky Linux base image from scratch
-- `tests/rocky/rocky-compute-x86_64.yaml` - Compute node image with additional packages
-- `tests/rocky/rocky-dnf-options-example.yaml` - DNF with configurable options
-- `tests/rocky/rocky-gpg-import-example.yaml` - **NEW**: Automatic GPG key import for repositories
-- `tests/rocky/rocky-oscap-example.yaml` - **NEW**: OpenSCAP security scanning example
-- `tests/rocky/rocky-remove-packages-example.yaml` - **NEW**: Package removal for minimal images
-- `tests/debian/bookworm-base.yaml` - Debian base using mmdebstrap
-- `tests/debian/bookworm-apt-options-example.yaml` - APT with configurable options
-- `tests/opensuse/suse-base.yaml` - openSUSE base with Zypper
-- `tests/opensuse/suse-zypper-options-example.yaml` - Zypper with configurable options
+**DNF (Rocky Linux):**
+- `tests/dnf/rocky-scratch.yaml` - Minimal scratch build
+- `tests/dnf/rocky-scratch-options.yaml` - Scratch with DNF backend options
+- `tests/dnf/rocky-scratch-groups.yaml` - Scratch with package groups
+- `tests/dnf/rocky-scratch-full.yaml` - Scratch with repos, files, commands
+- `tests/dnf/rocky-parent.yaml` - Layered on a parent image
+- `tests/dnf/rocky-parent-groups.yaml` - Parent build using groups
+- `tests/dnf/rocky-parent-modules.yaml` - Parent build using DNF modules
+- `tests/dnf/rocky-parent-commands.yaml` - Parent build with run/script commands
+
+**APT / mmdebstrap (Debian / Ubuntu):**
+- `tests/apt/debian-scratch.yaml` - mmdebstrap scratch build (apt scratch is not supported)
+- `tests/apt/debian-scratch-options.yaml` - Scratch with mmdebstrap options
+- `tests/apt/debian-scratch-mirror.yaml` - Scratch using a non-default mirror
+- `tests/apt/debian-scratch-full.yaml` - Scratch with repos, files, commands
+- `tests/apt/debian-parent.yaml` - apt parent build
+- `tests/apt/debian-parent-files.yaml` - Parent build that adds files
+- `tests/apt/debian-parent-commands.yaml` - Parent build with run/script commands
+- `tests/apt/debian-parent-tasks.yaml` - Parent build combining install + tasks
+
+**Zypper (openSUSE / SLES):**
+- `tests/zypper/suse-scratch.yaml` - Minimal scratch build
+- `tests/zypper/suse-scratch-options.yaml` - Scratch with Zypper backend options
+- `tests/zypper/suse-scratch-patterns.yaml` - Scratch using SUSE patterns (groups)
+- `tests/zypper/suse-scratch-full.yaml` - Scratch with repos, files, commands
+- `tests/zypper/suse-parent.yaml` - Parent build
+- `tests/zypper/suse-parent-files.yaml` - Parent build that adds files
+- `tests/zypper/suse-parent-patterns.yaml` - Parent build using patterns
+- `tests/zypper/suse-parent-commands.yaml` - Parent build with run/script commands
+
+**Validation negatives** (intentionally invalid; used to verify the `validate` subcommand rejects them):
+- `tests/rocky/invalid-dnf-test.yaml` - unknown DNF option
+- `tests/rocky/conflicting-dnf-test.yaml` - `best: true` and `nobest: true` together
+- `tests/opensuse/invalid-zypper-test.yaml` - unknown Zypper option
+- `tests/apt/invalid-option.yaml` - unknown apt option
+- `tests/apt/invalid-no-suite.yaml` - mmdebstrap missing required `suite`
 
 ## Architecture
 
@@ -690,7 +722,7 @@ image-build/
 go build -o image-build ./cmd/image-build
 ```
 
-### Running Tests
+### Running Unit Tests
 
 ```bash
 go test ./...
@@ -698,15 +730,45 @@ go test -v ./...          # Verbose output
 go test -cover ./...      # With coverage
 ```
 
-**Test Coverage:**
-- ✅ `internal/config` - Configuration parsing and validation
-- ✅ `internal/labels` - Label generation
-- ✅ `internal/backend/apt` - APT backend with options
-- ✅ `internal/backend/dnf` - DNF backend with options
-- ✅ `internal/backend/zypper` - Zypper backend with options
-- ✅ `internal/backend/mmdebstrap` - mmdebstrap backend
+**Caveat:** `internal/buildah` depends transitively on cgo bindings (gpgme, btrfs, devicemapper) via `containers/storage`. On systems without those libraries — most notably macOS — `go test ./...` will fail to build that package. The pure-Go packages below test cleanly anywhere; the buildah-backed integration paths require Linux with the build deps from `Dockerfile`.
 
-See `TESTING.md` for detailed testing guide.
+**Unit test coverage:**
+- ✅ `internal/config` - YAML parsing, schema validation
+- ✅ `internal/labels` - OCI label generation
+- ✅ `internal/backend/apt` - APT backend
+- ✅ `internal/backend/dnf` - DNF backend
+- ✅ `internal/backend/zypper` - Zypper backend (including informational exit codes 102/103/107)
+- ✅ `internal/backend/mmdebstrap` - mmdebstrap backend
+- ⚠️ `internal/buildah`, `internal/builder`, `internal/container`, `internal/fetch`, `internal/publisher/*` - covered only by the integration suite below
+
+See `TESTING.md` for the unit-testing guide.
+
+### Running Integration Tests
+
+The `tests/` directory holds shell-driven smoke tests that build a unified container image and exercise each backend against real distro repos. The top-level `run-all-tests.sh` runs everything in sequence, or in parallel when asked:
+
+```bash
+./run-all-tests.sh                  # all backends, sequential
+./run-all-tests.sh --parallel       # scratch tests in parallel
+./run-all-tests.sh --dnf            # only DNF
+./run-all-tests.sh --apt            # only APT / mmdebstrap
+./run-all-tests.sh --zypper         # only Zypper
+```
+
+Each backend script (`tests/<backend>/test-<backend>-{scratch,parent}.sh`) can also be run directly. All scripts share a single podman image tag, `image-build:test`, built from the repo's `Dockerfile`.
+
+**Rebuilding the test image after a code change:**
+
+The container guard skips the build if `image-build:test` already exists, so iterating on the Go binary requires forcing a rebuild. Set the env var:
+
+```bash
+REBUILD_IMAGE=1 ./run-all-tests.sh                    # rebuild and run everything
+REBUILD_IMAGE=1 ./tests/zypper/test-zypper-scratch.sh # rebuild and run just one
+```
+
+Without `REBUILD_IMAGE=1`, the test will silently reuse a stale binary — if a test "still fails" after a fix you believe should help, this is the first thing to check.
+
+Per-test logs land in `test-output/<backend>-<type>/`.
 
 ### Adding a New Backend
 
@@ -740,7 +802,8 @@ options:
 ```yaml
 meta:
   name: my-image
-  tag: latest
+  tags:
+    - latest
   from: scratch
 layer:
   manager:

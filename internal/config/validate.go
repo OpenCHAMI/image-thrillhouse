@@ -50,7 +50,7 @@ func (l *Layer) Validate() error {
 		"zypper":     true, // openSUSE, SLES
 	}
 	if !validManagers[l.Manager.Name] {
-		return fmt.Errorf("layer.manager %q is not supported", l.Manager)
+		return fmt.Errorf("layer.manager %q is not supported", l.Manager.Name)
 	}
 
 	// Validate all files
@@ -59,10 +59,46 @@ func (l *Layer) Validate() error {
 			return err
 		}
 	}
-	
+
+	// Validate all repos (same source rules as files)
+	for _, r := range l.Repos {
+		if err := r.Validate(); err != nil {
+			return err
+		}
+	}
+
 	// Validate all actions
 	if err := l.Actions.Validate(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// Validate checks a Repo configuration for correctness.
+// Requirements:
+//   - path must be specified
+//   - exactly one of content, src, or url must be set
+func (r *Repo) Validate() error {
+	if r.Path == "" {
+		return fmt.Errorf("repo.path is required")
+	}
+
+	set := 0
+	if r.Content != "" {
+		set++
+	}
+	if r.Src != "" {
+		set++
+	}
+	if r.URL != "" {
+		set++
+	}
+
+	if set > 1 {
+		return fmt.Errorf("repo %s: only one of content, src, or url may be set", r.Path)
+	}
+	if set == 0 {
+		return fmt.Errorf("repo %s: one of content, src, or url is required", r.Path)
 	}
 	return nil
 }

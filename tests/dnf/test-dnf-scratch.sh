@@ -72,12 +72,19 @@ validate_config() {
     fi
 }
 
-echo "Building image-build container (if needed)..."
-if ! podman image exists image-build:test && ! podman image exists localhost/image-build:test; then
+echo "Preparing image-build container (if needed)..."
+NEEDS_BUILD=0
+if [ "${REBUILD_IMAGE:-0}" = "1" ]; then
+    echo "REBUILD_IMAGE=1 set, forcing rebuild"
+    NEEDS_BUILD=1
+elif ! podman image exists image-build:test && ! podman image exists localhost/image-build:test; then
+    NEEDS_BUILD=1
+fi
+if [ "$NEEDS_BUILD" = "1" ]; then
     cd "${SCRIPT_DIR}" && podman build -t image-build:test -f Dockerfile . > "${OUTPUT_DIR}/container-build.log" 2>&1
     echo "✓ Container built"
 else
-    echo "✓ Container already exists"
+    echo "✓ Container already exists (set REBUILD_IMAGE=1 to force rebuild)"
 fi
 echo ""
 

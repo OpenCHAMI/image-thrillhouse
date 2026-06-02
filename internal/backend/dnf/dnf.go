@@ -266,23 +266,23 @@ func (d *DnfBackend) RemovePackagesCommand(packages []string, rootPath string) [
 	return cmd
 }
 
-// ImportGPGKeyCommand generates a command to import a GPG key for repository signing.
-// For DNF (RPM-based), this uses rpm --import to import the GPG key.
-// For scratch builds, the --root flag targets the specified root path.
+// ImportGPGKeyCommand returns the rpm command that imports an already-fetched
+// key from keyPath. rpm accepts both armored and binary key formats, so no
+// pre-processing is required. For scratch builds, --root targets rootPath.
 //
-// Returns nil if keyURL is empty.
-func (d *DnfBackend) ImportGPGKeyCommand(keyURL string, rootPath string) []string {
-	if keyURL == "" {
+// keyPath is passed as an argv element, never through a shell, so no
+// shell-metacharacter interpolation is possible.
+//
+// Returns nil if keyPath is empty.
+func (d *DnfBackend) ImportGPGKeyCommand(keyPath string, rootPath string) []string {
+	if keyPath == "" {
 		return nil
 	}
-	
+
 	if rootPath != "" {
-		// Scratch build: use --root flag
-		return []string{"rpm", "--root", rootPath, "--import", keyURL}
+		return []string{"rpm", "--root", rootPath, "--import", keyPath}
 	}
-	
-	// Parent build: import directly
-	return []string{"rpm", "--import", keyURL}
+	return []string{"rpm", "--import", keyPath}
 }
 
 // SupportsInstallRoot indicates that DNF supports scratch builds using --installroot.

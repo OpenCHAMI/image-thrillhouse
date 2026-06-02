@@ -44,13 +44,13 @@ func (s *Scanner) InstallSCAP(ctx context.Context, c container.Container, pkgMan
 		cmd = []string{"zypper", "install", "-y", "--no-gpg-checks"}
 		cmd = append(cmd, packages...)
 	case "apt":
-		// Update package list first for APT
-		updateCmd := []string{"apt-get", "update"}
+		// Update package list first for APT, matching the builder's style.
+		updateCmd := []string{"apt-get", "update", "-q"}
 		out := container.NewBufLogWriter("stdout")
 		if err := c.Run(ctx, updateCmd, container.RunModeContainer, out); err != nil {
 			s.log.Warn("Failed to update apt cache", "error", err)
 		}
-		cmd = []string{"apt-get", "install", "-y", "--no-install-recommends"}
+		cmd = []string{"apt-get", "install", "-y", "-q", "--no-install-recommends"}
 		cmd = append(cmd, packages...)
 	default:
 		return fmt.Errorf("unsupported package manager for OpenSCAP: %s", pkgManager)
@@ -66,16 +66,22 @@ func (s *Scanner) InstallSCAP(ctx context.Context, c container.Container, pkgMan
 }
 
 // CheckInstall verifies that OpenSCAP is installed in the container.
+// The hint included in the error depends on whether the user already asked
+// install_scap to install it — saying "set install_scap: true" when they
+// already did is just noise.
 func (s *Scanner) CheckInstall(ctx context.Context, c container.Container) error {
 	s.log.Info("Checking OpenSCAP installation")
-	
+
 	cmd := []string{"oscap", "--version"}
 	out := container.NewBufLogWriter("stdout")
-	
+
 	if err := c.Run(ctx, cmd, container.RunModeContainer, out); err != nil {
-		return fmt.Errorf("OpenSCAP not found - install with install_scap: true: %w", err)
+		if s.cfg != nil && s.cfg.InstallSCAP {
+			return fmt.Errorf("oscap --version failed after install_scap; installation may have failed: %w", err)
+		}
+		return fmt.Errorf("oscap not found in image; set install_scap: true or pre-install openscap-utils in the base image: %w", err)
 	}
-	
+
 	s.log.Info("OpenSCAP is installed")
 	return nil
 }

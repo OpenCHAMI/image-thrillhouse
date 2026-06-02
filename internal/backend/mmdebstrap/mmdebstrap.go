@@ -162,27 +162,28 @@ func (m *MmdebstrapBackend) RemovePackagesCommand(packages []string, rootPath st
 	return cmd
 }
 
-// ImportGPGKeyCommand generates a command to import a GPG key for APT repository signing.
-// For mmdebstrap, GPG keys should typically be handled through the mirror's keyring.
-// This implementation provides basic support for custom keys.
+// ImportGPGKeyCommand returns a command that installs an already-fetched
+// GPG key from keyPath into /etc/apt/trusted.gpg.d/. The builder fetches
+// the key via Go (see internal/builder.importGPGKeys); no URL is ever
+// interpolated into a shell string.
 //
-// Returns nil if keyURL is empty.
-func (m *MmdebstrapBackend) ImportGPGKeyCommand(keyURL string, rootPath string) []string {
-	if keyURL == "" {
+// mmdebstrap should typically get its trust from the mirror's keyring;
+// this path exists for custom third-party keys.
+//
+// Returns nil if keyPath is empty.
+func (m *MmdebstrapBackend) ImportGPGKeyCommand(keyPath string, rootPath string) []string {
+	if keyPath == "" {
 		return nil
 	}
-	
-	keyName := "image-build-repo.gpg"
+
+	final := "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
 	if rootPath != "" {
-		keyName = rootPath + "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
-	} else {
-		keyName = "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
+		final = rootPath + "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
 	}
-	
-	// Use curl to download and gpg to dearmor (if ASCII-armored)
-	script := fmt.Sprintf("curl -fsSL %s | gpg --dearmor -o %s 2>/dev/null || curl -fsSL %s -o %s", 
-		keyURL, keyName, keyURL, keyName)
-	
+
+	script := fmt.Sprintf("gpg --dearmor -o %q %q 2>/dev/null || cp %q %q",
+		final, keyPath, keyPath, final)
+
 	return []string{"sh", "-c", script}
 }
 
