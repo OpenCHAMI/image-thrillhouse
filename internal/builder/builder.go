@@ -15,6 +15,7 @@ import (
 	"github.com/travisbcotton/image-build/internal/backend"
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-build/internal/fetch"
 	"github.com/travisbcotton/image-build/internal/labels"
 	"github.com/travisbcotton/image-build/internal/oscap"
 	"github.com/travisbcotton/image-build/internal/publisher"
@@ -67,7 +68,7 @@ func (b *Builder) Build(ctx context.Context) error {
 	log.Debug("Created container", "id", c.GetID(), "name", c.GetName(), "mountPath", c.MountPath())
 
 	// Apply package manager configuration (e.g., dnf.conf)
-	if err := b.applyManagerConfig(c); err != nil {
+	if err := b.applyManagerConfig(ctx, c); err != nil {
 		return fmt.Errorf("write manager config: %w", err)
 	}
 
@@ -90,7 +91,7 @@ func (b *Builder) Build(ctx context.Context) error {
 			log.Warn("Failed to create /etc/rpm directory", "error", err)
 		}
 
-		if err := c.WriteFile(config.File{
+		if err := c.WriteFile(ctx, config.File{
 			Path:    "/etc/rpm/macros.image-build",
 			Content: rpmMacros,
 		}); err != nil {
@@ -113,7 +114,7 @@ func (b *Builder) Build(ctx context.Context) error {
 	}
 
 	// Write repository configurations (e.g., yum repos)
-	if err := b.writeRepos(c); err != nil {
+	if err := b.writeRepos(ctx, c); err != nil {
 		return fmt.Errorf("write repos: %w", err)
 	}
 
@@ -123,7 +124,7 @@ func (b *Builder) Build(ctx context.Context) error {
 	}
 
 	// Write custom files to the container
-	if err := b.writeFiles(c); err != nil {
+	if err := b.writeFiles(ctx, c); err != nil {
 		return fmt.Errorf("write files: %w", err)
 	}
 
@@ -166,13 +167,13 @@ func (b *Builder) Build(ctx context.Context) error {
 // applyManagerConfig writes the package manager configuration file if specified.
 // For example, this could write /etc/dnf/dnf.conf for DNF or /etc/zypp/zypp.conf for Zypper.
 // If no config is specified in the configuration, this is a no-op.
-func (b *Builder) applyManagerConfig(c container.Container) error {
+func (b *Builder) applyManagerConfig(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	if b.cfg.Layer.Manager.Config == "" {
 		return nil
 	}
 	log.Info("Writing configfile", "config", b.cfg.Layer.Manager.Config)
-	return c.WriteFile(config.File{
+	return c.WriteFile(ctx, config.File{
 		Path:    b.backend.ConfigFilePath(),
 		Content: b.cfg.Layer.Manager.Config,
 	})
@@ -181,7 +182,7 @@ func (b *Builder) applyManagerConfig(c container.Container) error {
 // writeRepos writes all repository configuration files to the container.
 // Repositories can be specified as inline content, local files, or URLs.
 // The actual path where repos are written depends on the package manager.
-func (b *Builder) writeRepos(c container.Container) error {
+func (b *Builder) writeRepos(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	for _, repo := range b.cfg.Layer.Repos {
 		log.Info("writing repos:", "repo", repo.Path)
@@ -191,7 +192,7 @@ func (b *Builder) writeRepos(c container.Container) error {
 			URL:     repo.URL,
 			Src:     repo.Src,
 		}
-		if err := c.WriteFile(file); err != nil {
+		if err := c.WriteFile(ctx, file); err != nil {
 			return fmt.Errorf("write repo %s: %w", repo.Path, err)
 		}
 	}
@@ -200,36 +201,56 @@ func (b *Builder) writeRepos(c container.Container) error {
 
 // importGPGKeys imports GPG keys for repositories that specify them.
 // This allows automatic verification of package signatures.
-// Keys are imported using backend-specific commands:
-//   - RPM-based (dnf, zypper): rpm --import
-//   - APT-based (apt, mmdebstrap): gpg --dearmor to /etc/apt/trusted.gpg.d/
 //
-// If no GPG key is specified for a repo, it's skipped (user must handle GPG in repo config).
+// The key bytes are fetched here in Go (ctx + timeout-aware) and written
+// to disk. The backend is then asked for a command that operates on that
+// local path — never on the URL. This is what closes the previous shell
+// injection vector where a user-supplied URL was interpolated into a
+// `sh -c "curl ..."` string.
+//
+// For scratch builds, the key is written to a host temp file and the
+// resulting command runs on the host with --root semantics. For parent
+// builds, the key is written inside the container via c.WriteFile and
+// the command runs inside the container.
+//
+// If a repo has no GPG key, it's skipped (the user is expected to handle
+// GPG in the repo config). Per-repo failures are warnings, not errors,
+// to match prior behavior — some repos work without GPG.
 func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 
-	// Determine if this is a scratch build
 	isScratch := b.cfg.Meta.From == "scratch"
 	rootPath := ""
 	if isScratch {
 		rootPath = c.MountPath()
 	}
 
-	for _, repo := range b.cfg.Layer.Repos {
-		// Skip repos without GPG keys
+	for i, repo := range b.cfg.Layer.Repos {
 		if repo.GPGKey == "" {
 			continue
 		}
 
 		log.Info("Importing GPG key for repository", "repo", repo.Path, "key", repo.GPGKey)
 
-		cmd := b.backend.ImportGPGKeyCommand(repo.GPGKey, rootPath)
-		if cmd == nil {
-			log.Warn("Backend does not support GPG key import", "backend", b.cfg.Layer.Manager.Name)
+		keyBytes, err := fetch.Get(ctx, repo.GPGKey)
+		if err != nil {
+			log.Warn("Failed to fetch GPG key (continuing)", "repo", repo.Path, "error", err)
 			continue
 		}
 
-		// For scratch builds, run on host; for parent builds, run in container
+		keyPath, cleanup, err := b.placeGPGKey(ctx, c, isScratch, rootPath, i, keyBytes)
+		if err != nil {
+			log.Warn("Failed to place GPG key (continuing)", "repo", repo.Path, "error", err)
+			continue
+		}
+
+		cmd := b.backend.ImportGPGKeyCommand(keyPath, rootPath)
+		if cmd == nil {
+			log.Warn("Backend does not support GPG key import", "backend", b.cfg.Layer.Manager.Name)
+			cleanup()
+			continue
+		}
+
 		runMode := container.RunModeContainer
 		if isScratch {
 			runMode = container.RunModeHost
@@ -238,24 +259,62 @@ func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) erro
 		out := container.NewBufLogWriter("stdout")
 		if err := c.Run(ctx, cmd, runMode, out); err != nil {
 			log.Warn("Failed to import GPG key (continuing)", "repo", repo.Path, "error", err)
-			// Don't fail the build if GPG import fails - the repo might work without it
-			// or the user might have configured GPG checking differently
 		} else {
 			log.Info("Successfully imported GPG key", "repo", repo.Path)
 		}
+		cleanup()
 	}
 
 	return nil
 }
 
+// placeGPGKey writes fetched key bytes to a location the backend's import
+// command can reference. Returns the path it wrote to and a cleanup
+// function that removes the file. The path's meaning depends on whether
+// this is a scratch build:
+//
+//   - scratch: a *host* temp file. The import command runs on the host with
+//     --root, so the key must be host-readable. cleanup removes the temp file.
+//   - parent:  a path *inside* the container, placed via c.WriteFile. The
+//     import command runs inside the container. cleanup is a no-op because
+//     the file lives inside the (ephemeral) container; it would normally
+//     be removed by the user's own commands or simply not matter once the
+//     image is committed.
+func (b *Builder) placeGPGKey(ctx context.Context, c container.Container, isScratch bool, rootPath string, idx int, keyBytes []byte) (string, func(), error) {
+	if isScratch {
+		f, err := os.CreateTemp("", "image-build-gpg-key-*.bin")
+		if err != nil {
+			return "", func() {}, fmt.Errorf("create temp key file: %w", err)
+		}
+		if _, err := f.Write(keyBytes); err != nil {
+			f.Close()
+			os.Remove(f.Name())
+			return "", func() {}, fmt.Errorf("write temp key file: %w", err)
+		}
+		f.Close()
+		return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
+	}
+
+	// Parent build: place inside the container at a stable, codebase-controlled
+	// path. We include the repo index so multiple repos don't collide.
+	inContainer := fmt.Sprintf("/tmp/image-build-gpg-key-%d.bin", idx)
+	if err := c.WriteFile(ctx, config.File{
+		Path:    inContainer,
+		Content: string(keyBytes),
+	}); err != nil {
+		return "", func() {}, fmt.Errorf("write key into container: %w", err)
+	}
+	return inContainer, func() {}, nil
+}
+
 // writeFiles writes all custom files to the container.
 // Files can be specified as inline content, local files, or URLs.
 // This is useful for adding configuration files, scripts, etc.
-func (b *Builder) writeFiles(c container.Container) error {
+func (b *Builder) writeFiles(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	for _, file := range b.cfg.Layer.Files {
 		log.Info("Writing Files:", "file", file.Path)
-		if err := c.WriteFile(file); err != nil {
+		if err := c.WriteFile(ctx, file); err != nil {
 			return fmt.Errorf("write file %s: %w", file.Path, err)
 		}
 	}

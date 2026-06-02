@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/travisbcotton/image-build/internal/container"
 )
@@ -26,20 +27,26 @@ func New(path string) *SquashfsPublisher {
 	return &SquashfsPublisher{path: path}
 }
 
-// Publish creates a SquashFS image from the container filesystem.
-// The output file will be named: rootfs
+// Publish creates a SquashFS image for each configured tag.
 //
-// Note: Labels are not embedded in SquashFS files as they are filesystem images,
-// not OCI container images. Labels are only relevant for container registries.
+// Each tag produces a file named "<name>-<tag>.squashfs" inside s.path —
+// previously the publisher hard-coded "rootfs", which silently clobbered
+// the file on every build and ignored both name and tag.
+//
+// The source filesystem (the buildah mount path) does not change between
+// tags, so the image content is identical; we still write one file per tag
+// so callers can refer to a specific version without renaming.
+//
+// Note: Labels are not embedded in SquashFS files as they are filesystem
+// images, not OCI container images. Labels are only relevant for container
+// registries.
 //
 // Requirements:
 //   - mksquashfs command must be available (install squashfs-tools)
 //   - Output directory must be writable
 func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
 	log := slog.With("component", "publisher")
-	output := fmt.Sprintf("%s/rootfs", s.path)
-	log.Info("Creating squashfs", "squashfs", output, "source", c.MountPath())
-	
+
 	// Create output directory if it doesn't exist
 	if err := os.MkdirAll(s.path, 0755); err != nil {
 		return fmt.Errorf("create output directory %s: %w", s.path, err)
@@ -50,23 +57,31 @@ func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, 
 		return fmt.Errorf("mksquashfs not found: install squashfs-tools")
 	}
 
-	// Create the SquashFS image
-	// Options:
-	//   -noappend: Always create a new image (don't append)
-	//   -no-progress: Disable progress bar (for cleaner logs)
-	//   -e proc sys dev run: Exclude transient host mounts that may show
-	//       through the buildah overlay while the container is still mounted.
-	//       `-e` must come last; everything after it is an exclusion pattern.
-	cmd := exec.CommandContext(ctx, "mksquashfs", c.MountPath(), output,
-		"-noappend", "-no-progress",
-		"-e", "proc", "sys", "dev", "run")
-	cmd.Stdout = nil        // Suppress stdout
-	cmd.Stderr = os.Stderr  // Show errors
-	
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("mksquashfs: %w", err)
+	if len(tags) == 0 {
+		// Defensive — config validation already requires non-empty tags, but
+		// in case a publisher is invoked directly we still want a stable
+		// filename rather than overwriting "rootfs".
+		tags = []string{"latest"}
 	}
-	
-	log.Info("Published squashfs", "squash", output)
+
+	for _, tag := range tags {
+		output := filepath.Join(s.path, fmt.Sprintf("%s-%s.squashfs", name, tag))
+		log.Info("Creating squashfs", "squashfs", output, "source", c.MountPath())
+
+		// `-e <patterns…>` must come last; excludes transient host mounts
+		// that can show through the buildah overlay while the container is
+		// still mounted.
+		cmd := exec.CommandContext(ctx, "mksquashfs", c.MountPath(), output,
+			"-noappend", "-no-progress",
+			"-e", "proc", "sys", "dev", "run")
+		cmd.Stdout = nil       // Suppress stdout
+		cmd.Stderr = os.Stderr // Show errors
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("mksquashfs %s: %w", output, err)
+		}
+
+		log.Info("Published squashfs", "squashfs", output)
+	}
 	return nil
 }

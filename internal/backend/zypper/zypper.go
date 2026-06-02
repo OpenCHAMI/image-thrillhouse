@@ -277,23 +277,22 @@ func (z *ZypperBackend) RemovePackagesCommand(packages []string, rootPath string
 	return cmd
 }
 
-// ImportGPGKeyCommand generates a command to import a GPG key for repository signing.
-// For Zypper (RPM-based), this uses rpm --import to import the GPG key.
-// For scratch builds, the --root flag targets the specified root path.
+// ImportGPGKeyCommand returns the rpm command that imports an already-fetched
+// key from keyPath. rpm accepts both armored and binary key formats. For
+// scratch builds, --root targets rootPath.
 //
-// Returns nil if keyURL is empty.
-func (z *ZypperBackend) ImportGPGKeyCommand(keyURL string, rootPath string) []string {
-	if keyURL == "" {
+// keyPath is passed as an argv element, never through a shell.
+//
+// Returns nil if keyPath is empty.
+func (z *ZypperBackend) ImportGPGKeyCommand(keyPath string, rootPath string) []string {
+	if keyPath == "" {
 		return nil
 	}
-	
+
 	if rootPath != "" {
-		// Scratch build: use --root flag
-		return []string{"rpm", "--root", rootPath, "--import", keyURL}
+		return []string{"rpm", "--root", rootPath, "--import", keyPath}
 	}
-	
-	// Parent build: import directly
-	return []string{"rpm", "--import", keyURL}
+	return []string{"rpm", "--import", keyPath}
 }
 
 // SupportsInstallRoot returns true because Zypper can bootstrap a scratch filesystem.

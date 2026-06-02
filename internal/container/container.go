@@ -28,14 +28,21 @@ type Container interface {
 	// RunScript writes a script to the container and executes it
 	RunScript(ctx context.Context, script string, out OutputWriter) error
 	
-	// WriteFile writes a file into the container filesystem
-	WriteFile(file config.File) error
+	// WriteFile writes a file into the container filesystem. The context is
+	// used for any network fetches (when File.URL is set) and for cancellation
+	// of the underlying buildah Add operation.
+	WriteFile(ctx context.Context, file config.File) error
 	
 	// Commit commits the container to local storage with the given name and tag
 	Commit(ctx context.Context, name, tag string) (string, error)
-	
-	// CommitWithLabels commits the container with OCI labels
+
+	// CommitWithLabels commits the container with OCI labels under a single tag.
 	CommitWithLabels(ctx context.Context, name, tag string, labels map[string]string) (string, error)
+
+	// CommitWithLabelsTags commits the container once and applies all tags
+	// at the same time. This is significantly cheaper than calling
+	// CommitWithLabels in a loop, which writes the layer to storage per tag.
+	CommitWithLabelsTags(ctx context.Context, name string, tags []string, labels map[string]string) (string, error)
 	
 	// GetID returns the container ID
 	GetID() string

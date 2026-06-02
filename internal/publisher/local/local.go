@@ -26,13 +26,20 @@ func New() *LocalPublisher {
 // The image is tagged as "localhost/<name>:<tag>" in the local container storage.
 func (l *LocalPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
 	log := slog.With("component", "publisher")
-	for _, tag := range tags {
-		id, err := c.CommitWithLabels(ctx, name, tag, labels)
-		log.Info("Committing locally", "ContainerID", id, "Image", fmt.Sprintf("localhost/%s:%s", name, tag))
-		if err != nil {
-			return fmt.Errorf("commit: %w", err)
-		}
-		log.Info("Committed locally", "ContainerID", id, "Image", fmt.Sprintf("localhost/%s:%s", name, tag))
+	if len(tags) == 0 {
+		return fmt.Errorf("local publisher requires at least one tag")
 	}
+
+	images := make([]string, len(tags))
+	for i, tag := range tags {
+		images[i] = fmt.Sprintf("localhost/%s:%s", name, tag)
+	}
+
+	log.Info("Committing locally", "images", images)
+	id, err := c.CommitWithLabelsTags(ctx, name, tags, labels)
+	if err != nil {
+		return fmt.Errorf("commit %v: %w", images, err)
+	}
+	log.Info("Committed locally", "images", images, "containerID", id)
 	return nil
 }

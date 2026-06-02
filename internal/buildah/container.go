@@ -5,9 +5,7 @@ package buildah
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/exec"
 	"time"
@@ -20,6 +18,7 @@ import (
 
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-build/internal/fetch"
 )
 
 // Container wraps a Buildah builder and implements the container.Container interface.
@@ -157,7 +156,7 @@ func (c *Container) RunScript(ctx context.Context, script string, out container.
 	// write script to temp file in container
 	tmpPath := fmt.Sprintf("/tmp/image-build-script-%d.sh", time.Now().UnixNano())
 
-	if err := c.WriteFile(config.File{
+	if err := c.WriteFile(ctx, config.File{
 		Path:    tmpPath,
 		Content: script,
 	}); err != nil {
@@ -190,37 +189,33 @@ func (c *Container) RunScript(ctx context.Context, script string, out container.
 //
 // The file is written through a temporary file on the host and then added
 // to the container using Buildah's Add method.
-func (c *Container) WriteFile(file config.File) error {
+func (c *Container) WriteFile(ctx context.Context, file config.File) error {
+	if file.Path == "" {
+		return fmt.Errorf("write file: path is required")
+	}
 	var content []byte
 	var err error
 	log := slog.With("component", "container")
-	// content is a yaml scalar block or string
-	if file.Content != "" {
+	switch {
+	case file.Content != "":
+		// yaml scalar block or string
 		content = []byte(file.Content)
-		// content is a file on the host
-	} else if file.Src != "" {
+	case file.Src != "":
+		// local file on the host
 		content, err = os.ReadFile(file.Src)
 		if err != nil {
 			return fmt.Errorf("read src %s: %w", file.Src, err)
 		}
-		// content is at a remote url
-	} else if file.URL != "" {
-		resp, err := http.Get(file.URL)
+	case file.URL != "":
+		// remote URL — ctx-aware fetch with timeout
+		content, err = fetch.Get(ctx, file.URL)
 		if err != nil {
-			return fmt.Errorf("fetch %s: %w", file.URL, err)
+			return err
 		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("fetch %s: status %d", file.URL, resp.StatusCode)
-		}
-
-		content, err = io.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", file.URL, err)
-		}
+	default:
+		return fmt.Errorf("write file %s: one of content, src, or url is required", file.Path)
 	}
-	log.Debug("Wrtie File", "path", file.Path)
+	log.Debug("Write file", "path", file.Path)
 
 	// write to temp file
 	tmp, err := os.CreateTemp("", "image-build-*")
@@ -248,30 +243,46 @@ func (c *Container) Commit(ctx context.Context, name, tag string) (string, error
 	return c.CommitWithLabels(ctx, name, tag, nil)
 }
 
-// CommitWithLabels commits the container as an image with labels to local storage.
+// CommitWithLabels commits the container as an image with labels to local
+// storage under a single tag. Equivalent to CommitWithLabelsTags with
+// []string{tag}; preserved as a convenience for the common case.
+func (c *Container) CommitWithLabels(ctx context.Context, name, tag string, labels map[string]string) (string, error) {
+	return c.CommitWithLabelsTags(ctx, name, []string{tag}, labels)
+}
+
+// CommitWithLabelsTags commits the container once and applies every tag in a
+// single buildah Commit call. Images are tagged as "localhost/<name>:<tag>"
+// in the local container storage. Labels are applied to the image metadata
+// before committing.
 //
-// The image is tagged as "localhost/<name>:<tag>" in the local container storage.
-// Labels are applied to the image metadata before committing.
+// Calling Commit in a loop (one tag per call) re-serializes the layer to
+// storage every time; this method writes once and lets buildah register the
+// additional tags as image references against the same blob.
 //
 // Returns the container ID on success.
-func (c *Container) CommitWithLabels(ctx context.Context, name, tag string, labels map[string]string) (string, error) {
+func (c *Container) CommitWithLabelsTags(ctx context.Context, name string, tags []string, labels map[string]string) (string, error) {
 	log := slog.With("component", "container")
-	log.Debug("Commit Container", "ID", c.GetID(), "Name", c.GetName(), "as", name, ":", tag, "labels", len(labels))
+	log.Debug("Commit Container", "ID", c.GetID(), "Name", c.GetName(), "name", name, "tags", tags, "labels", len(labels))
 
-	options := buildah.CommitOptions{
-		AdditionalTags: []string{fmt.Sprintf("localhost/%s:%s", name, tag)},
+	if len(tags) == 0 {
+		return "", fmt.Errorf("commit %s: at least one tag is required", name)
+	}
+
+	additional := make([]string, len(tags))
+	for i, t := range tags {
+		additional[i] = fmt.Sprintf("localhost/%s:%s", name, t)
 	}
 
 	// Add labels if provided
-	if len(labels) > 0 {
-		// Apply labels using buildah config
-		for key, value := range labels {
-			c.Builder.SetLabel(key, value)
-		}
+	for key, value := range labels {
+		c.Builder.SetLabel(key, value)
 	}
 
-	_, _, _, err := c.Builder.Commit(ctx, nil, options)
-	if err != nil {
+	options := buildah.CommitOptions{
+		AdditionalTags: additional,
+	}
+
+	if _, _, _, err := c.Builder.Commit(ctx, nil, options); err != nil {
 		return "", fmt.Errorf("commit: %w", err)
 	}
 	return c.GetID(), nil
