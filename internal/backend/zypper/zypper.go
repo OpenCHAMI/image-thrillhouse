@@ -4,10 +4,12 @@
 package zypper
 
 import (
-	"fmt"
+	"context"
 	"log/slog"
+	"os"
 	"strings"
 
+	"github.com/travisbcotton/image-build/internal/backend/cmdutil"
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
 )
@@ -192,48 +194,20 @@ func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath str
 
 // ValidateOptions checks if the provided options are valid for the Zypper backend.
 // Valid options:
-//   - repopath: Any string path
+//   - repopath: Any non-empty string path
 //   - no-recommends: "true" or "false"
 //   - no-gpg-checks: "true" or "false"
 //   - force-resolution: "true" or "false"
 //
 // Returns an error if an unknown option is provided or if a value is invalid.
 func (z *ZypperBackend) ValidateOptions(options map[string]string) error {
-	validOptions := map[string]bool{
-		"repopath":         true,
-		"no-recommends":    true,
-		"no-gpg-checks":    true,
-		"force-resolution": true,
+	schema := map[string]cmdutil.OptionKind{
+		"repopath":         cmdutil.OptionString,
+		"no-recommends":    cmdutil.OptionBool,
+		"no-gpg-checks":    cmdutil.OptionBool,
+		"force-resolution": cmdutil.OptionBool,
 	}
-
-	boolOptions := map[string]bool{
-		"no-recommends":    true,
-		"no-gpg-checks":    true,
-		"force-resolution": true,
-	}
-
-	validValues := map[string]bool{
-		"true":  true,
-		"false": true,
-	}
-
-	for key, value := range options {
-		if !validOptions[key] {
-			return fmt.Errorf("unknown option %q for zypper backend", key)
-		}
-
-		// Validate boolean options
-		if boolOptions[key] && value != "" && !validValues[value] {
-			return fmt.Errorf("option %q must be 'true' or 'false', got %q", key, value)
-		}
-
-		// repopath can be any non-empty string
-		if key == "repopath" && value == "" {
-			return fmt.Errorf("option 'repopath' cannot be empty")
-		}
-	}
-
-	return nil
+	return cmdutil.ValidateOptionSchema("zypper", options, schema)
 }
 
 // addOptionFlags adds Zypper option flags to a command based on configured options.
@@ -253,46 +227,41 @@ func (z *ZypperBackend) addOptionFlags(cmd []string) []string {
 	return cmd
 }
 
-// RemovePackagesCommand generates a command to remove packages using rpm.
-// Uses rpm -e --nodeps to remove packages without checking dependencies.
-// This is useful for removing unnecessary packages to minimize image size.
-//
-// If rootPath is non-empty, the command runs on the host targeting that
-// filesystem (rpm --root <path> -e --nodeps ...) so that scratch builds can
-// remove packages from the bootstrapped root before commit.
-//
-// Returns nil if no packages to remove.
+// RemovePackagesCommand delegates to the shared RPM removal helper (also
+// used by the dnf backend). See cmdutil.RPMRemove.
 func (z *ZypperBackend) RemovePackagesCommand(packages []string, rootPath string) []string {
-	if len(packages) == 0 {
-		return nil
-	}
-
-	cmd := make([]string, 0, 5+len(packages))
-	cmd = append(cmd, "rpm")
-	if rootPath != "" {
-		cmd = append(cmd, "--root", rootPath)
-	}
-	cmd = append(cmd, "-e", "--nodeps")
-	cmd = append(cmd, packages...)
-	return cmd
+	return cmdutil.RPMRemove(rootPath, packages)
 }
 
-// ImportGPGKeyCommand returns the rpm command that imports an already-fetched
-// key from keyPath. rpm accepts both armored and binary key formats. For
-// scratch builds, --root targets rootPath.
-//
-// keyPath is passed as an argv element, never through a shell.
-//
-// Returns nil if keyPath is empty.
+// ImportGPGKeyCommand delegates to the shared RPM key-import helper (also
+// used by the dnf backend). See cmdutil.RPMImportKey.
 func (z *ZypperBackend) ImportGPGKeyCommand(keyPath string, rootPath string) []string {
-	if keyPath == "" {
-		return nil
+	return cmdutil.RPMImportKey(rootPath, keyPath)
+}
+
+// Bootstrap prepares a fresh scratch root for Zypper. It pre-creates the
+// pseudo-fs mount points that Zypper's `filesystem` package expects to find,
+// and writes the shared RPM macros (same set the dnf backend uses) — both
+// backends share the RPM scriptlet ecosystem so the same workarounds apply.
+//
+// We intentionally avoid creating /dev here: doing so left a host-owned dir
+// in the scratch root which broke UID/GID checks during commit.
+func (z *ZypperBackend) Bootstrap(ctx context.Context, c container.Container, rootPath string) error {
+	log := slog.With("component", "backend", "backend", "zypper")
+
+	for _, dir := range []string{"/proc", "/sys", "/run", "/etc/rpm"} {
+		if err := os.MkdirAll(rootPath+dir, 0755); err != nil {
+			log.Warn("Failed to create essential directory", "dir", dir, "error", err)
+		}
 	}
 
-	if rootPath != "" {
-		return []string{"rpm", "--root", rootPath, "--import", keyPath}
+	if err := c.WriteFile(ctx, config.File{
+		Path:    "/etc/rpm/macros.image-build",
+		Content: cmdutil.RPMMacros,
+	}); err != nil {
+		log.Warn("Failed to write RPM macros", "error", err)
 	}
-	return []string{"rpm", "--import", keyPath}
+	return nil
 }
 
 // SupportsInstallRoot returns true because Zypper can bootstrap a scratch filesystem.
@@ -308,7 +277,7 @@ func (z *ZypperBackend) SupportsParentInstall() bool {
 // OutputWriter returns a writer that parses and formats Zypper output.
 // The writer extracts useful information like installed packages and errors.
 func (z *ZypperBackend) OutputWriter() container.OutputWriter {
-	return &zypperLogWriter{}
+	return newZypperWriter()
 }
 
 // IsAcceptableExitCode checks if a zypper exit code should be tolerated.
@@ -320,18 +289,13 @@ func (z *ZypperBackend) OutputWriter() container.OutputWriter {
 // image is about to be committed and never "run" in the chroot, several of
 // these signals are pure noise:
 //
-//   - 102 ZYPPER_EXIT_INF_REBOOT_NEEDED   — the image will be rebooted by
-//                                           whoever boots it; nothing to do
-//                                           here.
-//   - 103 ZYPPER_EXIT_INF_RESTART_NEEDED  — same; no zypper running to
-//                                           restart.
-//   - 107 ZYPPER_EXIT_INF_RPM_SCRIPT_FAILED — packages were installed but
-//                                           one or more RPM scriptlets
-//                                           (typically systemd's post-install
-//                                           talking to dbus) failed in the
-//                                           --root chroot. The on-disk
-//                                           state is correct; the scriptlets
-//                                           will re-run at first boot.
+//   - 102 ZYPPER_EXIT_INF_REBOOT_NEEDED: the image will be rebooted by
+//     whoever boots it; nothing to do here.
+//   - 103 ZYPPER_EXIT_INF_RESTART_NEEDED: same; no zypper running to restart.
+//   - 107 ZYPPER_EXIT_INF_RPM_SCRIPT_FAILED: packages were installed but one
+//     or more RPM scriptlets (typically systemd's post-install talking to
+//     dbus) failed in the --root chroot. The on-disk state is correct; the
+//     scriptlets will re-run at first boot.
 //
 // Exit code 8 (ZYPPER_EXIT_ERR_COMMIT) is a real error in general, but in
 // older zypper versions it was also returned for post-install scriptlet

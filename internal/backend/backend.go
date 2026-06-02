@@ -4,6 +4,8 @@
 package backend
 
 import (
+	"context"
+
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
 )
@@ -17,6 +19,17 @@ import (
 //   - APT (Debian, Ubuntu - parent builds only)
 //   - mmdebstrap (Debian, Ubuntu - scratch builds only)
 type Backend interface {
+	// Bootstrap runs any backend-specific preparation that has to happen
+	// against a fresh scratch root *before* InstallRootCommands. Things like
+	// creating /etc/yum.repos.d, writing RPM macros, initializing the RPM
+	// database, or pre-creating the dirs the package manager would otherwise
+	// fail to populate.
+	//
+	// rootPath is the host filesystem path of the mounted scratch root.
+	// Backends that don't support scratch builds (e.g. apt) should return nil.
+	// The builder only calls Bootstrap for scratch builds.
+	Bootstrap(ctx context.Context, c container.Container, rootPath string) error
+
 	// SupportsInstallRoot indicates if this backend can bootstrap a scratch filesystem.
 	// This is used for building images from scratch using --installroot or equivalent.
 	// Returns true for: dnf, zypper, mmdebstrap

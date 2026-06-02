@@ -72,44 +72,13 @@ func (b *Builder) Build(ctx context.Context) error {
 		return fmt.Errorf("write manager config: %w", err)
 	}
 
-	// Write RPM macros to disable file capabilities for scratch builds with DNF or Zypper
-	// This works around issues with overlay filesystems that don't support extended attributes
-	// and prevents post-installation script failures in containerized environments
-	if b.cfg.Meta.From == "scratch" && (b.cfg.Layer.Manager.Name == "dnf" || b.cfg.Layer.Manager.Name == "zypper") {
-		log.Debug("Writing RPM macros to disable file capabilities")
-		rpmMacros := `%_netsharedpath /sys:/proc:/dev
-%_install_langs C:en:en_US:en_US.UTF-8
-%__brp_mangle_shebangs %{nil}
-%_missing_build_ids_terminate_build 0
-%_file_context_file %{nil}
-%__brp_ldconfig %{nil}
-`
-		// Create /etc directory structure first
-		etcPath := c.MountPath() + "/etc"
-		rpmPath := etcPath + "/rpm"
-		if err := os.MkdirAll(rpmPath, 0755); err != nil {
-			log.Warn("Failed to create /etc/rpm directory", "error", err)
-		}
-
-		if err := c.WriteFile(ctx, config.File{
-			Path:    "/etc/rpm/macros.image-build",
-			Content: rpmMacros,
-		}); err != nil {
-			log.Warn("Failed to write RPM macros", "error", err)
-		}
-	}
-
-	// Create essential directories for zypper scratch builds
-	// The filesystem package tries to create /dev but fails if it doesn't exist
-	// Note: We don't create /dev here because it causes UID/GID issues during commit
-	if b.cfg.Meta.From == "scratch" && b.cfg.Layer.Manager.Name == "zypper" {
-		log.Debug("Creating essential directories for zypper scratch build")
-		essentialDirs := []string{"/proc", "/sys", "/run"}
-		for _, dir := range essentialDirs {
-			dirPath := c.MountPath() + dir
-			if err := os.MkdirAll(dirPath, 0755); err != nil {
-				log.Warn("Failed to create essential directory", "dir", dir, "error", err)
-			}
+	// Backend-specific scratch preparation (creating /etc/rpm, writing
+	// macros, pre-creating the filesystem skeleton, rpm --initdb, etc.)
+	// lives in each backend's Bootstrap; the builder only decides whether
+	// to call it.
+	if b.cfg.Meta.From == "scratch" {
+		if err := b.backend.Bootstrap(ctx, c, c.MountPath()); err != nil {
+			return fmt.Errorf("bootstrap %s: %w", b.cfg.Layer.Manager.Name, err)
 		}
 	}
 
@@ -339,36 +308,13 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	log.Info("Starting install commands:", "install", b.cfg.Layer.Actions.Install)
 
-	// Scratch build: bootstrap a new filesystem from nothing
+	// Scratch build: bootstrap a new filesystem from nothing.
+	// Backend.Bootstrap (called earlier in Build) has already created the
+	// directory skeleton, written any RPM macros, and initialized the RPM
+	// database for backends that need it.
 	if b.cfg.Meta.From == "scratch" {
 		if !b.backend.SupportsInstallRoot() {
 			return fmt.Errorf("backend %s does not support scratch builds", b.cfg.Layer.Manager.Name)
-		}
-
-		// For DNF scratch builds, initialize the base directory structure first
-		// This works around issues with the filesystem package failing to unpack
-		if b.cfg.Layer.Manager.Name == "dnf" {
-			log.Debug("Pre-creating base directory structure for DNF scratch build")
-			mountPath := c.MountPath()
-			baseDirs := []string{
-				"/dev", "/proc", "/sys", "/tmp", "/run", "/var", "/var/lib", "/var/lib/rpm",
-				"/etc", "/etc/yum.repos.d", "/usr", "/usr/bin", "/usr/lib", "/usr/lib64",
-				"/usr/sbin", "/usr/share", "/boot", "/home", "/root", "/opt", "/srv", "/media", "/mnt",
-			}
-			for _, dir := range baseDirs {
-				fullPath := mountPath + dir
-				if err := os.MkdirAll(fullPath, 0755); err != nil {
-					log.Warn("Failed to create base directory", "dir", dir, "error", err)
-				}
-			}
-
-			// Initialize RPM database
-			log.Debug("Initializing RPM database")
-			rpmdbCmd := []string{"rpm", "--root", mountPath, "--initdb"}
-			out := b.backend.OutputWriter()
-			if err := c.Run(ctx, rpmdbCmd, container.RunModeHost, out); err != nil {
-				log.Warn("Failed to initialize RPM database", "error", err)
-			}
 		}
 
 		// Get commands to run on the host targeting the container mount

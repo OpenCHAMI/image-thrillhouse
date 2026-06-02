@@ -21,6 +21,27 @@ import (
 	"github.com/travisbcotton/image-build/internal/fetch"
 )
 
+// defaultCaps are the Linux capabilities buildah needs to grant a process so
+// that package installation works inside the container. They cover ownership
+// changes (CHOWN/FSETID), DAC bypass, setuid/setgid for things like rpm
+// helpers, the file-capability bit RPMs apply, and chroot for installroot
+// workflows. The exact same set was duplicated in two call sites in this
+// file; consolidate it here so adding or removing a capability is a one-line
+// change.
+var defaultCaps = []string{
+	"CAP_CHOWN",
+	"CAP_DAC_OVERRIDE",
+	"CAP_FOWNER",
+	"CAP_FSETID",
+	"CAP_KILL",
+	"CAP_NET_BIND_SERVICE",
+	"CAP_SETFCAP",
+	"CAP_SETGID",
+	"CAP_SETPCAP",
+	"CAP_SETUID",
+	"CAP_SYS_CHROOT",
+}
+
 // Container wraps a Buildah builder and implements the container.Container interface.
 // It provides methods for running commands, writing files, and committing images.
 type Container struct {
@@ -114,10 +135,7 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 				Isolation: c.GetIsolation(),
 				Stdout:    out,
 				Stderr:    out,
-				AddCapabilities: []string{
-					"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_FSETID", "CAP_KILL",
-					"CAP_NET_BIND_SERVICE", "CAP_SETFCAP", "CAP_SETGID", "CAP_SETPCAP", "CAP_SETUID", "CAP_SYS_CHROOT",
-				},
+				AddCapabilities: defaultCaps,
 			})
 			out.Flush(err)
 			if err != nil {
@@ -130,10 +148,7 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 			Isolation: c.GetIsolation(),
 			Stdout:    out,
 			Stderr:    out,
-			AddCapabilities: []string{
-				"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_FSETID", "CAP_KILL",
-				"CAP_NET_BIND_SERVICE", "CAP_SETFCAP", "CAP_SETGID", "CAP_SETPCAP", "CAP_SETUID", "CAP_SYS_CHROOT",
-			},
+			AddCapabilities: defaultCaps,
 		})
 		out.Flush(err)
 		if err != nil {

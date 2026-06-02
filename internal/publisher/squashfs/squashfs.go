@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-build/internal/fsutil"
 )
 
 // SquashfsPublisher creates SquashFS images from container filesystems.
@@ -74,18 +75,8 @@ func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, 
 	}
 
 	log.Info("Creating squashfs", "squashfs", output, "source", c.MountPath())
-
-	// `-e <patterns…>` must come last; excludes transient host mounts that
-	// can show through the buildah overlay while the container is still
-	// mounted.
-	cmd := exec.CommandContext(ctx, "mksquashfs", c.MountPath(), output,
-		"-noappend", "-no-progress",
-		"-e", "proc", "sys", "dev", "run")
-	cmd.Stdout = nil       // Suppress stdout
-	cmd.Stderr = os.Stderr // Show errors
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("mksquashfs %s: %w", output, err)
+	if err := fsutil.MakeSquashFS(ctx, c.MountPath(), output); err != nil {
+		return err
 	}
 
 	log.Info("Published squashfs", "squashfs", output)

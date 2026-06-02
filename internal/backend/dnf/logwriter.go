@@ -2,75 +2,62 @@
 package dnf
 
 import (
-	"bytes"
 	"log/slog"
 	"strings"
+
+	"github.com/travisbcotton/image-build/internal/container"
 )
 
-// dnfLogWriter buffers and parses DNF command output.
-// It extracts installed packages, warnings, and errors from DNF's output.
-type dnfLogWriter struct {
-	buf bytes.Buffer
+// dnfClassifier parses DNF command output. It walks lines, tracks an
+// "Installed:" section state, and collects warnings and errors. Summary
+// logging happens in Done. The buffering/Flush plumbing is provided by
+// container.LineWriter.
+type dnfClassifier struct {
+	installed   []string
+	warnings    []string
+	errors      []string
+	inInstalled bool
 }
 
-// Write buffers the output data for later processing by Flush.
-// Implements io.Writer interface.
-func (w *dnfLogWriter) Write(p []byte) (n int, err error) {
-	return w.buf.Write(p)
+func newDnfWriter() *container.LineWriter {
+	return container.NewLineWriter(&dnfClassifier{})
 }
 
-// Flush processes the buffered DNF output and logs relevant information.
-// It parses DNF's output format to extract:
-//   - Installed packages (lines after "Installed:" section)
-//   - Warnings (e.g., unable to detect release version)
-//   - Errors (lines starting with "Error:")
-//
-// The buffer is reset after processing.
-func (w *dnfLogWriter) Flush(err error) {
-	output := w.buf.String()
-
-	// Log full raw output for debugging
-	slog.Debug("DNF raw output", "output", output)
-
-	w.buf.Reset()
-
-	var installed []string
-	var warnings []string
-	var errors []string
-
-	inInstalled := false
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		switch {
-		case line == "Installed:":
-			inInstalled = true
-		case line == "Upgraded:" || line == "Removed:" || line == "Failed:":
-			inInstalled = false
-		case inInstalled:
-			installed = append(installed, line)
-		case strings.HasPrefix(line, "Unable to detect release version"):
-			warnings = append(warnings, line)
-		case strings.HasPrefix(line, "Error:"):
-			errors = append(errors, line)
-			inInstalled = false
-		}
+// Line classifies one line of DNF output.
+func (c *dnfClassifier) Line(line string, hadErr bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return
 	}
-
-	if len(installed) > 0 {
-		slog.Info("packages installed", "packages", installed)
+	switch {
+	case trimmed == "Installed:":
+		c.inInstalled = true
+	case trimmed == "Upgraded:", trimmed == "Removed:", trimmed == "Failed:":
+		c.inInstalled = false
+	case c.inInstalled:
+		c.installed = append(c.installed, trimmed)
+	case strings.HasPrefix(trimmed, "Unable to detect release version"):
+		c.warnings = append(c.warnings, trimmed)
+	case strings.HasPrefix(trimmed, "Error:"):
+		c.errors = append(c.errors, trimmed)
+		c.inInstalled = false
 	}
-	for _, w := range warnings {
+}
+
+// Done emits summary logs after the buffer has been fully classified.
+func (c *dnfClassifier) Done(raw string, err error) {
+	slog.Debug("DNF raw output", "output", raw)
+
+	if len(c.installed) > 0 {
+		slog.Info("packages installed", "packages", c.installed)
+	}
+	for _, w := range c.warnings {
 		slog.Warn("dnf warning", "msg", w)
 	}
 	if err != nil {
-		// Log all errors
-		for _, e := range errors {
+		for _, e := range c.errors {
 			slog.Error("dnf error", "msg", e)
 		}
-		// Always log the full output when there's an error for debugging
-		slog.Error("DNF command failed", "full_output", output, "exit_error", err)
+		slog.Error("DNF command failed", "full_output", raw, "exit_error", err)
 	}
 }

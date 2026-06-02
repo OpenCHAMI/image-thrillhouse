@@ -5,10 +5,12 @@
 package mmdebstrap
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
 
+	"github.com/travisbcotton/image-build/internal/backend/cmdutil"
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
 )
@@ -90,39 +92,36 @@ func (m *MmdebstrapBackend) InstallRootCommands(install config.Install, rootPath
 	return [][]string{cmd}
 }
 
-// ValidateOptions checks if the required mmdebstrap options are provided.
+// ValidateOptions checks that the required mmdebstrap options are provided
+// and that only known options are present.
+//
 // Required options:
-//   - suite: Must be specified (e.g., bookworm, bullseye, jammy)
-//   - mirror: Must be specified (e.g., http://deb.debian.org/debian)
+//   - suite (e.g., bookworm, bullseye, jammy)
+//   - mirror (e.g., http://deb.debian.org/debian)
 //
 // Optional options:
-//   - variant: Bootstrap variant (e.g., minbase, buildd)
-//   - mode: Execution mode (e.g., fakechroot, unshare)
-//
-// Returns an error if either required option is missing or if an unknown option is provided.
+//   - variant (e.g., minbase, buildd)
+//   - mode (e.g., fakechroot, unshare)
 func (m *MmdebstrapBackend) ValidateOptions(options map[string]string) error {
-	// Check required options
 	if options["suite"] == "" {
 		return fmt.Errorf("mmdebstrap requires options.suite (e.g. bookworm)")
 	}
 	if options["mirror"] == "" {
 		return fmt.Errorf("mmdebstrap requires options.mirror (e.g. http://deb.debian.org/debian)")
 	}
-
-	// Validate that only known options are provided
-	validOptions := map[string]bool{
-		"suite":   true,
-		"mirror":  true,
-		"variant": true,
-		"mode":    true,
+	schema := map[string]cmdutil.OptionKind{
+		"suite":   cmdutil.OptionString,
+		"mirror":  cmdutil.OptionString,
+		"variant": cmdutil.OptionAny,
+		"mode":    cmdutil.OptionAny,
 	}
+	return cmdutil.ValidateOptionSchema("mmdebstrap", options, schema)
+}
 
-	for key := range options {
-		if !validOptions[key] {
-			return fmt.Errorf("unknown option %q for mmdebstrap backend", key)
-		}
-	}
-
+// Bootstrap is a no-op for mmdebstrap. mmdebstrap itself bootstraps the
+// scratch root in its single InstallRootCommands invocation, so the builder
+// has no pre-creation work to do beforehand.
+func (d *MmdebstrapBackend) Bootstrap(ctx context.Context, c container.Container, rootPath string) error {
 	return nil
 }
 
@@ -138,59 +137,24 @@ func (d *MmdebstrapBackend) SupportsParentInstall() bool {
 	return false
 }
 
-// RemovePackagesCommand generates a command to remove packages using dpkg.
-// Uses dpkg --remove --force-depends to remove packages without checking dependencies.
-// This is useful for removing unnecessary packages to minimize image size.
-//
-// If rootPath is non-empty, the command runs on the host targeting that
-// filesystem (dpkg --root <path> ...). For mmdebstrap this is the common
-// case since the backend only supports scratch builds.
-//
-// Returns nil if no packages to remove.
+// RemovePackagesCommand delegates to the shared dpkg removal helper (also
+// used by the apt backend). See cmdutil.DPKGRemove.
 func (m *MmdebstrapBackend) RemovePackagesCommand(packages []string, rootPath string) []string {
-	if len(packages) == 0 {
-		return nil
-	}
-
-	cmd := make([]string, 0, 5+len(packages))
-	cmd = append(cmd, "dpkg")
-	if rootPath != "" {
-		cmd = append(cmd, "--root", rootPath)
-	}
-	cmd = append(cmd, "--remove", "--force-depends")
-	cmd = append(cmd, packages...)
-	return cmd
+	return cmdutil.DPKGRemove(rootPath, packages)
 }
 
-// ImportGPGKeyCommand returns a command that installs an already-fetched
-// GPG key from keyPath into /etc/apt/trusted.gpg.d/. The builder fetches
-// the key via Go (see internal/builder.importGPGKeys); no URL is ever
-// interpolated into a shell string.
-//
-// mmdebstrap should typically get its trust from the mirror's keyring;
-// this path exists for custom third-party keys.
-//
-// Returns nil if keyPath is empty.
+// ImportGPGKeyCommand delegates to the shared apt key-import helper (also
+// used by the apt backend). mmdebstrap normally derives its trust from the
+// mirror's keyring; this path exists for custom third-party keys.
+// See cmdutil.APTImportKey.
 func (m *MmdebstrapBackend) ImportGPGKeyCommand(keyPath string, rootPath string) []string {
-	if keyPath == "" {
-		return nil
-	}
-
-	final := "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
-	if rootPath != "" {
-		final = rootPath + "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
-	}
-
-	script := fmt.Sprintf("gpg --dearmor -o %q %q 2>/dev/null || cp %q %q",
-		final, keyPath, keyPath, final)
-
-	return []string{"sh", "-c", script}
+	return cmdutil.APTImportKey(rootPath, keyPath)
 }
 
 // OutputWriter returns a writer that parses and formats mmdebstrap output.
 // The writer filters mmdebstrap's verbose output and logs relevant information.
 func (d *MmdebstrapBackend) OutputWriter() container.OutputWriter {
-	return &mmdebstrapLogWriter{}
+	return newMmdebstrapWriter()
 }
 
 // IsAcceptableExitCode checks if an mmdebstrap exit code should be tolerated.
