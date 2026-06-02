@@ -1,0 +1,22 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: image-build
+Upstream-Contact: Travis Cotton <travis@example.com>
+Source: https://github.com/travisbcotton/image-build
+
+Files: *
+Copyright: 2026 Travis Cotton <travis@example.com>
+License: FIXME
+ FIXME: Please specify the license for this package.
+ Common licenses include:
+  - MIT: Expat
+  - Apache-2.0
+  - GPL-3.0-or-later
+  - BSD-3-Clause
+ .
+ Please update this file with the appropriate license text from the project.
+ If there is a LICENSE file in the repository, its contents should be
+ included here.
+
+Comment: The README.md indicates the project has a LICENSE file, but it was
+ not found in the repository at the time of packaging. The package maintainer
+ should verify the license and update this file accordingly.
