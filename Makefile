@@ -1,4 +1,4 @@
-.PHONY: all build clean install test deb
+.PHONY: all build clean install test deb rpm
 
 # Build variables
 BINARY_NAME=image-build
@@ -7,6 +7,7 @@ GO=go
 GOFLAGS=-v
 BUILD_DIR=.
 INSTALL_DIR=/usr/local/bin
+RPMBUILD_DIR=$(HOME)/rpmbuild
 
 # Default target
 all: build
@@ -24,6 +25,7 @@ clean:
 	rm -rf debian/*.log
 	rm -rf debian/*.substvars
 	rm -rf debian/tmp
+	rm -rf $(RPMBUILD_DIR)
 
 # Install the binary
 install: build
@@ -41,6 +43,23 @@ deb:
 deb-source:
 	dpkg-buildpackage -us -uc -S
 
+# Build RPM package
+rpm: rpm-prep
+	rpmbuild -bb $(RPMBUILD_DIR)/SPECS/$(BINARY_NAME).spec
+
+# Prepare RPM build environment
+rpm-prep:
+	mkdir -p $(RPMBUILD_DIR)/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+	mkdir -p $(BINARY_NAME)-$(VERSION)
+	cp -r * $(BINARY_NAME)-$(VERSION)/ 2>/dev/null || true
+	tar czf $(RPMBUILD_DIR)/SOURCES/$(BINARY_NAME)-$(VERSION).tar.gz $(BINARY_NAME)-$(VERSION)
+	rm -rf $(BINARY_NAME)-$(VERSION)
+	cp $(BINARY_NAME).spec $(RPMBUILD_DIR)/SPECS/
+
+# Build RPM source package
+rpm-source: rpm-prep
+	rpmbuild -bs $(RPMBUILD_DIR)/SPECS/$(BINARY_NAME).spec
+
 # Display help
 help:
 	@echo "Available targets:"
@@ -51,4 +70,7 @@ help:
 	@echo "  test        - Run Go tests"
 	@echo "  deb         - Build Debian binary package"
 	@echo "  deb-source  - Build Debian source package"
+	@echo "  rpm         - Build RPM binary package"
+	@echo "  rpm-source  - Build RPM source package"
+	@echo "  rpm-prep    - Prepare RPM build environment"
 	@echo "  help        - Display this help message"

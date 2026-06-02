@@ -1,4 +1,4 @@
-name: Build Debian Package
+name: Build RPM and Debian Packages
 
 on:
   push:
@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   build-deb:
+    name: Build Debian Package
     runs-on: ubuntu-latest
     
     steps:
@@ -73,20 +74,120 @@ jobs:
           echo "file=$DEB_FILE" >> $GITHUB_OUTPUT
           echo "name=$DEB_NAME" >> $GITHUB_OUTPUT
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ steps.package.outputs.file }}
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: debian-package-${{ steps.version.outputs.version }}
           path: ../*.deb
           retention-days: 30
+
+  build-rpm:
+    name: Build RPM Package
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.2'
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Install RPM build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+
+      - name: Create RPM build structure
+        run: |
+          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+          
+      - name: Update spec file version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i "s/^Version:.*/Version:        ${VERSION}/" image-build.spec
+          cat image-build.spec
+
+      - name: Create source tarball
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p image-build-${VERSION}
+          cp -r * image-build-${VERSION}/ 2>/dev/null || true
+          tar czf ~/rpmbuild/SOURCES/image-build-${VERSION}.tar.gz image-build-${VERSION}
+          cp image-build.spec ~/rpmbuild/SPECS/
+
+      - name: Build RPM package
+        run: |
+          rpmbuild -bb ~/rpmbuild/SPECS/image-build.spec
+
+      - name: List generated packages
+        run: |
+          ls -lh ~/rpmbuild/RPMS/*/*.rpm
+
+      - name: Get package filename
+        id: package
+        run: |
+          RPM_FILE=$(find ~/rpmbuild/RPMS -name "*.rpm" -type f | head -n 1)
+          RPM_NAME=$(basename "$RPM_FILE")
+          echo "file=$RPM_FILE" >> $GITHUB_OUTPUT
+          echo "name=$RPM_NAME" >> $GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-package-${{ steps.version.outputs.version }}
+          path: ~/rpmbuild/RPMS/*/*.rpm
+          retention-days: 30
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-deb, build-rpm]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download Debian package
+        uses: actions/download-artifact@v4
+        with:
+          name: debian-package-${{ steps.version.outputs.version }}
+          path: ./packages
+
+      - name: Download RPM package
+        uses: actions/download-artifact@v4
+        with:
+          name: rpm-package-${{ steps.version.outputs.version }}
+          path: ./packages
+
+      - name: List all packages
+        run: |
+          ls -lhR ./packages
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./packages/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
