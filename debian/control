@@ -1,0 +1,35 @@
+Source: image-build
+Section: admin
+Priority: optional
+Maintainer: Travis Cotton <travis@example.com>
+Build-Depends: debhelper-compat (= 13),
+               dh-golang,
+               golang-go (>= 2:1.26~)
+Standards-Version: 4.6.2
+Homepage: https://github.com/travisbcotton/image-build
+Vcs-Browser: https://github.com/travisbcotton/image-build
+Vcs-Git: https://github.com/travisbcotton/image-build.git
+Rules-Requires-Root: no
+
+Package: image-build
+Architecture: any
+Depends: ${shlibs:Depends},
+         ${misc:Depends},
+         buildah,
+         libgpgme-dev,
+         libbtrfs-dev,
+         libdevmapper-dev
+Recommends: squashfs-tools
+Suggests: podman
+Description: Go-based image builder wrapping buildah
+ A Go-based image builder that wraps buildah to create layered OS images
+ with multiple package manager support. This is the next-generation
+ replacement for the Python-based image-builder tool used by OpenCHAMI.
+ .
+ Features:
+  - Multiple Package Managers: Support for DNF, Zypper, APT and mmdebstrap
+  - Scratch & Parent Builds: Build from scratch or layer on top of existing images
+  - Flexible Configuration: YAML-based declarative configuration
+  - Multiple Publishers: Local container storage, SquashFS, Container Registry, S3
+  - Structured Logging: JSON and text logging formats with configurable levels
+  - Config Validation: Validate configurations without building

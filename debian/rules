@@ -1,0 +1,21 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+export DH_GOLANG_INSTALL_EXTRA := tests
+export DH_GOLANG_EXCLUDES := tests
+
+%:
+	dh $@ --buildsystem=golang --with=golang
+
+override_dh_auto_build:
+	go build -v -o image-build ./cmd/image-build
+
+override_dh_auto_install:
+	install -D -m 0755 image-build debian/image-build/usr/bin/image-build
+
+override_dh_auto_test:
+	# Skip tests during package build as they require Linux-specific dependencies
+	# and container runtime environment

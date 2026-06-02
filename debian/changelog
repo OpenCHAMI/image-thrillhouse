@@ -1,0 +1,15 @@
+image-build (0.1.0-1) unstable; urgency=medium
+
+  * Initial release
+  * Go-based image builder wrapping buildah
+  * Support for multiple package managers (DNF, Zypper, APT, mmdebstrap)
+  * Support for scratch and parent builds
+  * YAML-based declarative configuration
+  * Multiple publishers: local, SquashFS, container registry, S3
+  * Structured logging with JSON and text formats
+  * Configuration validation
+  * OpenSCAP security scanning support
+  * Package removal support for minimal images
+  * GPG key import for repositories
+
+ -- Travis Cotton <travis@example.com>  Tue, 02 Jun 2026 00:00:00 +0000
