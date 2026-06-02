@@ -27,15 +27,18 @@ func New(path string) *SquashfsPublisher {
 	return &SquashfsPublisher{path: path}
 }
 
-// Publish creates a SquashFS image for each configured tag.
+// Publish creates a single SquashFS image from the container filesystem.
 //
-// Each tag produces a file named "<name>-<tag>.squashfs" inside s.path —
-// previously the publisher hard-coded "rootfs", which silently clobbered
-// the file on every build and ignored both name and tag.
+// The output file is named "<name>-<tags[0]>.squashfs" inside s.path. The
+// SquashFS bytes are derived purely from the container mount, so running
+// mksquashfs once per tag would produce N identical files differing only
+// in filename — wasteful disk and IO with no observable benefit. We
+// instead write a single file named after the first ("primary") tag,
+// matching the S3 publisher's convention of using tags[0] as the rootfs
+// identifier.
 //
-// The source filesystem (the buildah mount path) does not change between
-// tags, so the image content is identical; we still write one file per tag
-// so callers can refer to a specific version without renaming.
+// Previously the publisher hard-coded "rootfs", which silently clobbered
+// the file on every build and ignored both name and tag entirely.
 //
 // Note: Labels are not embedded in SquashFS files as they are filesystem
 // images, not OCI container images. Labels are only relevant for container
@@ -57,31 +60,34 @@ func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, 
 		return fmt.Errorf("mksquashfs not found: install squashfs-tools")
 	}
 
+	// Config validation requires at least one tag, but be defensive in case
+	// this publisher is invoked directly.
 	if len(tags) == 0 {
-		// Defensive — config validation already requires non-empty tags, but
-		// in case a publisher is invoked directly we still want a stable
-		// filename rather than overwriting "rootfs".
-		tags = []string{"latest"}
+		return fmt.Errorf("squashfs publisher requires at least one tag")
 	}
 
-	for _, tag := range tags {
-		output := filepath.Join(s.path, fmt.Sprintf("%s-%s.squashfs", name, tag))
-		log.Info("Creating squashfs", "squashfs", output, "source", c.MountPath())
-
-		// `-e <patterns…>` must come last; excludes transient host mounts
-		// that can show through the buildah overlay while the container is
-		// still mounted.
-		cmd := exec.CommandContext(ctx, "mksquashfs", c.MountPath(), output,
-			"-noappend", "-no-progress",
-			"-e", "proc", "sys", "dev", "run")
-		cmd.Stdout = nil       // Suppress stdout
-		cmd.Stderr = os.Stderr // Show errors
-
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("mksquashfs %s: %w", output, err)
-		}
-
-		log.Info("Published squashfs", "squashfs", output)
+	primary := tags[0]
+	output := filepath.Join(s.path, fmt.Sprintf("%s-%s.squashfs", name, primary))
+	if len(tags) > 1 {
+		log.Info("multiple tags configured; squashfs uses the first tag for the filename",
+			"primary", primary, "ignored_tags", tags[1:])
 	}
+
+	log.Info("Creating squashfs", "squashfs", output, "source", c.MountPath())
+
+	// `-e <patterns…>` must come last; excludes transient host mounts that
+	// can show through the buildah overlay while the container is still
+	// mounted.
+	cmd := exec.CommandContext(ctx, "mksquashfs", c.MountPath(), output,
+		"-noappend", "-no-progress",
+		"-e", "proc", "sys", "dev", "run")
+	cmd.Stdout = nil       // Suppress stdout
+	cmd.Stderr = os.Stderr // Show errors
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("mksquashfs %s: %w", output, err)
+	}
+
+	log.Info("Published squashfs", "squashfs", output)
 	return nil
 }
