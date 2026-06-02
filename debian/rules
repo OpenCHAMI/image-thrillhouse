@@ -19,3 +19,7 @@ override_dh_auto_test:
 
 override_dh_auto_clean:
 	rm -f image-build
+
+override_dh_dwz:
+	# Skip dwz debug symbol compression - Go binaries have compressed debug sections
+	# that are incompatible with dwz
