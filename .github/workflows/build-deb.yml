@@ -68,10 +68,16 @@ jobs:
         run: |
           ls -lh ../*.deb
 
+      - name: Move packages to workspace
+        run: |
+          mkdir -p ./packages
+          mv ../*.deb ./packages/
+          ls -lh ./packages/
+
       - name: Get package filename
         id: package
         run: |
-          DEB_FILE=$(ls ../*.deb | head -n 1)
+          DEB_FILE=$(ls ./packages/*.deb | head -n 1)
           DEB_NAME=$(basename "$DEB_FILE")
           echo "file=$DEB_FILE" >> $GITHUB_OUTPUT
           echo "name=$DEB_NAME" >> $GITHUB_OUTPUT
@@ -80,7 +86,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: debian-package-${{ steps.version.outputs.version }}
-          path: ../*.deb
+          path: ./packages/*.deb
           retention-days: 30
 
   build-rpm:
