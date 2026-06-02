@@ -383,11 +383,21 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 			if err != nil {
 				// Try to extract exit code from error
 				exitCode := extractExitCode(err)
+				log.Debug("install command exited non-zero",
+					"exitCode", exitCode, "backend", b.cfg.Layer.Manager.Name, "cmd", cmd)
 				if exitCode > 0 && b.backend.IsAcceptableExitCode(exitCode, out.String()) {
 					log.Warn("Command returned non-zero exit code but packages were installed successfully",
 						"exitCode", exitCode, "cmd", cmd)
 					// Treat as success
 					continue
+				}
+				if exitCode == -1 {
+					// Diagnostic for the case where the error chain doesn't
+					// contain an *exec.ExitError — the acceptable-exit-code
+					// check can't even run, so a backend that *would* tolerate
+					// this code silently won't get the chance.
+					log.Warn("could not determine exit code from error; acceptable-exit-code checks skipped",
+						"err", err)
 				}
 				return fmt.Errorf("run root %v: %w", cmd, err)
 			}
