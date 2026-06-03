@@ -1,0 +1,31 @@
+# openSUSE Leap multi-arch manifest.
+#
+# Same shape as rocky-multiarch.yaml but exercises the zypper backend.
+# Each arch reuses tests/zypper/templates/suse-base.yaml /
+# suse-compute.yaml; the per-arch repo base URL is supplied by the
+# x86_64.yaml / aarch64.yaml var files (openSUSE serves aarch64 from a
+# "ports/" prefix, which is why the templates read .repobase from vars
+# instead of hard-coding).
+layers:
+  - name: suse-base-x86_64
+    config: tests/zypper/templates/suse-base.yaml
+    var_files:
+      - tests/zypper/templates/x86_64.yaml
+    depends_on: []
+  - name: suse-base-aarch64
+    config: tests/zypper/templates/suse-base.yaml
+    var_files:
+      - tests/zypper/templates/aarch64.yaml
+    depends_on: []
+  - name: suse-compute-x86_64
+    config: tests/zypper/templates/suse-compute.yaml
+    var_files:
+      - tests/zypper/templates/x86_64.yaml
+    depends_on:
+      - suse-base-x86_64
+  - name: suse-compute-aarch64
+    config: tests/zypper/templates/suse-compute.yaml
+    var_files:
+      - tests/zypper/templates/aarch64.yaml
+    depends_on:
+      - suse-base-aarch64

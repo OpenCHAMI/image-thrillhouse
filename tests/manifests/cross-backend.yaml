@@ -1,0 +1,46 @@
+# Cross-backend manifest.
+#
+# A single manifest can mix backends — there's nothing tying a DAG to one
+# package manager. Here we have three independent roots (apt/mmdebstrap,
+# dnf, zypper), each with its own compute layer on top. build-all walks
+# them all in topological order; --skip-if-exists makes re-runs cheap.
+#
+# Useful for sanity-checking that:
+#   - the manifest loader is backend-agnostic
+#   - layer iteration order respects independent subtrees
+#   - per-layer Exists checks work for each publisher type configured
+#     (each template here ends in `publish: - type: local`)
+layers:
+  - name: bookworm-base
+    config: tests/debian/templates/bookworm-base.yaml
+    var_files:
+      - tests/debian/templates/vars.yaml
+    depends_on: []
+  - name: rocky-base
+    config: tests/rocky/templates/rocky-base.yaml
+    var_files:
+      - tests/rocky/templates/x86_64.yaml
+    depends_on: []
+  - name: suse-base
+    config: tests/zypper/templates/suse-base.yaml
+    var_files:
+      - tests/zypper/templates/x86_64.yaml
+    depends_on: []
+  - name: bookworm-compute
+    config: tests/debian/templates/bookworm-compute.yaml
+    var_files:
+      - tests/debian/templates/vars.yaml
+    depends_on:
+      - bookworm-base
+  - name: rocky-compute
+    config: tests/rocky/templates/rocky-compute.yaml
+    var_files:
+      - tests/rocky/templates/x86_64.yaml
+    depends_on:
+      - rocky-base
+  - name: suse-compute
+    config: tests/zypper/templates/suse-compute.yaml
+    var_files:
+      - tests/zypper/templates/x86_64.yaml
+    depends_on:
+      - suse-base

@@ -1,0 +1,4 @@
+leap_version: "15.6"
+arch: aarch64
+reposdir: /etc/zypp/repos.d
+repobase: https://download.opensuse.org/ports/aarch64

@@ -1,0 +1,40 @@
+meta:
+  name: suse-base
+  tags:
+    - "{{ .tag }}"
+  from: scratch
+
+layer:
+  manager:
+    name: zypper
+    config: |
+      [main]
+      solver.onlyRequires = true
+      rpm.install.excludedocs = no
+    options:
+      no-gpg-checks: "true"
+      no-recommends: "true"
+  repos:
+    - path: {{ .reposdir }}/opensuse-oss.repo
+      content: |
+        [opensuse-oss]
+        name=openSUSE Leap {{ .leap_version }} OSS
+        baseurl={{ .repobase }}/distribution/leap/{{ .leap_version }}/repo/oss/
+        enabled=1
+        gpgcheck=0
+    - path: {{ .reposdir }}/opensuse-update.repo
+      content: |
+        [opensuse-update]
+        name=openSUSE Leap {{ .leap_version }} Update
+        baseurl={{ .repobase }}/update/leap/{{ .leap_version }}/oss/
+        enabled=1
+        gpgcheck=0
+  actions:
+    install:
+      packages:
+        - bash
+        - systemd
+        - coreutils
+
+publish:
+  - type: local
