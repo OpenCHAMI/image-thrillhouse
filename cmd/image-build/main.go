@@ -67,6 +67,31 @@ The configuration defines:
 	RunE: runBuild,
 }
 
+// buildAllCmd builds every layer in a manifest in topological order.
+//
+// With just --manifest, the whole manifest is built. With --manifest and
+// --layer, only the named layer and its transitive ancestors are built
+// (i.e. its subtree of the DAG), so you can target a leaf without dragging
+// in unrelated branches.
+//
+// Combined with --skip-if-exists, already-published parents short-circuit
+// the per-layer Exists check, so re-running the same command is a fast
+// no-op when nothing has changed.
+//
+// On the first layer that fails, the run aborts immediately (fail-fast).
+var buildAllCmd = &cobra.Command{
+	Use:   "build-all",
+	Short: "Build every layer of a manifest in topological order",
+	Long: `Build every layer of a manifest in dependency order.
+
+Pass --manifest to build the entire manifest. Pass --manifest with --layer
+to build only the named layer and its transitive ancestors. Combine with
+--skip-if-exists to skip layers whose images are already published.
+
+The run stops at the first failing layer.`,
+	RunE: runBuildAll,
+}
+
 // validateCmd validates a configuration file without actually building the image.
 // This is useful for CI/CD pipelines and quick syntax checking.
 var validateCmd = &cobra.Command{
@@ -238,6 +263,13 @@ func init() {
 	buildCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 	buildCmd.Flags().BoolVar(&skipIfExists, "skip-if-exists", false, "skip the build when all publishers report the image already exists")
 
+	// build-all-specific flags
+	buildAllCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file (required)")
+	buildAllCmd.Flags().StringVar(&layerName, "layer", "", "build only this layer and its transitive ancestors (default: build all)")
+	buildAllCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
+	buildAllCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
+	buildAllCmd.Flags().BoolVar(&skipIfExists, "skip-if-exists", false, "skip layers whose publishers report the image already exists")
+
 	// Validate-specific flags
 	validateCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
 	validateCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
@@ -251,6 +283,7 @@ func init() {
 
 	// Register all subcommands under the root command
 	rootCmd.AddCommand(buildCmd)
+	rootCmd.AddCommand(buildAllCmd)
 	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(renderCmd)
 	rootCmd.AddCommand(versionCmd)
@@ -287,77 +320,185 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	// Always load vars (possibly empty). Templating is supported in both
 	// single-config and manifest modes.
-	mergedVars, err := config.LoadVars([]string{varFile}, vars)
+	cliVars, err := config.LoadVars([]string{varFile}, vars)
 	if err != nil {
 		return fmt.Errorf("load vars: %w", err)
 	}
 
-	// In manifest mode, locate the requested layer in the DAG, merge in the
-	// layer's own var files, and inject a deterministic computed tag derived
-	// from the hashed (raw) config + vars.
-	configPath := cfgPath
+	// Manifest mode: delegate to the shared per-layer builder so build and
+	// build-all share exactly the same per-layer behaviour.
 	if manifestPath != "" {
-		m, err := manifest.Load(manifestPath)
+		dag, err := loadDAG(manifestPath)
 		if err != nil {
-			return fmt.Errorf("load manifest: %w", err)
+			return err
 		}
-
-		dag, err := manifest.NewDAG(m)
-		if err != nil {
-			return fmt.Errorf("build dag: %w", err)
-		}
-
 		layer, err := dag.Get(layerName)
 		if err != nil {
 			return fmt.Errorf("get layer: %w", err)
 		}
-
-		// CLI-supplied var files (used by ComputeBuildVars when hashing the
-		// raw template).
-		globalVarFiles := []string{}
-		if varFile != "" {
-			globalVarFiles = append(globalVarFiles, varFile)
-		}
-
-		// Load layer-specific var files and merge under the CLI vars. Layer
-		// var files have lower priority than CLI vars.
-		layerVars, err := config.LoadVars(layer.VarFiles, nil)
-		if err != nil {
-			return fmt.Errorf("load layer vars: %w", err)
-		}
-		mergedVars = config.MergeVars(layerVars, mergedVars)
-
-		// Compute deterministic tags for this layer and all its parents, then
-		// inject them into the vars so the template can reference parent tags.
-		buildVars, err := manifest.ComputeBuildVars(dag, layerName, globalVarFiles)
-		if err != nil {
-			return fmt.Errorf("compute build vars: %w", err)
-		}
-		mergedVars = config.MergeVars(mergedVars, buildVars)
-
-		configPath = layer.Config
+		return buildLayer(ctx, dag, layer, cliVars, cliGlobalVarFiles(), skipIfExists)
 	}
 
-	// Load and render the configuration with the merged vars (vars may be
-	// empty when neither --var nor --var-file was provided).
-	cfg, err := config.LoadConfigWithVars(configPath, mergedVars)
+	// Single-config mode: no DAG, no tag injection, just render and build.
+	cfg, err := config.LoadConfigWithVars(cfgPath, cliVars)
 	if err != nil {
 		return err
 	}
 
-	// Create the package manager backend (dnf, zypper, apt, etc.)
 	b, err := newBackend(cfg.Layer.Manager)
 	if err != nil {
 		return fmt.Errorf("backend: %w", err)
 	}
 
-	// Create publishers (local, squashfs, registry, s3, etc.)
 	p, err := newPublishers(cfg.Publish)
 	if err != nil {
 		return fmt.Errorf("publishers: %w", err)
 	}
 
-	// Create the builder and execute the build
+	bldr := builder.New(ctx, cfg, b, p)
+	bldr.SetSkipIfExists(skipIfExists)
+	return bldr.Build(ctx)
+}
+
+// runBuildAll iterates a manifest in topological order and builds each layer
+// with the same per-layer code path runBuild uses in manifest mode. When
+// --layer is provided, the iteration is narrowed to that layer's transitive
+// ancestor subtree (the layer plus everything it depends on).
+//
+// Fails fast on the first layer error.
+func runBuildAll(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+
+	if err := setupLogger(logLevel, logFormat); err != nil {
+		return err
+	}
+	if manifestPath == "" {
+		return fmt.Errorf("--manifest is required for build-all")
+	}
+
+	cliVars, err := config.LoadVars([]string{varFile}, vars)
+	if err != nil {
+		return fmt.Errorf("load vars: %w", err)
+	}
+
+	dag, err := loadDAG(manifestPath)
+	if err != nil {
+		return err
+	}
+
+	order, err := buildOrder(dag, layerName)
+	if err != nil {
+		return err
+	}
+
+	globalVarFiles := cliGlobalVarFiles()
+	log := slog.With("component", "build-all")
+	log.Info("building layers in order",
+		"count", len(order),
+		"order", layerNames(order),
+		"skip_if_exists", skipIfExists)
+
+	for _, layer := range order {
+		if err := buildLayer(ctx, dag, layer, cliVars, globalVarFiles, skipIfExists); err != nil {
+			return fmt.Errorf("layer %s: %w", layer.Name, err)
+		}
+	}
+	return nil
+}
+
+// loadDAG is a thin wrapper that loads a manifest and constructs its DAG,
+// surfacing both error stages with consistent prefixes.
+func loadDAG(path string) (*manifest.DAG, error) {
+	m, err := manifest.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("load manifest: %w", err)
+	}
+	dag, err := manifest.NewDAG(m)
+	if err != nil {
+		return nil, fmt.Errorf("build dag: %w", err)
+	}
+	return dag, nil
+}
+
+// buildOrder returns the layers to build, in dependency order. When target is
+// empty, every layer in the DAG is returned; otherwise only target and its
+// transitive ancestors are returned, still in dependency order (root first).
+func buildOrder(dag *manifest.DAG, target string) ([]*manifest.Layer, error) {
+	if target == "" {
+		return dag.TopologicalSort()
+	}
+	ancestors, err := dag.Ancestors(target)
+	if err != nil {
+		return nil, fmt.Errorf("ancestors of %s: %w", target, err)
+	}
+	leaf, err := dag.Get(target)
+	if err != nil {
+		return nil, fmt.Errorf("get layer %s: %w", target, err)
+	}
+	return append(ancestors, leaf), nil
+}
+
+// layerNames is a small helper for logging — pulls just the names from a
+// slice of layers so structured logs stay readable.
+func layerNames(layers []*manifest.Layer) []string {
+	out := make([]string, len(layers))
+	for i, l := range layers {
+		out[i] = l.Name
+	}
+	return out
+}
+
+// cliGlobalVarFiles returns the CLI-supplied --var-file as a slice (or empty
+// when the flag wasn't given), in the shape ComputeBuildVars expects.
+func cliGlobalVarFiles() []string {
+	if varFile == "" {
+		return nil
+	}
+	return []string{varFile}
+}
+
+// buildLayer runs the full per-layer pipeline for a single manifest layer:
+// load layer-specific vars, inject computed tags, render+validate config,
+// construct backend and publishers, and run the build. Used by both runBuild
+// (manifest mode) and runBuildAll, so behaviour stays in lockstep.
+func buildLayer(
+	ctx context.Context,
+	dag *manifest.DAG,
+	layer *manifest.Layer,
+	cliVars map[string]interface{},
+	globalVarFiles []string,
+	skipIfExists bool,
+) error {
+	// Load layer-specific var files (lower priority than CLI vars).
+	layerVars, err := config.LoadVars(layer.VarFiles, nil)
+	if err != nil {
+		return fmt.Errorf("load layer vars: %w", err)
+	}
+	mergedVars := config.MergeVars(layerVars, cliVars)
+
+	// Inject computed tags (this layer + each direct parent) so templates
+	// can reference parent images by their deterministic tags.
+	buildVars, err := manifest.ComputeBuildVars(dag, layer.Name, globalVarFiles)
+	if err != nil {
+		return fmt.Errorf("compute build vars: %w", err)
+	}
+	mergedVars = config.MergeVars(mergedVars, buildVars)
+
+	cfg, err := config.LoadConfigWithVars(layer.Config, mergedVars)
+	if err != nil {
+		return err
+	}
+
+	b, err := newBackend(cfg.Layer.Manager)
+	if err != nil {
+		return fmt.Errorf("backend: %w", err)
+	}
+
+	p, err := newPublishers(cfg.Publish)
+	if err != nil {
+		return fmt.Errorf("publishers: %w", err)
+	}
+
 	bldr := builder.New(ctx, cfg, b, p)
 	bldr.SetSkipIfExists(skipIfExists)
 	return bldr.Build(ctx)
