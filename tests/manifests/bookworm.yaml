@@ -1,12 +1,14 @@
+# Debian bookworm manifest: mmdebstrap scratch -> apt compute. Paths are
+# relative to this file's directory (resolved by manifest.Load).
 layers:
-  - config: /data/debian/templates/bookworm-base.yaml
-    name: bookworm-base
+  - name: bookworm-base
+    config: ../debian/templates/bookworm-base.yaml
     var_files:
-      - /data/debian/templates/vars.yaml
+      - ../debian/templates/vars.yaml
     depends_on: []
-  - config: /data/debian/templates/bookworm-compute.yaml
-    name: bookworm-compute
+  - name: bookworm-compute
+    config: ../debian/templates/bookworm-compute.yaml
     var_files:
-      - /data/debian/templates/vars.yaml
+      - ../debian/templates/vars.yaml
     depends_on:
       - bookworm-base

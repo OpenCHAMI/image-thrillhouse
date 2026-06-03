@@ -1,12 +1,15 @@
+# Rocky single-arch manifest (x86_64). The simplest non-trivial DAG: one
+# base, one compute layer that depends on it. Paths are relative to this
+# file's directory — manifest.Load resolves them against tests/manifests/.
 layers:
-  - config: /data/rocky/templates/rocky-base.yaml
-    name: rocky-base
+  - name: rocky-base
+    config: ../rocky/templates/rocky-base.yaml
     var_files:
-      - /data/rocky/templates/aarch64.yaml
+      - ../rocky/templates/x86_64.yaml
     depends_on: []
-  - config: /data/rocky/templates/rocky-compute.yaml
-    name: rocky-compute
+  - name: rocky-compute
+    config: ../rocky/templates/rocky-compute.yaml
     var_files:
-      - /data/rocky/templates/aarch64.yaml
+      - ../rocky/templates/x86_64.yaml
     depends_on:
       - rocky-base

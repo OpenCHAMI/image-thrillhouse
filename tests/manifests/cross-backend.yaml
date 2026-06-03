@@ -12,35 +12,35 @@
 #     (each template here ends in `publish: - type: local`)
 layers:
   - name: bookworm-base
-    config: tests/debian/templates/bookworm-base.yaml
+    config: ../debian/templates/bookworm-base.yaml
     var_files:
-      - tests/debian/templates/vars.yaml
+      - ../debian/templates/vars.yaml
     depends_on: []
   - name: rocky-base
-    config: tests/rocky/templates/rocky-base.yaml
+    config: ../rocky/templates/rocky-base.yaml
     var_files:
-      - tests/rocky/templates/x86_64.yaml
+      - ../rocky/templates/x86_64.yaml
     depends_on: []
   - name: suse-base
-    config: tests/zypper/templates/suse-base.yaml
+    config: ../zypper/templates/suse-base.yaml
     var_files:
-      - tests/zypper/templates/x86_64.yaml
+      - ../zypper/templates/x86_64.yaml
     depends_on: []
   - name: bookworm-compute
-    config: tests/debian/templates/bookworm-compute.yaml
+    config: ../debian/templates/bookworm-compute.yaml
     var_files:
-      - tests/debian/templates/vars.yaml
+      - ../debian/templates/vars.yaml
     depends_on:
       - bookworm-base
   - name: rocky-compute
-    config: tests/rocky/templates/rocky-compute.yaml
+    config: ../rocky/templates/rocky-compute.yaml
     var_files:
-      - tests/rocky/templates/x86_64.yaml
+      - ../rocky/templates/x86_64.yaml
     depends_on:
       - rocky-base
   - name: suse-compute
-    config: tests/zypper/templates/suse-compute.yaml
+    config: ../zypper/templates/suse-compute.yaml
     var_files:
-      - tests/zypper/templates/x86_64.yaml
+      - ../zypper/templates/x86_64.yaml
     depends_on:
       - suse-base

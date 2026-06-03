@@ -1,6 +1,6 @@
 # Rocky multi-arch manifest.
 #
-# Demonstrates how a single template (tests/rocky/templates/rocky-base.yaml,
+# Demonstrates how a single template (../rocky/templates/rocky-base.yaml,
 # rocky-compute.yaml) can be instantiated per-arch by giving each layer a
 # distinct name and a distinct var file. The template's hard-coded image
 # name ("rocky-base", "rocky-compute") is reused across arches; the
@@ -14,24 +14,24 @@
 #     --layer rocky-compute-aarch64
 layers:
   - name: rocky-base-x86_64
-    config: tests/rocky/templates/rocky-base.yaml
+    config: ../rocky/templates/rocky-base.yaml
     var_files:
-      - tests/rocky/templates/x86_64.yaml
+      - ../rocky/templates/x86_64.yaml
     depends_on: []
   - name: rocky-base-aarch64
-    config: tests/rocky/templates/rocky-base.yaml
+    config: ../rocky/templates/rocky-base.yaml
     var_files:
-      - tests/rocky/templates/aarch64.yaml
+      - ../rocky/templates/aarch64.yaml
     depends_on: []
   - name: rocky-compute-x86_64
-    config: tests/rocky/templates/rocky-compute.yaml
+    config: ../rocky/templates/rocky-compute.yaml
     var_files:
-      - tests/rocky/templates/x86_64.yaml
+      - ../rocky/templates/x86_64.yaml
     depends_on:
       - rocky-base-x86_64
   - name: rocky-compute-aarch64
-    config: tests/rocky/templates/rocky-compute.yaml
+    config: ../rocky/templates/rocky-compute.yaml
     var_files:
-      - tests/rocky/templates/aarch64.yaml
+      - ../rocky/templates/aarch64.yaml
     depends_on:
       - rocky-base-aarch64
