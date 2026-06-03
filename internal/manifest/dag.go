@@ -156,18 +156,18 @@ func combineVarFiles(globals, layerSpecific []string) []string {
 
 // ComputeBuildVars returns the template variables that should be injected when
 // rendering layerName's config in a manifest build. It always injects a "tag"
-// key (the layer's computed hash) and a "<dep>_tag" key for every direct
-// dependency, so child templates can reference parents by their deterministic
-// tag — e.g. `from: localhost/rocky-base:{{ .rocky_base_tag }}`.
+// key (the layer's computed hash) and a "<ancestor>_tag" key for every
+// TRANSITIVE ancestor, so child templates can reference any layer up-chain by
+// its deterministic tag — e.g. a grandchild can use
+// `from: localhost/grandparent:{{ .grandparent_tag }}` without needing the
+// intermediate layer to forward it.
+//
+// Ancestor variable names are derived by replacing "-" with "_" in the layer
+// name and appending "_tag" (so "rocky-base" becomes "rocky_base_tag").
 //
 // globalVarFiles must be only the CLI-level globals; layer var files are
 // applied inside ComputeTag.
 func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string) (map[string]interface{}, error) {
-	layer, err := dag.Get(layerName)
-	if err != nil {
-		return nil, fmt.Errorf("get layer: %w", err)
-	}
-
 	vars := make(map[string]interface{})
 
 	layerTag, err := dag.ComputeTag(layerName, globalVarFiles)
@@ -177,15 +177,19 @@ func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string) (map[
 	vars["tag"] = layerTag
 	slog.Info("computed tag", "layer", layerName, "tag", layerTag)
 
-	for _, depName := range layer.DependsOn {
-		depTag, err := dag.ComputeTag(depName, globalVarFiles)
+	ancestors, err := dag.Ancestors(layerName)
+	if err != nil {
+		return nil, fmt.Errorf("ancestors: %w", err)
+	}
+	for _, ancestor := range ancestors {
+		ancestorTag, err := dag.ComputeTag(ancestor.Name, globalVarFiles)
 		if err != nil {
-			return nil, fmt.Errorf("compute tag for dep %s: %w", depName, err)
+			return nil, fmt.Errorf("compute tag for ancestor %s: %w", ancestor.Name, err)
 		}
 
-		varName := strings.ReplaceAll(depName, "-", "_") + "_tag"
-		vars[varName] = depTag
-		slog.Debug("computed parent tag", "layer", depName, "var", varName, "tag", depTag)
+		varName := strings.ReplaceAll(ancestor.Name, "-", "_") + "_tag"
+		vars[varName] = ancestorTag
+		slog.Debug("computed ancestor tag", "layer", ancestor.Name, "var", varName, "tag", ancestorTag)
 	}
 
 	return vars, nil

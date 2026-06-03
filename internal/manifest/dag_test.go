@@ -357,3 +357,54 @@ func TestComputeTag_LayerStableAsDep(t *testing.T) {
 			standaloneTag, afterEdit)
 	}
 }
+
+// TestComputeBuildVars_TransitiveAncestors verifies that a deep child (here
+// "grandchild") gets a *_tag entry for every transitive ancestor, not just
+// its direct parent. Without this, a grandchild template couldn't reference
+// `{{ .grandparent_tag }}` without forwarding the value through the
+// intermediate layer.
+func TestComputeBuildVars_TransitiveAncestors(t *testing.T) {
+	dir := t.TempDir()
+	gpCfg := writeConfig(t, dir, "gp.yaml", minimalConfig)
+	pCfg := writeConfig(t, dir, "p.yaml", minimalConfig)
+	cCfg := writeConfig(t, dir, "c.yaml", minimalConfig)
+
+	m := &Manifest{
+		Layers: []Layer{
+			{Name: "grandparent", Config: gpCfg},
+			{Name: "parent", Config: pCfg, DependsOn: []string{"grandparent"}},
+			{Name: "grandchild", Config: cCfg, DependsOn: []string{"parent"}},
+		},
+	}
+	dag, err := NewDAG(m)
+	if err != nil {
+		t.Fatalf("dag: %v", err)
+	}
+
+	vars, err := ComputeBuildVars(dag, "grandchild", nil)
+	if err != nil {
+		t.Fatalf("compute build vars: %v", err)
+	}
+
+	for _, key := range []string{"tag", "parent_tag", "grandparent_tag"} {
+		v, ok := vars[key]
+		if !ok {
+			t.Errorf("missing var %q", key)
+			continue
+		}
+		if s, ok := v.(string); !ok || s == "" {
+			t.Errorf("var %q has empty/non-string value: %v", key, v)
+		}
+	}
+
+	// Sanity: the injected ancestor tag must agree with what ComputeTag
+	// returns standalone — guards against the ComputeBuildVars helper
+	// quietly re-deriving the tag a different way.
+	want, err := dag.ComputeTag("grandparent", nil)
+	if err != nil {
+		t.Fatalf("compute grandparent: %v", err)
+	}
+	if got := vars["grandparent_tag"]; got != want {
+		t.Errorf("grandparent_tag mismatch:\n  injected   = %v\n  standalone = %v", got, want)
+	}
+}
