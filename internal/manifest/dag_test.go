@@ -214,8 +214,8 @@ func TestGet_Unknown(t *testing.T) {
 func TestComputeTag_Deterministic(t *testing.T) {
 	m := &Manifest{
 		Layers: []Layer{
-			{Name: "rocky-base", Config: "../../tests/rocky/rocky-base-aarch64.yaml", DependsOn: []string{}},
-			{Name: "rocky-compute", Config: "../../tests/rocky/rocky-compute-aarch64.yaml", DependsOn: []string{"rocky-base"}},
+			{Name: "rocky-base", Config: "../../tests/rocky/static/rocky-base-aarch64.yaml", DependsOn: []string{}},
+			{Name: "rocky-compute", Config: "../../tests/rocky/static/rocky-compute-aarch64.yaml", DependsOn: []string{"rocky-base"}},
 		},
 	}
 
@@ -243,8 +243,8 @@ func TestComputeTag_Deterministic(t *testing.T) {
 func TestComputeTag_ChangesWithContent(t *testing.T) {
 	m := &Manifest{
 		Layers: []Layer{
-			{Name: "rocky-base", Config: "../../tests/rocky/rocky-base-aarch64.yaml", DependsOn: []string{}},
-			{Name: "rocky-compute", Config: "../../tests/rocky/rocky-compute-aarch64.yaml", DependsOn: []string{"rocky-base"}},
+			{Name: "rocky-base", Config: "../../tests/rocky/static/rocky-base-aarch64.yaml", DependsOn: []string{}},
+			{Name: "rocky-compute", Config: "../../tests/rocky/static/rocky-compute-aarch64.yaml", DependsOn: []string{"rocky-base"}},
 		},
 	}
 
@@ -271,14 +271,14 @@ func TestComputeTag_ParentAffectsChild(t *testing.T) {
 	// if we compute compute's tag without parent vs with parent they should differ
 	m1 := &Manifest{
 		Layers: []Layer{
-			{Name: "rocky-compute", Config: "../../tests/rocky/rocky-compute-aarch64.yaml", DependsOn: []string{}},
+			{Name: "rocky-compute", Config: "../../tests/rocky/static/rocky-compute-aarch64.yaml", DependsOn: []string{}},
 		},
 	}
 
 	m2 := &Manifest{
 		Layers: []Layer{
-			{Name: "rocky-base", Config: "../../tests/rocky/rocky-base-aarch64.yaml", DependsOn: []string{}},
-			{Name: "rocky-compute", Config: "../../tests/rocky/rocky-compute-aarch64.yaml", DependsOn: []string{"rocky-base"}},
+			{Name: "rocky-base", Config: "../../tests/rocky/static/rocky-base-aarch64.yaml", DependsOn: []string{}},
+			{Name: "rocky-compute", Config: "../../tests/rocky/static/rocky-compute-aarch64.yaml", DependsOn: []string{"rocky-base"}},
 		},
 	}
 
