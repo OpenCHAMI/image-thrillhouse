@@ -110,6 +110,13 @@ func (d *DAG) Get(name string) (*Layer, error) {
 	return layer, nil
 }
 
+// ComputeTag returns a deterministic md5 hash for the named layer.
+//
+// globalVarFiles is the set of var files that apply to *every* layer in the
+// computation (typically the CLI-supplied --var-file). Each layer's own
+// VarFiles are appended internally — callers must NOT pre-mix layer-specific
+// var files into globalVarFiles, otherwise those files would be hashed twice
+// for the layer they belong to and would leak into the hash of every ancestor.
 func (d *DAG) ComputeTag(name string, globalVarFiles []string) (string, error) {
 	ancestors, err := d.Ancestors(name)
 	if err != nil {
@@ -121,51 +128,57 @@ func (d *DAG) ComputeTag(name string, globalVarFiles []string) (string, error) {
 		return "", err
 	}
 
-	// convert ancestors to tag.LayerInput
 	ancestorInputs := make([]tag.LayerInput, len(ancestors))
 	for i, a := range ancestors {
 		ancestorInputs[i] = tag.LayerInput{
 			ConfigPath: a.Config,
-			VarFiles:   append(globalVarFiles, a.VarFiles...),
+			VarFiles:   combineVarFiles(globalVarFiles, a.VarFiles),
 		}
 	}
 
 	layerInput := tag.LayerInput{
 		ConfigPath: layer.Config,
-		VarFiles:   append(globalVarFiles, layer.VarFiles...),
+		VarFiles:   combineVarFiles(globalVarFiles, layer.VarFiles),
 	}
 
 	return tag.Compute(layerInput, ancestorInputs)
 }
 
-// in manifest package or a new internal/build package
+// combineVarFiles returns a fresh slice with globals followed by layer-specific
+// var files. A fresh slice avoids aliasing the caller's globalVarFiles backing
+// array (a naive `append(globals, ...)` can mutate it when there's spare cap).
+func combineVarFiles(globals, layerSpecific []string) []string {
+	out := make([]string, 0, len(globals)+len(layerSpecific))
+	out = append(out, globals...)
+	out = append(out, layerSpecific...)
+	return out
+}
+
+// ComputeBuildVars returns the template variables that should be injected when
+// rendering layerName's config in a manifest build. It always injects a "tag"
+// key (the layer's computed hash) and a "<dep>_tag" key for every direct
+// dependency, so child templates can reference parents by their deterministic
+// tag — e.g. `from: localhost/rocky-base:{{ .rocky_base_tag }}`.
+//
+// globalVarFiles must be only the CLI-level globals; layer var files are
+// applied inside ComputeTag.
 func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string) (map[string]interface{}, error) {
 	layer, err := dag.Get(layerName)
 	if err != nil {
 		return nil, fmt.Errorf("get layer: %w", err)
 	}
 
-	allVarFiles := append(globalVarFiles, layer.VarFiles...)
-
 	vars := make(map[string]interface{})
 
-	// compute this layer's tag
-	layerTag, err := dag.ComputeTag(layerName, allVarFiles)
+	layerTag, err := dag.ComputeTag(layerName, globalVarFiles)
 	if err != nil {
 		return nil, fmt.Errorf("compute tag for %s: %w", layerName, err)
 	}
 	vars["tag"] = layerTag
 	slog.Info("computed tag", "layer", layerName, "tag", layerTag)
 
-	// compute parent tags
 	for _, depName := range layer.DependsOn {
-		depLayer, err := dag.Get(depName)
-		if err != nil {
-			return nil, fmt.Errorf("get dep layer: %w", err)
-		}
-
-		depVarFiles := append(globalVarFiles, depLayer.VarFiles...)
-		depTag, err := dag.ComputeTag(depName, depVarFiles)
+		depTag, err := dag.ComputeTag(depName, globalVarFiles)
 		if err != nil {
 			return nil, fmt.Errorf("compute tag for dep %s: %w", depName, err)
 		}

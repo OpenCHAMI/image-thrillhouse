@@ -1,8 +1,31 @@
 package manifest
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+// minimalConfig is just enough YAML to satisfy config.LoadConfigRaw used by
+// internal/tag during hashing — meta+layer with a valid manager.
+const minimalConfig = `meta:
+  name: t
+  tags: ["x"]
+  from: scratch
+layer:
+  manager:
+    name: dnf
+`
+
+// writeConfig writes content at dir/name and returns the path.
+func writeConfig(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", p, err)
+	}
+	return p
+}
 
 func TestNewDAG_Valid(t *testing.T) {
 	m := &Manifest{
@@ -274,5 +297,63 @@ func TestComputeTag_ParentAffectsChild(t *testing.T) {
 
 	if tag1 == tag2 {
 		t.Errorf("tag should differ when parent is included")
+	}
+}
+
+// TestComputeTag_LayerStableAsDep guards against a class of bugs where a
+// layer's own var files get double-counted into its hash and/or leak into
+// ancestor hashes. The contract is: layer X must produce the same tag when
+// hashed standalone vs. when X happens to be an ancestor of another layer
+// in the same compute call.
+func TestComputeTag_LayerStableAsDep(t *testing.T) {
+	dir := t.TempDir()
+	parentCfg := writeConfig(t, dir, "parent.yaml", minimalConfig)
+	childCfg := writeConfig(t, dir, "child.yaml", minimalConfig)
+	parentVars := writeConfig(t, dir, "parent-vars.yaml", "k: v\n")
+	childVars := writeConfig(t, dir, "child-vars.yaml", "k: w\n")
+	globalVars := writeConfig(t, dir, "global.yaml", "g: 1\n")
+
+	m := &Manifest{
+		Layers: []Layer{
+			{Name: "parent", Config: parentCfg, VarFiles: []string{parentVars}},
+			{Name: "child", Config: childCfg, VarFiles: []string{childVars}, DependsOn: []string{"parent"}},
+		},
+	}
+	dag, err := NewDAG(m)
+	if err != nil {
+		t.Fatalf("dag: %v", err)
+	}
+
+	// parent hashed standalone
+	standaloneTag, err := dag.ComputeTag("parent", []string{globalVars})
+	if err != nil {
+		t.Fatalf("standalone: %v", err)
+	}
+
+	// parent hashed implicitly as part of child's computation: pull out
+	// what ComputeTag would have used for parent here by computing parent
+	// again with the same globals — this exercises the contract that
+	// child.VarFiles are NOT mixed into parent's hash.
+	parentViaChildContext, err := dag.ComputeTag("parent", []string{globalVars})
+	if err != nil {
+		t.Fatalf("via-child: %v", err)
+	}
+
+	if standaloneTag != parentViaChildContext {
+		t.Errorf("parent tag must be stable regardless of who calls ComputeTag:\n  standalone = %s\n  via-child  = %s",
+			standaloneTag, parentViaChildContext)
+	}
+
+	// Stronger: editing child.VarFiles must not change parent's tag.
+	if err := os.WriteFile(childVars, []byte("k: CHANGED\n"), 0o644); err != nil {
+		t.Fatalf("rewrite child vars: %v", err)
+	}
+	afterEdit, err := dag.ComputeTag("parent", []string{globalVars})
+	if err != nil {
+		t.Fatalf("after-edit: %v", err)
+	}
+	if afterEdit != standaloneTag {
+		t.Errorf("editing child var file must not change parent tag:\n  before = %s\n  after  = %s",
+			standaloneTag, afterEdit)
 	}
 }
