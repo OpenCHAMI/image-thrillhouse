@@ -2,7 +2,7 @@ meta:
   name: rocky-compute
   tags:
     - "{{ .arch }}-{{ .releasever }}"
-  from: localhost/rocky-base:{{ .arch }}-{{ .releasever }}
+  from: localhost/rocky-base:{{ .rocky_base_tag }}
 
 layer:
   manager: 
