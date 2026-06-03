@@ -141,7 +141,7 @@ func LoadConfigRaw(path string) (*Config, error) {
 		return nil, err
 	}
 
-	cleaned := replaceTtemplatePlaceholders(data)
+	cleaned := replaceTemplatePlaceholders(data)
 
 	var cfg Config
 	if err := yaml.Unmarshal(cleaned, &cfg); err != nil {
@@ -217,7 +217,7 @@ func (m *Meta) TLSVerify() bool {
 	return true // default to verify
 }
 
-func replaceTtemplatePlaceholders(data []byte) []byte {
+func replaceTemplatePlaceholders(data []byte) []byte {
 	// replace {{ ... }} with a placeholder string
 	re := regexp.MustCompile(`\{\{[^}]*\}\}`)
 	return re.ReplaceAll(data, []byte("__placeholder__"))
