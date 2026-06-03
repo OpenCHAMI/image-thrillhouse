@@ -83,6 +83,21 @@ func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, 
 	return nil
 }
 
-func (l *SquashfsPublisher) Exists(ctx context.Context, name string, tags []string) (bool, error) {
-	return false, nil
+// Exists reports whether the squashfs output file for this (name, tags) pair
+// is already present on disk. Mirrors Publish's naming: the file is named
+// after the primary (first) tag, so a single stat of <path>/<name>-<tags[0]>
+// .squashfs is sufficient.
+func (s *SquashfsPublisher) Exists(ctx context.Context, name string, tags []string) (bool, error) {
+	if len(tags) == 0 {
+		return false, fmt.Errorf("squashfs publisher requires at least one tag")
+	}
+	output := filepath.Join(s.path, fmt.Sprintf("%s-%s.squashfs", name, tags[0]))
+	_, err := os.Stat(output)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("stat %s: %w", output, err)
 }

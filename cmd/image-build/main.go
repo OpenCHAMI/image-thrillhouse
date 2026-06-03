@@ -40,6 +40,7 @@ var (
 	renderOutput string   // Output path for the render command (default: stdout)
 	manifestPath string   // Path to a manifest file describing a DAG of layers
 	layerName    string   // Layer name (within the manifest) to build
+	skipIfExists bool     // Skip build when every configured publisher reports the image already exists
 )
 
 // rootCmd is the base command that is run when no subcommands are provided.
@@ -235,6 +236,7 @@ func init() {
 	buildCmd.Flags().StringVar(&layerName, "layer", "", "layer name to build (requires --manifest)")
 	buildCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
 	buildCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
+	buildCmd.Flags().BoolVar(&skipIfExists, "skip-if-exists", false, "skip the build when all publishers report the image already exists")
 
 	// Validate-specific flags
 	validateCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
@@ -357,6 +359,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	// Create the builder and execute the build
 	bldr := builder.New(ctx, cfg, b, p)
+	bldr.SetSkipIfExists(skipIfExists)
 	return bldr.Build(ctx)
 }
 

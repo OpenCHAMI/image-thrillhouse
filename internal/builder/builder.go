@@ -45,6 +45,15 @@ func New(ctx context.Context, cfg *config.Config, b backend.Backend, p []publish
 	}
 }
 
+// SetSkipIfExists toggles the skip-if-exists guard. When true, Build will
+// poll every configured publisher's Exists() before doing any work, and skip
+// the whole build (no container created, no commands run, no publish) when
+// all publishers report the image is already present for the configured
+// name + tags.
+func (b *Builder) SetSkipIfExists(v bool) {
+	b.skipIfExists = v
+}
+
 // Build executes the complete image building process.
 // The build process consists of the following steps:
 //  1. Create a new container from the base image

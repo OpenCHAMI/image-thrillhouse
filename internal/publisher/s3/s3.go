@@ -278,8 +278,24 @@ func (s *S3Publisher) uploadFile(ctx context.Context, uploader *manager.Uploader
 	return nil
 }
 
-// Exists is a placeholder that always returns false; remote-existence checks
-// against S3 are not yet implemented.
+// Exists is intentionally a "don't know" stub for the s3 publisher.
+//
+// Publish writes <prefix><os>-<name>-<tag> as the rootfs key, where <os> is
+// detected from the container filesystem (detectOS) AFTER the container has
+// been created. There is no way to construct the key from (name, tag) alone
+// at Exists time without either:
+//
+//   - Materialising a throwaway container just to detect the OS (defeats the
+//     point of skip-if-exists), or
+//   - Adding an explicit os-name field to the publish config so the lookup
+//     key is knowable up-front, or
+//   - Falling back to ListObjectsV2 with prefix matching, which is slower and
+//     racier.
+//
+// Returning false is the conservative answer: when an s3 publisher is in the
+// list, skip-if-exists will rebuild rather than silently treating the image
+// as cached. Real existence support should land alongside one of the design
+// choices above.
 func (s *S3Publisher) Exists(ctx context.Context, name string, tags []string) (bool, error) {
 	return false, nil
 }
