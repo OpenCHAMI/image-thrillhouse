@@ -2,12 +2,19 @@
 # Integration test: `image-build build-all` + `--skip-if-exists`
 #
 # Drives a full manifest end-to-end through buildah and asserts:
-#   1. build-all builds every layer in dependency order (parent before child)
+#   1. build-all builds the requested subtree in dependency order
+#      (parent before child)
 #   2. each layer is committed to local storage with the computed hash tag
 #   3. the child's `from:` line resolves to the parent's hash (parent_tag
 #      injection actually wires through to the build)
 #   4. a second build-all --skip-if-exists is a no-op (no buildah calls)
-#   5. --layer narrows the iteration to a subtree
+#   5. --layer narrows iteration to a subtree — sibling branches are not
+#      walked
+#
+# image-build doesn't cross-compile, so this test only ever builds for the
+# host arch. We use rocky-multiarch.yaml (which contains both x86_64 and
+# aarch64 branches) and pass --layer rocky-compute-<host arch> so the
+# walker naturally skips the foreign-arch branch.
 
 set -e
 
@@ -15,8 +22,29 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUTPUT_DIR="${SCRIPT_DIR}/test-output/manifests-build-all"
 mkdir -p "$OUTPUT_DIR"
 
+# Map uname -m → the arch token our var files use (tests/rocky/templates/
+# {x86_64,aarch64}.yaml). Anything else is a hard fail because the tool
+# can't cross-compile and we won't pretend.
+HOST_ARCH_RAW=$(uname -m)
+case "$HOST_ARCH_RAW" in
+    x86_64|amd64)  HOST_ARCH=x86_64  ;;
+    aarch64|arm64) HOST_ARCH=aarch64 ;;
+    *)
+        echo "✗ Unsupported host architecture: $HOST_ARCH_RAW"
+        echo "  image-build doesn't cross-compile; this suite only runs on x86_64 or aarch64."
+        exit 1
+        ;;
+esac
+
+BASE_LAYER="rocky-base-${HOST_ARCH}"
+COMPUTE_LAYER="rocky-compute-${HOST_ARCH}"
+MANIFEST="/tests/manifests/rocky-multiarch.yaml"
+
 echo "════════════════════════════════════════════════════════════════"
 echo "Manifests Test: build-all + skip-if-exists"
+echo "  host arch:    $HOST_ARCH_RAW ($HOST_ARCH)"
+echo "  manifest:     $MANIFEST"
+echo "  target leaf:  $COMPUTE_LAYER"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 
@@ -67,28 +95,22 @@ else
 fi
 echo ""
 
-# The rocky.yaml manifest is the simplest non-trivial DAG: rocky-base
-# (scratch) → rocky-compute (depends on rocky-base). One backend (dnf),
-# one arch, so each test phase only needs ~2 layers worth of build time.
-MANIFEST="/tests/manifests/rocky.yaml"
-
 echo "════════════════════════════════════════════════════════════════"
-echo "Phase 1: build-all from clean state"
+echo "Phase 1: build-all --layer $COMPUTE_LAYER from clean state"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
-echo "[$TOTAL_TESTS] build-all rocky.yaml builds both layers in order"
-if run_image_build build-all --manifest "$MANIFEST" \
-       --var-file /tests/rocky/templates/x86_64.yaml \
+echo "[$TOTAL_TESTS] builds both layers in dependency order"
+if run_image_build build-all --manifest "$MANIFEST" --layer "$COMPUTE_LAYER" \
        > "${OUTPUT_DIR}/build-all-clean.log" 2>&1
 then
-    # The logger prints "computed tag layer=rocky-base" before
-    # "computed tag layer=rocky-compute" because we walk topologically.
-    base_line=$(grep -n 'computed tag.*rocky-base' "${OUTPUT_DIR}/build-all-clean.log" | head -1 | cut -d: -f1)
-    comp_line=$(grep -n 'computed tag.*rocky-compute' "${OUTPUT_DIR}/build-all-clean.log" | head -1 | cut -d: -f1)
+    # The logger emits "computed tag layer=$BASE_LAYER" before
+    # "computed tag layer=$COMPUTE_LAYER" when we walk topologically.
+    base_line=$(grep -n "computed tag.*${BASE_LAYER}" "${OUTPUT_DIR}/build-all-clean.log" | head -1 | cut -d: -f1)
+    comp_line=$(grep -n "computed tag.*${COMPUTE_LAYER}" "${OUTPUT_DIR}/build-all-clean.log" | head -1 | cut -d: -f1)
     if [ -n "$base_line" ] && [ -n "$comp_line" ] && [ "$base_line" -lt "$comp_line" ]; then
-        pass "rocky-base built before rocky-compute"
+        pass "$BASE_LAYER built before $COMPUTE_LAYER"
     else
         fail "dependency order not observed (base line=$base_line, compute line=$comp_line)"
     fi
@@ -104,8 +126,7 @@ echo ""
 
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
 echo "[$TOTAL_TESTS] re-running build-all --skip-if-exists is a no-op"
-if run_image_build build-all --manifest "$MANIFEST" \
-       --var-file /tests/rocky/templates/x86_64.yaml \
+if run_image_build build-all --manifest "$MANIFEST" --layer "$COMPUTE_LAYER" \
        --skip-if-exists \
        > "${OUTPUT_DIR}/build-all-warm.log" 2>&1
 then
@@ -122,28 +143,35 @@ fi
 
 echo ""
 echo "════════════════════════════════════════════════════════════════"
-echo "Phase 3: --layer narrows to a subtree"
+echo "Phase 3: --layer narrows to a subtree (siblings not walked)"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 
+# The multi-arch manifest has 4 layers total. Targeting --layer
+# rocky-compute-<host-arch> should iterate exactly 2 (the host's base +
+# compute) and never touch the foreign-arch branch.
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
-echo "[$TOTAL_TESTS] --layer rocky-compute only iterates rocky-compute's subtree"
-if run_image_build build-all --manifest "$MANIFEST" \
-       --layer rocky-compute \
-       --var-file /tests/rocky/templates/x86_64.yaml \
-       --skip-if-exists \
-       > "${OUTPUT_DIR}/build-all-subtree.log" 2>&1
-then
-    # The log should mention both rocky-base and rocky-compute, since the
-    # subtree of rocky-compute includes rocky-base as an ancestor.
-    if grep -q '"order":\["rocky-base","rocky-compute"\]' "${OUTPUT_DIR}/build-all-subtree.log" \
-       || grep -q 'order=\[rocky-base rocky-compute\]' "${OUTPUT_DIR}/build-all-subtree.log"; then
-        pass "subtree order observed (rocky-base then rocky-compute)"
-    else
-        fail "subtree ordering log entry missing (see ${OUTPUT_DIR}/build-all-subtree.log)"
-    fi
+echo "[$TOTAL_TESTS] foreign-arch branch is NOT iterated"
+case "$HOST_ARCH" in
+    x86_64)  FOREIGN_BASE="rocky-base-aarch64"; FOREIGN_COMPUTE="rocky-compute-aarch64" ;;
+    aarch64) FOREIGN_BASE="rocky-base-x86_64";  FOREIGN_COMPUTE="rocky-compute-x86_64"  ;;
+esac
+
+if [ "$(grep -c "computed tag.*${FOREIGN_BASE}" "${OUTPUT_DIR}/build-all-warm.log" || true)" = "0" ] \
+   && [ "$(grep -c "computed tag.*${FOREIGN_COMPUTE}" "${OUTPUT_DIR}/build-all-warm.log" || true)" = "0" ]; then
+    pass "foreign-arch layers ($FOREIGN_BASE, $FOREIGN_COMPUTE) were not touched"
 else
-    fail "build-all --layer exited non-zero"
+    fail "foreign-arch layer appeared in the build log (see ${OUTPUT_DIR}/build-all-warm.log)"
+fi
+
+# Also assert build-all logged the subtree order it intends to walk.
+TOTAL_TESTS=$((TOTAL_TESTS + 1))
+echo "[$TOTAL_TESTS] build-all logs the subtree order"
+if grep -q "\"order\":\\[\"${BASE_LAYER}\",\"${COMPUTE_LAYER}\"\\]" "${OUTPUT_DIR}/build-all-warm.log" \
+   || grep -q "order=\\[${BASE_LAYER} ${COMPUTE_LAYER}\\]" "${OUTPUT_DIR}/build-all-warm.log"; then
+    pass "subtree order log entry present"
+else
+    fail "subtree order log entry missing (see ${OUTPUT_DIR}/build-all-warm.log)"
 fi
 
 echo ""
