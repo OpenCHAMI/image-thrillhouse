@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestLoadConfig tests loading a valid configuration file
-func TestLoadConfig(t *testing.T) {
+// TestLoadConfigWithVars tests loading a valid configuration file
+func TestLoadConfigWithVars(t *testing.T) {
 	// Create a temporary config file
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "test-config.yaml")
@@ -41,9 +41,9 @@ publish:
 	}
 
 	// Test loading the config
-	cfg, err := LoadConfig(configPath)
+	cfg, err := LoadConfigWithVars(configPath, nil)
 	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
+		t.Fatalf("LoadConfigWithVars failed: %v", err)
 	}
 
 	// Verify config was parsed correctly
@@ -66,7 +66,7 @@ publish:
 
 // TestLoadConfigFileNotFound tests error handling for missing config
 func TestLoadConfigFileNotFound(t *testing.T) {
-	_, err := LoadConfig("/nonexistent/config.yaml")
+	_, err := LoadConfigWithVars("/nonexistent/config.yaml", nil)
 	if err == nil {
 		t.Error("Expected error for nonexistent file, got nil")
 	}
@@ -88,7 +88,7 @@ meta:
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	_, err = LoadConfig(configPath)
+	_, err = LoadConfigWithVars(configPath, nil)
 	if err == nil {
 		t.Error("Expected error for invalid YAML, got nil")
 	}
