@@ -21,6 +21,8 @@ echo ""
 # Parse arguments
 PARALLEL_SCRATCH=false
 PACKAGE_MANAGER=""
+ONLY_MANIFESTS=false
+SKIP_MANIFESTS=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -32,21 +34,32 @@ while [[ $# -gt 0 ]]; do
             PACKAGE_MANAGER="${1#--}"
             shift
             ;;
+        --manifests)
+            ONLY_MANIFESTS=true
+            shift
+            ;;
+        --no-manifests)
+            SKIP_MANIFESTS=true
+            shift
+            ;;
         -h|--help)
             cat << EOF
 Usage: $0 [OPTIONS]
 
 Options:
   --parallel        Run scratch tests in parallel (faster)
-  --dnf             Run only DNF tests
-  --apt             Run only APT tests  
-  --zypper          Run only Zypper tests
+  --dnf             Run only DNF backend tests
+  --apt             Run only APT backend tests
+  --zypper          Run only Zypper backend tests
+  --manifests       Run only manifest tests (render + build-all)
+  --no-manifests    Skip manifest tests (run only per-backend)
   -h, --help        Show this help
 
 Examples:
-  $0                    # Run all tests sequentially
+  $0                    # Run all tests sequentially (backends + manifests)
   $0 --parallel         # Run scratch tests in parallel
-  $0 --dnf              # Run only DNF tests
+  $0 --dnf              # Run only DNF backend tests
+  $0 --manifests        # Run only the manifest/template/build-all suite
   $0 --parallel --apt   # Run APT tests with parallel scratch
 
 EOF
@@ -86,24 +99,24 @@ echo ""
 TOTAL_PASSED=0
 TOTAL_FAILED=0
 
-# Function to run a test script
+# Function to run a per-backend test script (scratch / parent).
 run_test() {
     local pkg=$1
     local type=$2
     local script="${SCRIPT_DIR}/tests/${pkg}/test-${pkg}-${type}.sh"
-    
+
     echo ""
     echo -e "${BLUE}════════════════════════════════════════════════════════════════${NC}"
     echo -e "${BLUE}Running: ${pkg} ${type} tests${NC}"
     echo -e "${BLUE}════════════════════════════════════════════════════════════════${NC}"
     echo ""
-    
+
     if [ ! -f "$script" ]; then
         echo -e "${RED}✗ Script not found: $script${NC}"
         TOTAL_FAILED=$((TOTAL_FAILED + 1))
         return 1
     fi
-    
+
     if bash "$script"; then
         echo ""
         echo -e "${GREEN}✓ ${pkg} ${type} tests PASSED${NC}"
@@ -116,6 +129,53 @@ run_test() {
         return 1
     fi
 }
+
+# Function to run a manifest test script (render / build-all). These live
+# under tests/manifests/ and don't follow the per-backend naming, so they
+# get their own runner.
+run_manifest_test() {
+    local kind=$1
+    local script="${SCRIPT_DIR}/tests/manifests/test-${kind}.sh"
+
+    echo ""
+    echo -e "${BLUE}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}Running: manifests ${kind} tests${NC}"
+    echo -e "${BLUE}════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    if [ ! -f "$script" ]; then
+        echo -e "${RED}✗ Script not found: $script${NC}"
+        TOTAL_FAILED=$((TOTAL_FAILED + 1))
+        return 1
+    fi
+
+    if bash "$script"; then
+        echo ""
+        echo -e "${GREEN}✓ manifests ${kind} tests PASSED${NC}"
+        TOTAL_PASSED=$((TOTAL_PASSED + 1))
+        return 0
+    else
+        echo ""
+        echo -e "${RED}✗ manifests ${kind} tests FAILED${NC}"
+        TOTAL_FAILED=$((TOTAL_FAILED + 1))
+        return 1
+    fi
+}
+
+# Manifests-only short-circuit: skip every per-backend test, just run the
+# manifest suite. Useful for iterating on templating / build-all changes.
+if [ "$ONLY_MANIFESTS" = true ]; then
+    run_manifest_test "render"    || true
+    run_manifest_test "build-all" || true
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo "                      Final Results                             "
+    echo "════════════════════════════════════════════════════════════════"
+    echo ""
+    echo "Test Suites Passed: $TOTAL_PASSED"
+    echo "Test Suites Failed: $TOTAL_FAILED"
+    [ $TOTAL_FAILED -eq 0 ] && exit 0 || exit 1
+fi
 
 # Run tests
 if [ "$PARALLEL_SCRATCH" = true ]; then
@@ -172,6 +232,18 @@ else
         run_test "$pkg" "scratch" || true
         run_test "$pkg" "parent" || true
     done
+fi
+
+# Manifest tests after per-backend tests (skipped when --no-manifests or
+# when a single --pkg flag narrowed the run).
+if [ "$SKIP_MANIFESTS" = false ] && [ -z "$PACKAGE_MANAGER" ]; then
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo "Phase: Manifests (templating / build-all / skip-if-exists)"
+    echo "════════════════════════════════════════════════════════════════"
+    echo ""
+    run_manifest_test "render"    || true
+    run_manifest_test "build-all" || true
 fi
 
 # Summary
