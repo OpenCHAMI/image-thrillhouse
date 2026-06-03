@@ -209,94 +209,110 @@ func TestGet_Unknown(t *testing.T) {
 	}
 }
 
-// internal/manifest/dag_test.go (add to existing file)
+// The ComputeTag_* tests below use TempDir fixtures instead of static yaml
+// in tests/, so the suite stays hermetic and survives renames of the test
+// tree (the original paths drifted out of date once dev/templates moved the
+// fixtures around). Each test stamps a known config into a temp dir, builds
+// a tiny DAG over those paths, then asserts a property of the resulting tag.
 
 func TestComputeTag_Deterministic(t *testing.T) {
+	dir := t.TempDir()
+	baseCfg := writeConfig(t, dir, "base.yaml", minimalConfig)
+	computeCfg := writeConfig(t, dir, "compute.yaml", minimalConfig)
+
 	m := &Manifest{
 		Layers: []Layer{
-			{Name: "rocky-base", Config: "../../tests/rocky/static/rocky-base-aarch64.yaml", DependsOn: []string{}},
-			{Name: "rocky-compute", Config: "../../tests/rocky/static/rocky-compute-aarch64.yaml", DependsOn: []string{"rocky-base"}},
+			{Name: "base", Config: baseCfg},
+			{Name: "compute", Config: computeCfg, DependsOn: []string{"base"}},
 		},
 	}
-
 	dag, err := NewDAG(m)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("dag: %v", err)
 	}
 
-	// compute twice - should get same result
-	tag1, err := dag.ComputeTag("rocky-compute", nil)
+	tag1, err := dag.ComputeTag("compute", nil)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("compute1: %v", err)
 	}
-
-	tag2, err := dag.ComputeTag("rocky-compute", nil)
+	tag2, err := dag.ComputeTag("compute", nil)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("compute2: %v", err)
 	}
-
 	if tag1 != tag2 {
 		t.Errorf("tags not deterministic: %s != %s", tag1, tag2)
 	}
 }
 
 func TestComputeTag_ChangesWithContent(t *testing.T) {
+	dir := t.TempDir()
+	baseCfg := writeConfig(t, dir, "base.yaml", minimalConfig)
+	// Different layer content -> different hash. We use a slightly varied
+	// minimalConfig for the compute layer (different name) to make the
+	// per-layer content actually differ.
+	computeCfg := writeConfig(t, dir, "compute.yaml", `meta:
+  name: compute
+  tags: ["x"]
+  from: scratch
+layer:
+  manager:
+    name: apt
+`)
+
 	m := &Manifest{
 		Layers: []Layer{
-			{Name: "rocky-base", Config: "../../tests/rocky/static/rocky-base-aarch64.yaml", DependsOn: []string{}},
-			{Name: "rocky-compute", Config: "../../tests/rocky/static/rocky-compute-aarch64.yaml", DependsOn: []string{"rocky-base"}},
+			{Name: "base", Config: baseCfg},
+			{Name: "compute", Config: computeCfg, DependsOn: []string{"base"}},
 		},
 	}
-
 	dag, _ := NewDAG(m)
 
-	baseTag, err := dag.ComputeTag("rocky-base", nil)
+	baseTag, err := dag.ComputeTag("base", nil)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("base: %v", err)
 	}
-
-	computeTag, err := dag.ComputeTag("rocky-compute", nil)
+	computeTag, err := dag.ComputeTag("compute", nil)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("compute: %v", err)
 	}
-
-	// different layers should have different tags
 	if baseTag == computeTag {
-		t.Errorf("different layers should have different tags")
+		t.Errorf("different layers should have different tags (both = %s)", baseTag)
 	}
 }
 
 func TestComputeTag_ParentAffectsChild(t *testing.T) {
-	// base tag should be a component of compute tag
-	// if we compute compute's tag without parent vs with parent they should differ
-	m1 := &Manifest{
-		Layers: []Layer{
-			{Name: "rocky-compute", Config: "../../tests/rocky/static/rocky-compute-aarch64.yaml", DependsOn: []string{}},
-		},
-	}
+	// Compute's tag must differ depending on whether it has a parent in the
+	// graph — the parent's content is folded into the child's hash.
+	dir := t.TempDir()
+	baseCfg := writeConfig(t, dir, "base.yaml", minimalConfig)
+	computeCfg := writeConfig(t, dir, "compute.yaml", minimalConfig)
 
-	m2 := &Manifest{
-		Layers: []Layer{
-			{Name: "rocky-base", Config: "../../tests/rocky/static/rocky-base-aarch64.yaml", DependsOn: []string{}},
-			{Name: "rocky-compute", Config: "../../tests/rocky/static/rocky-compute-aarch64.yaml", DependsOn: []string{"rocky-base"}},
-		},
-	}
-
-	dag1, _ := NewDAG(m1)
-	dag2, _ := NewDAG(m2)
-
-	tag1, err := dag1.ComputeTag("rocky-compute", nil)
+	soloDAG, err := NewDAG(&Manifest{
+		Layers: []Layer{{Name: "compute", Config: computeCfg}},
+	})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("solo dag: %v", err)
 	}
-
-	tag2, err := dag2.ComputeTag("rocky-compute", nil)
+	chainedDAG, err := NewDAG(&Manifest{
+		Layers: []Layer{
+			{Name: "base", Config: baseCfg},
+			{Name: "compute", Config: computeCfg, DependsOn: []string{"base"}},
+		},
+	})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("chained dag: %v", err)
 	}
 
-	if tag1 == tag2 {
-		t.Errorf("tag should differ when parent is included")
+	soloTag, err := soloDAG.ComputeTag("compute", nil)
+	if err != nil {
+		t.Fatalf("solo: %v", err)
+	}
+	chainedTag, err := chainedDAG.ComputeTag("compute", nil)
+	if err != nil {
+		t.Fatalf("chained: %v", err)
+	}
+	if soloTag == chainedTag {
+		t.Errorf("tag should differ when parent is included (both = %s)", soloTag)
 	}
 }
 
