@@ -229,12 +229,17 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "json", "log format (json, text)")
 
-	// Build-specific flags (only available to build and validate commands)
+	// Build-specific flags
 	buildCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
 	buildCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file")
 	buildCmd.Flags().StringVar(&layerName, "layer", "", "layer name to build (requires --manifest)")
+	buildCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
+	buildCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 
+	// Validate-specific flags
 	validateCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
+	validateCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
+	validateCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 
 	// Render-specific flags (templating: variables file + key=value overrides)
 	renderCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
