@@ -53,6 +53,7 @@ type File struct {
 	Content string `yaml:"content"` // Inline file content
 	Src     string `yaml:"src"`     // Source file path on host
 	URL     string `yaml:"url"`     // URL to download file from
+	Mode    string `yaml:"mode"`    // Optional: File permissions mode (e.g., "0755", "0644")
 }
 
 // Repo represents a package repository configuration.

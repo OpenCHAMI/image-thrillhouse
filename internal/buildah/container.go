@@ -245,7 +245,13 @@ func (c *Container) WriteFile(ctx context.Context, file config.File) error {
 	}
 	tmp.Close()
 
-	if err := c.Builder.Add(file.Path, false, buildah.AddAndCopyOptions{}, tmp.Name()); err != nil {
+	// Set up AddAndCopyOptions with chmod if specified
+	addOpts := buildah.AddAndCopyOptions{}
+	if file.Mode != "" {
+		addOpts.Chmod = file.Mode
+	}
+
+	if err := c.Builder.Add(file.Path, false, addOpts, tmp.Name()); err != nil {
 		return fmt.Errorf("add file %s: %w", file.Path, err)
 	}
 
