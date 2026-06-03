@@ -424,3 +424,72 @@ func TestComputeBuildVars_TransitiveAncestors(t *testing.T) {
 		t.Errorf("grandparent_tag mismatch:\n  injected   = %v\n  standalone = %v", got, want)
 	}
 }
+
+// TestComputeBuildVars_ParentTagSingleParent verifies the singular
+// "parent_tag" alias is injected when (and only when) a layer has exactly
+// one direct parent. This is the convention multi-arch templates rely on:
+// one template instantiated per arch, the parent reference written once as
+// `{{ .parent_tag }}`.
+func TestComputeBuildVars_ParentTagSingleParent(t *testing.T) {
+	dir := t.TempDir()
+	rootCfg := writeConfig(t, dir, "root.yaml", minimalConfig)
+	leftCfg := writeConfig(t, dir, "left.yaml", minimalConfig)
+	rightCfg := writeConfig(t, dir, "right.yaml", minimalConfig)
+	joinCfg := writeConfig(t, dir, "join.yaml", minimalConfig)
+	loneCfg := writeConfig(t, dir, "lone.yaml", minimalConfig)
+
+	m := &Manifest{
+		Layers: []Layer{
+			{Name: "root", Config: rootCfg},
+			{Name: "left", Config: leftCfg, DependsOn: []string{"root"}},
+			{Name: "right", Config: rightCfg, DependsOn: []string{"root"}},
+			// fork: two direct parents -> parent_tag must NOT be injected
+			{Name: "join", Config: joinCfg, DependsOn: []string{"left", "right"}},
+			// orphan root: zero parents -> parent_tag must NOT be injected
+			{Name: "lone", Config: loneCfg},
+		},
+	}
+	dag, err := NewDAG(m)
+	if err != nil {
+		t.Fatalf("dag: %v", err)
+	}
+
+	// single-parent case: parent_tag present, equals dag.ComputeTag(parent).
+	leftVars, err := ComputeBuildVars(dag, "left", nil)
+	if err != nil {
+		t.Fatalf("left: %v", err)
+	}
+	wantRoot, err := dag.ComputeTag("root", nil)
+	if err != nil {
+		t.Fatalf("compute root: %v", err)
+	}
+	if got, ok := leftVars["parent_tag"]; !ok {
+		t.Errorf("left: parent_tag not injected for single-parent layer")
+	} else if got != wantRoot {
+		t.Errorf("left.parent_tag mismatch:\n  got  = %v\n  want = %s", got, wantRoot)
+	}
+
+	// fork: parent_tag absent (ambiguous which parent it would refer to).
+	joinVars, err := ComputeBuildVars(dag, "join", nil)
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	if _, ok := joinVars["parent_tag"]; ok {
+		t.Errorf("join: parent_tag must not be injected when a layer has multiple direct parents")
+	}
+	// but the explicit per-name aliases must still be present.
+	for _, key := range []string{"left_tag", "right_tag", "root_tag"} {
+		if _, ok := joinVars[key]; !ok {
+			t.Errorf("join: missing %q (per-name tag should still be available even when parent_tag is omitted)", key)
+		}
+	}
+
+	// orphan root: parent_tag absent (nothing to alias).
+	loneVars, err := ComputeBuildVars(dag, "lone", nil)
+	if err != nil {
+		t.Fatalf("lone: %v", err)
+	}
+	if _, ok := loneVars["parent_tag"]; ok {
+		t.Errorf("lone: parent_tag must not be injected for a root layer")
+	}
+}

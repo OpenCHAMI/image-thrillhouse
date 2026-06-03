@@ -2,7 +2,7 @@ meta:
   name: bookworm-compute
   tags: 
     - "{{ .tag }}"
-  from: vm-host:5000/bookworm-base:{{ .bookworm_base_tag }}
+  from: vm-host:5000/bookworm-base:{{ .parent_tag }}
 
 layer:
   manager:

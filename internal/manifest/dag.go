@@ -154,20 +154,35 @@ func combineVarFiles(globals, layerSpecific []string) []string {
 	return out
 }
 
-// ComputeBuildVars returns the template variables that should be injected when
-// rendering layerName's config in a manifest build. It always injects a "tag"
-// key (the layer's computed hash) and a "<ancestor>_tag" key for every
-// TRANSITIVE ancestor, so child templates can reference any layer up-chain by
-// its deterministic tag — e.g. a grandchild can use
-// `from: localhost/grandparent:{{ .grandparent_tag }}` without needing the
-// intermediate layer to forward it.
+// ComputeBuildVars returns the template variables that should be injected
+// when rendering layerName's config in a manifest build.
 //
-// Ancestor variable names are derived by replacing "-" with "_" in the layer
-// name and appending "_tag" (so "rocky-base" becomes "rocky_base_tag").
+// Always injected:
+//   - "tag" — this layer's computed hash.
+//
+// Injected when the layer has a single direct parent:
+//   - "parent_tag" — that parent's computed hash. Lets templates stay
+//     arch-agnostic: a single rocky-compute.yaml can be reused as
+//     rocky-compute-x86_64 and rocky-compute-aarch64 with
+//     `from: localhost/rocky-base:{{ .parent_tag }}` instead of
+//     hard-coding the parent layer name. Not injected when the layer has
+//     zero or multiple direct parents — those cases are ambiguous and the
+//     caller should use the explicit "<name>_tag" form below.
+//
+// Injected for every transitive ancestor:
+//   - "<ancestor>_tag" — the ancestor's computed hash, with hyphens
+//     replaced by underscores (so "rocky-base" becomes "rocky_base_tag").
+//     A grandchild can reference any layer up-chain by name without the
+//     intermediate layer forwarding it.
 //
 // globalVarFiles must be only the CLI-level globals; layer var files are
 // applied inside ComputeTag.
 func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string) (map[string]interface{}, error) {
+	layer, err := dag.Get(layerName)
+	if err != nil {
+		return nil, fmt.Errorf("get layer: %w", err)
+	}
+
 	vars := make(map[string]interface{})
 
 	layerTag, err := dag.ComputeTag(layerName, globalVarFiles)
@@ -176,6 +191,18 @@ func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string) (map[
 	}
 	vars["tag"] = layerTag
 	slog.Info("computed tag", "layer", layerName, "tag", layerTag)
+
+	// Singular parent_tag alias when the layer has exactly one direct
+	// parent. Skipped for forks (>1 parent) because "the parent" is
+	// ambiguous, and for roots (0 parents) because there's nothing to
+	// alias. Callers in those cases get only the per-name _tag form.
+	if len(layer.DependsOn) == 1 {
+		parentTag, err := dag.ComputeTag(layer.DependsOn[0], globalVarFiles)
+		if err != nil {
+			return nil, fmt.Errorf("compute parent tag: %w", err)
+		}
+		vars["parent_tag"] = parentTag
+	}
 
 	ancestors, err := dag.Ancestors(layerName)
 	if err != nil {
