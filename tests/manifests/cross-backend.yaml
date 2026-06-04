@@ -2,12 +2,17 @@
 #
 # A single manifest can mix backends — there's nothing tying a DAG to one
 # package manager. Here we have three independent roots (apt/mmdebstrap,
-# dnf, zypper), each with its own compute layer on top. build-all walks
-# them all in topological order; --skip-if-exists makes re-runs cheap.
+# dnf, zypper), each with its own compute layer on top. Build each layer
+# explicitly in dependency order:
+#
+#   image-build build --manifest tests/manifests/cross-backend.yaml --layer bookworm-base
+#   image-build build --manifest tests/manifests/cross-backend.yaml --layer bookworm-compute
+#   # …and similarly for the rocky and suse pairs.
+#
+# Combine with --skip-if-exists to make re-runs cheap.
 #
 # Useful for sanity-checking that:
 #   - the manifest loader is backend-agnostic
-#   - layer iteration order respects independent subtrees
 #   - per-layer Exists checks work for each publisher type configured
 #     (each template here ends in `publish: - type: local`)
 layers:

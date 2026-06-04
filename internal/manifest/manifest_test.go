@@ -67,8 +67,7 @@ func TestLoad_InvalidYAML(t *testing.T) {
 	}
 }
 
-// TestLoad_EmptyLayers: validate() rejects a manifest with no layers — a
-// build-all run with zero layers would silently do nothing.
+// TestLoad_EmptyLayers: validate() rejects a manifest with no layers.
 func TestLoad_EmptyLayers(t *testing.T) {
 	p := writeManifestYAML(t, "layers: []\n")
 	_, err := Load(p)

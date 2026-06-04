@@ -422,8 +422,8 @@ func prepareLayerRender(
 	}
 	mergedVars := config.MergeVars(layerVars, cliVars)
 
-	// Inject computed tags (this layer + transitive ancestors) so templates
-	// can reference parent images by their deterministic tags.
+	// Inject computed tags (this layer + direct parents) so templates can
+	// reference parent images by their deterministic tags.
 	buildVars, err := manifest.ComputeBuildVars(dag, layerName, globalVarFiles)
 	if err != nil {
 		return "", nil, fmt.Errorf("compute build vars: %w", err)
