@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/containers/buildah"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"go.podman.io/storage/pkg/reexec"
 	"go.podman.io/storage/pkg/unshare"
@@ -203,6 +204,9 @@ func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
 // The logger is set as the default slog logger and will be used by all packages.
 // JSON format is recommended for production and parsing, while text is more human-readable,
 // and textblock formats all output in human-readable blocks.
+//
+// This function also configures the logrus logger used by buildah and other
+// container libraries to suppress their logs unless debug level is enabled.
 func setupLogger(level, format string) error {
 	var lvl slog.Level
 	if err := lvl.UnmarshalText([]byte(level)); err != nil {
@@ -230,6 +234,23 @@ func setupLogger(level, format string) error {
 
 	slog.SetDefault(slog.New(handler))
 	container.SetLogFormat(format)
+
+	// Configure logrus (used by buildah and container libraries)
+	// to suppress INFO level logs unless debug is enabled.
+	// This prevents repetitive buildah messages like:
+	//   "network namespace isolation not supported with chroot isolation, forcing host network"
+	if lvl == slog.LevelDebug {
+		logrus.SetLevel(logrus.DebugLevel)
+	} else if lvl == slog.LevelWarn {
+		logrus.SetLevel(logrus.WarnLevel)
+	} else if lvl >= slog.LevelError {
+		logrus.SetLevel(logrus.ErrorLevel)
+	} else {
+		// For INFO and above, set logrus to WARN to suppress buildah noise
+		logrus.SetLevel(logrus.WarnLevel)
+	}
+	logrus.SetOutput(os.Stderr)
+
 	return nil
 }
 
