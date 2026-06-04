@@ -252,9 +252,16 @@ Add custom files to the image:
         key=value
     - path: /usr/local/bin/script.sh
       src: ./scripts/script.sh     # Copy from local file
+      mode: "0755"         # Optional: Set file permissions (default: depends on source)
     - path: /etc/downloaded-config
       url: https://example.com/config  # Download from URL
+      mode: "0644"         # Optional: Set file permissions
 ```
+
+**File options:**
+- `path` (required): Destination path in the image
+- `content`, `src`, or `url` (required, choose one): File source
+- `mode` (optional): File permissions in octal format (e.g., "0755", "0644")
 
 #### Actions
 
