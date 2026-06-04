@@ -19,6 +19,15 @@
 # arch. Maps `uname -m` to one of {x86_64, aarch64}; anything else is a
 # hard fail with a clear message.
 #
+# Storage persistence:
+#   Each `podman run --rm` would normally throw away the container's
+#   /var/lib/containers/storage on exit, which kills any locally-committed
+#   image as soon as the build finishes. We mount a named podman volume
+#   ($STORAGE_VOLUME, default image-build-test-storage) on that path so
+#   rocky-base survives to be the parent of rocky-compute. The volume
+#   also persists between test runs — set RESET_STORAGE=1 to start from
+#   an empty volume.
+#
 # Deliberately no `set -e`: each phase must be allowed to fail and report
 # independently, otherwise the first podman failure aborts the suite with
 # no diagnostic output.
@@ -44,10 +53,11 @@ MANIFEST="/tests/manifests/rocky-multiarch.yaml"
 
 echo "════════════════════════════════════════════════════════════════"
 echo "Manifests Test: build --manifest --layer (single-layer builds)"
-echo "  host arch:    $HOST_ARCH_RAW ($HOST_ARCH)"
-echo "  manifest:     $MANIFEST"
-echo "  base layer:   $BASE_LAYER"
-echo "  compute:      $COMPUTE_LAYER"
+echo "  host arch:      $HOST_ARCH_RAW ($HOST_ARCH)"
+echo "  manifest:       $MANIFEST"
+echo "  base layer:     $BASE_LAYER"
+echo "  compute layer:  $COMPUTE_LAYER"
+echo "  storage volume: ${STORAGE_VOLUME:-image-build-test-storage} (RESET_STORAGE=1 to clear)"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 
@@ -72,8 +82,35 @@ dump_log() {
     fi
 }
 
+# The container's local image storage lives at /var/lib/containers/storage
+# (see Dockerfile's storage.conf). With `podman run --rm`, that directory
+# is destroyed at container exit, which means a base image committed in
+# one invocation is gone before the next invocation can pull it as a
+# parent. The dnf/zypper/apt parent tests dodge this by sourcing parents
+# from a remote registry (`from: docker://rockylinux:9`) — but our
+# rocky-compute layer's `from:` is `localhost/rocky-base:<computed-hash>`,
+# which only ever exists in local storage.
+#
+# Mount a named podman volume on /var/lib/containers/storage so the
+# storage tree survives across --rm boundaries. The volume persists
+# between test runs too, which incidentally gives Phase 3
+# (--skip-if-exists) cached state to work against. Set RESET_STORAGE=1
+# to clear it before the run.
+STORAGE_VOLUME="${STORAGE_VOLUME:-image-build-test-storage}"
+
+if [ "${RESET_STORAGE:-0}" = "1" ]; then
+    if podman volume exists "$STORAGE_VOLUME" 2>/dev/null; then
+        echo "RESET_STORAGE=1: removing existing volume $STORAGE_VOLUME"
+        podman volume rm "$STORAGE_VOLUME" >/dev/null
+    fi
+fi
+# `podman volume create` is idempotent if the volume already exists.
+podman volume create "$STORAGE_VOLUME" >/dev/null
+
 # Run image-build inside the test container with the full privileged set
-# (build needs buildah, which needs user namespaces / fuse).
+# (build needs buildah, which needs user namespaces / fuse). The storage
+# volume mount is what lets a layer committed in one invocation survive
+# to be the parent of the next invocation.
 run_image_build() {
     podman run --rm \
         --device /dev/fuse \
@@ -84,6 +121,7 @@ run_image_build() {
         --security-opt label=disable \
         -v "${SCRIPT_DIR}/tests:/tests:Z" \
         -v "${OUTPUT_DIR}:/output:Z" \
+        -v "${STORAGE_VOLUME}:/var/lib/containers/storage" \
         -e BUILDAH_ISOLATION=chroot \
         image-build:test \
         image-build --log-level info "$@"
