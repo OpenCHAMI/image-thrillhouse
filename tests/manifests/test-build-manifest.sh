@@ -44,7 +44,17 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUTPUT_DIR="${SCRIPT_DIR}/test-output/manifests-build"
-mkdir -p "$OUTPUT_DIR"
+# /opt/images is where the compute layer's squashfs publisher writes. The
+# container runs as USER builder (uid 1001) and can't mkdir /opt/images
+# itself, so we mount a writable host dir over the path. SQUASHFS_DIR is
+# host-side; mounted as /opt/images inside the container in run_image_build.
+SQUASHFS_DIR="${OUTPUT_DIR}/squashfs"
+mkdir -p "$OUTPUT_DIR" "$SQUASHFS_DIR"
+# Be permissive with the squashfs dir: rootless podman maps container uid
+# 1001 to a high host uid (100000+1000), which has no claim on a dir
+# created by the host user. World-writable lets the build write here
+# without the user having to wrangle uid mappings.
+chmod 0777 "$SQUASHFS_DIR"
 
 HOST_ARCH_RAW=$(uname -m)
 case "$HOST_ARCH_RAW" in
@@ -68,6 +78,7 @@ echo "  manifest:       $MANIFEST"
 echo "  base layer:     $BASE_LAYER"
 echo "  compute layer:  $COMPUTE_LAYER"
 echo "  storage volume: ${STORAGE_VOLUME:-image-build-test-storage} (RESET_STORAGE=1 to clear)"
+echo "  squashfs dir:   $SQUASHFS_DIR"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 
@@ -146,6 +157,7 @@ run_image_build() {
         --security-opt label=disable \
         -v "${SCRIPT_DIR}/tests:/tests:Z" \
         -v "${OUTPUT_DIR}:/output:Z" \
+        -v "${SQUASHFS_DIR}:/opt/images:Z" \
         -v "${STORAGE_VOLUME}:/var/lib/containers/storage" \
         -e BUILDAH_ISOLATION=chroot \
         -e CONTAINERS_STORAGE_CONF=/etc/containers/storage.conf \
@@ -218,6 +230,24 @@ then
 else
     fail "build compute exited non-zero"
     dump_log "${OUTPUT_DIR}/build-compute.log"
+fi
+
+# rocky-compute.yaml has `publish: - type: squashfs` writing to
+# /opt/images/rocky-base-<arch>.squashfs. Confirm the file actually
+# appeared in the host-side mount — end-to-end check that the squashfs
+# publisher's Publish() ran without silently swallowing an error.
+TOTAL_TESTS=$((TOTAL_TESTS + 1))
+echo "[$TOTAL_TESTS] squashfs publisher wrote /opt/images/rocky-base-${HOST_ARCH}.squashfs"
+SQUASHFS_FILE="${SQUASHFS_DIR}/rocky-base-${HOST_ARCH}.squashfs"
+if [ -s "$SQUASHFS_FILE" ]; then
+    bytes=$(stat -c %s "$SQUASHFS_FILE" 2>/dev/null || stat -f %z "$SQUASHFS_FILE")
+    pass "squashfs file exists (${bytes} bytes)"
+else
+    fail "squashfs file not found at $SQUASHFS_FILE"
+    if [ -d "$SQUASHFS_DIR" ]; then
+        echo "    --- contents of $SQUASHFS_DIR ---"
+        ls -la "$SQUASHFS_DIR" | sed 's/^/    /'
+    fi
 fi
 
 echo ""
