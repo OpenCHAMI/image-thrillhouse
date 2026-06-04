@@ -1,0 +1,18 @@
+---
+# Group variables for compute nodes
+ansible_python_interpreter: /usr/bin/python3
+
+# Default NTP servers (can be overridden by extra_vars)
+ntp_servers:
+  - time.example.com
+  - time2.example.com
+
+# Compute-specific packages
+compute_packages:
+  - hwloc
+  - openmpi
+  - ucx
+
+# Application settings
+app_user: compute
+app_group: compute

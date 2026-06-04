@@ -19,6 +19,7 @@ func (c *Config) Validate() error {
 // Required fields:
 //   - name: Image name
 //   - tag: Image tag/version
+//
 // Optional:
 //   - from: Base image (defaults to scratch if not specified)
 func (m *Meta) Validate() error {
@@ -41,7 +42,7 @@ func (l *Layer) Validate() error {
 	if l.Manager.Name == "" {
 		return fmt.Errorf("layer.manager is required")
 	}
-	
+
 	// Check if the package manager is supported
 	validManagers := map[string]bool{
 		"dnf":        true, // Red Hat, Rocky, AlmaLinux, Fedora
@@ -111,7 +112,7 @@ func (f *File) Validate() error {
 	if f.Path == "" {
 		return fmt.Errorf("file.path is required")
 	}
-	
+
 	// Count how many sources are specified
 	set := 0
 	if f.Content != "" {
@@ -123,7 +124,7 @@ func (f *File) Validate() error {
 	if f.URL != "" {
 		set++
 	}
-	
+
 	// Must have exactly one source
 	if set > 1 {
 		return fmt.Errorf("file %s: only one of content, src, or url may be set", f.Path)
@@ -135,11 +136,19 @@ func (f *File) Validate() error {
 }
 
 // Validate checks the Actions section.
-// Currently only validates the Install subsection.
+// It validates the Install subsection and all commands.
 func (a *Actions) Validate() error {
 	if err := a.Install.Validate(); err != nil {
 		return err
 	}
+
+	// Validate all commands
+	for i, cmd := range a.Commands {
+		if err := cmd.Validate(); err != nil {
+			return fmt.Errorf("command %d: %w", i, err)
+		}
+	}
+
 	return nil
 }
 
@@ -162,7 +171,7 @@ func (m *Module) Validate() error {
 	if m.Name == "" {
 		return fmt.Errorf("module.name is required")
 	}
-	
+
 	// Valid DNF module actions
 	validActions := map[string]bool{
 		"enable":  true, // Enable a module stream
@@ -170,7 +179,7 @@ func (m *Module) Validate() error {
 		"install": true, // Install packages from a module
 		"reset":   true, // Reset module state
 	}
-	
+
 	if m.Action == "" {
 		return fmt.Errorf("module %s: action is required", m.Name)
 	}
@@ -182,13 +191,56 @@ func (m *Module) Validate() error {
 
 // Validate checks a Command configuration for correctness.
 // Requirements:
-//   - exactly one of run or script must be set
+//   - exactly one of run, script, or ansible must be set
+//   - if ansible is set, its fields must be valid
 func (c *Command) Validate() error {
-	if c.Run != "" && c.Script != "" {
-		return fmt.Errorf("command: only one of run or script may be set")
+	// Count how many command types are specified
+	set := 0
+	if c.Run != "" {
+		set++
 	}
-	if c.Run == "" && c.Script == "" {
-		return fmt.Errorf("command: one of run or script is required")
+	if c.Script != "" {
+		set++
 	}
+	if c.Ansible != nil {
+		set++
+	}
+
+	// Must have exactly one command type
+	if set == 0 {
+		return fmt.Errorf("command: one of run, script, or ansible is required")
+	}
+	if set > 1 {
+		return fmt.Errorf("command: only one of run, script, or ansible may be set")
+	}
+
+	// Validate Ansible-specific fields if present
+	if c.Ansible != nil {
+		if err := c.Ansible.Validate(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// Validate checks an AnsibleCommand configuration for correctness.
+// Requirements:
+//   - playbook must be specified
+//   - groups must contain at least one group
+//   - verbose must be between 0 and 4
+func (a *AnsibleCommand) Validate() error {
+	if a.Playbook == "" {
+		return fmt.Errorf("ansible.playbook is required")
+	}
+
+	if len(a.Groups) == 0 {
+		return fmt.Errorf("ansible.groups is required and must contain at least one group")
+	}
+
+	if a.Verbose < 0 || a.Verbose > 4 {
+		return fmt.Errorf("ansible.verbose must be between 0 and 4 (got %d)", a.Verbose)
+	}
+
 	return nil
 }

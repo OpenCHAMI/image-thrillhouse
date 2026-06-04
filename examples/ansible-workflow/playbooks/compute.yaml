@@ -1,0 +1,40 @@
+---
+- name: Configure compute node
+  hosts: compute
+  become: yes
+  
+  roles:
+    - chrony
+  
+  tasks:
+    - name: Install compute packages
+      dnf:
+        name:
+          - kernel
+          - kernel-headers
+          - hwloc
+          - openmpi
+          - ucx
+        state: present
+    
+    - name: Create application directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /opt/compute
+        - /var/log/compute
+    
+    - name: Create application config
+      copy:
+        content: |
+          # Compute Node Configuration
+          DATACENTER={{ datacenter }}
+          NTP_SERVER={{ ntp_server }}
+        dest: /opt/compute/config
+        mode: '0644'
+    
+    - name: Display configuration
+      debug:
+        msg: "Compute node configured for datacenter {{ datacenter }}"

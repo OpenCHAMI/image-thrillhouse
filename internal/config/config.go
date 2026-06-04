@@ -35,10 +35,10 @@ type Meta struct {
 // Layer defines how to build the image layer.
 // It specifies the package manager, repositories, files, and actions to perform.
 type Layer struct {
-	Manager Manager  `yaml:"manager"`  // Package manager configuration
-	Repos   []Repo   `yaml:"repos"`    // Repository configurations
-	Files   []File   `yaml:"files"`    // Files to add to the image
-	Actions Actions  `yaml:"actions"`  // Installation and command actions
+	Manager  Manager   `yaml:"manager"`  // Package manager configuration
+	Repos    []Repo    `yaml:"repos"`    // Repository configurations
+	Files    []File    `yaml:"files"`    // Files to add to the image
+	Actions  Actions   `yaml:"actions"`  // Installation and command actions
 	OpenSCAP *OpenSCAP `yaml:"openscap"` // Optional: OpenSCAP security scanning configuration
 }
 
@@ -93,10 +93,31 @@ type Module struct {
 }
 
 // Command represents a command to run in the container.
-// Exactly one of Run or Script must be specified.
+// Exactly one of Run, Script, or Ansible must be specified.
 type Command struct {
-	Run    string `yaml:"run"`    // Simple command to run (e.g., "systemctl enable service")
-	Script string `yaml:"script"` // Multi-line shell script to run
+	Run     string          `yaml:"run"`     // Simple command to run (e.g., "systemctl enable service")
+	Script  string          `yaml:"script"`  // Multi-line shell script to run
+	Ansible *AnsibleCommand `yaml:"ansible"` // Ansible playbook execution (host-based)
+}
+
+// AnsibleCommand configures Ansible playbook execution on the host system.
+// The container is automatically added to the specified groups in a dynamic inventory,
+// and Ansible connects to it using the containers.podman.buildah connection plugin.
+//
+// This requires:
+//   - ansible-core installed on the host system
+//   - containers.podman collection installed (ansible-galaxy collection install containers.podman)
+//   - python3 and python3-dnf installed in the container (for Ansible modules)
+type AnsibleCommand struct {
+	Playbook  string            `yaml:"playbook"`   // Path to Ansible playbook file (required)
+	Inventory string            `yaml:"inventory"`  // Path to inventory directory/file (optional, merges with dynamic)
+	Groups    []string          `yaml:"groups"`     // Ansible groups to add container to (required)
+	ExtraVars map[string]string `yaml:"extra_vars"` // Additional variables passed to Ansible (-e key=value)
+	Tags      string            `yaml:"tags"`       // Ansible tags to run (--tags)
+	SkipTags  string            `yaml:"skip_tags"`  // Ansible tags to skip (--skip-tags)
+	Limit     string            `yaml:"limit"`      // Override default limit (defaults to container name)
+	Verbose   int               `yaml:"verbose"`    // Verbosity level 0-4 (0=default, 4=-vvvv)
+	CheckMode bool              `yaml:"check_mode"` // Run in check mode without making changes (--check)
 }
 
 // Publish defines where to publish the built image.
@@ -116,13 +137,17 @@ type Publish struct {
 type CommandType int
 
 const (
-	CommandRun    CommandType = iota // Simple command (Run field)
-	CommandScript                    // Multi-line script (Script field)
+	CommandRun     CommandType = iota // Simple command (Run field)
+	CommandScript                     // Multi-line script (Script field)
+	CommandAnsible                    // Ansible playbook (Ansible field)
 )
 
 // Type returns the CommandType for this command.
-// It determines whether to execute the Run field or the Script field.
+// It determines whether to execute the Run field, Script field, or Ansible field.
 func (c *Command) Type() CommandType {
+	if c.Ansible != nil {
+		return CommandAnsible
+	}
 	if c.Script != "" {
 		return CommandScript
 	}

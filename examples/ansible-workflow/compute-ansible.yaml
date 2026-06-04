@@ -1,0 +1,30 @@
+meta:
+  name: rocky-compute-ansible
+  tags: ["9-ansible", "v1.0.0"]
+  from: docker://rockylinux:9
+
+layer:
+  manager:
+    name: dnf
+  
+  # Install Python for Ansible modules
+  actions:
+    install:
+      packages:
+        - python3
+        - python3-dnf   # Required for Ansible dnf module
+    
+    # Run Ansible playbook - container auto-added to 'compute' group
+    commands:
+      - ansible:
+          playbook: ./playbooks/compute.yaml
+          inventory: ./inventory/
+          groups:
+            - compute
+          extra_vars:
+            ntp_server: "time.example.com"
+            datacenter: "dc1"
+          verbose: 1
+
+publish:
+  - type: local

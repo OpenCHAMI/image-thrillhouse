@@ -1,0 +1,7 @@
+# Optional: Static inventory hosts
+# The container is automatically added to groups via dynamic inventory
+
+[control]
+# controller.example.com
+
+# You can add other hosts here that exist alongside the container

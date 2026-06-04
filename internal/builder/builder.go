@@ -416,13 +416,15 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 }
 
 // runCommands executes all custom commands specified in the configuration.
-// Commands can be either simple one-liners or multi-line shell scripts.
+// Commands can be simple one-liners, multi-line shell scripts, or Ansible playbooks.
 //
-// Two command types are supported:
+// Three command types are supported:
 //   - run: Simple command (e.g., "systemctl enable myservice")
 //   - script: Multi-line bash script
+//   - ansible: Ansible playbook execution (host-based with buildah plugin)
 //
-// All commands run inside the container using "buildah run".
+// Run and script commands execute inside the container using "buildah run".
+// Ansible commands execute on the host using the containers.podman.buildah connection plugin.
 func (b *Builder) runCommands(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 
@@ -454,8 +456,15 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 				return fmt.Errorf("run script: %w", err)
 			}
 
+		case config.CommandAnsible:
+			log.Debug("Executing Ansible playbook", "index", i, "playbook", cmd.Ansible.Playbook, "groups", cmd.Ansible.Groups)
+			// Execute Ansible playbook on host
+			if err := b.runAnsibleCommand(ctx, c, cmd.Ansible); err != nil {
+				return fmt.Errorf("run ansible playbook %d: %w", i, err)
+			}
+
 		default:
-			return fmt.Errorf("command has no run or script")
+			return fmt.Errorf("command has no run, script, or ansible")
 		}
 	}
 
@@ -468,6 +477,8 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 				log.Info("command", "index", i, "type", "run", "run", cmd.Run)
 			case config.CommandScript:
 				log.Info("command", "index", i, "type", "script", "script", cmd.Script)
+			case config.CommandAnsible:
+				log.Info("command", "index", i, "type", "ansible", "playbook", cmd.Ansible.Playbook, "groups", cmd.Ansible.Groups)
 			}
 		}
 	}
