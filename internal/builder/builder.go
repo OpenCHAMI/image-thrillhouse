@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 
 	"github.com/mattn/go-shellwords"
 	"github.com/travisbcotton/image-build/internal/backend"
@@ -553,9 +555,25 @@ func extractExitCode(err error) int {
 	if err == nil {
 		return 0
 	}
+	// First try to extract from *exec.ExitError in the error chain
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		return exitErr.ExitCode()
+	}
+	// Fallback: parse "exit status N" from error message
+	// This handles cases where buildah or other wrappers convert
+	// the ExitError to a string before wrapping it
+	errMsg := err.Error()
+	if strings.Contains(errMsg, "exit status ") {
+		// Find "exit status N" pattern
+		parts := strings.Split(errMsg, "exit status ")
+		if len(parts) >= 2 {
+			// Extract the number after "exit status "
+			codeStr := strings.Fields(parts[1])[0]
+			if code, parseErr := strconv.Atoi(codeStr); parseErr == nil {
+				return code
+			}
+		}
 	}
 	return -1
 }
