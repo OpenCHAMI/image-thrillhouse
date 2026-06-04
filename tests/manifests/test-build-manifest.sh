@@ -1,32 +1,32 @@
 #!/bin/bash
-# Integration test: `image-build build-all` + `--skip-if-exists`
+# Integration test: `image-build build --manifest --layer`
 #
-# Drives a full manifest end-to-end through buildah and asserts:
-#   1. build-all builds the requested subtree in dependency order
-#      (parent before child)
-#   2. each layer is committed to local storage with the computed hash tag
-#   3. the child's `from:` line resolves to the parent's hash (parent_tag
-#      injection actually wires through to the build)
-#   4. a second build-all --skip-if-exists is a no-op (no buildah calls)
-#   5. --layer narrows iteration to a subtree — sibling branches are not
-#      walked
+# Drives a manifest layer through buildah and asserts:
+#   1. building the base layer with the manifest-mode flags produces an
+#      image committed to local storage under the computed hash tag
+#   2. building the compute layer (which depends on the base) resolves
+#      `from:` against the base's hash — i.e. parent_tag injection makes
+#      it all the way to the buildah pull
+#   3. re-running both builds with --skip-if-exists is a no-op (the
+#      Exists check on the local publisher actually returns true)
 #
-# image-build doesn't cross-compile, so this test only ever builds for the
-# host arch. We use rocky-multiarch.yaml (which contains both x86_64 and
-# aarch64 branches) and pass --layer rocky-compute-<host arch> so the
-# walker naturally skips the foreign-arch branch.
+# Per the original design, manifest mode builds a SINGLE named layer at a
+# time. Ordering across layers is the user's responsibility, so this
+# script does it explicitly (base first, then compute) rather than asking
+# the tool to walk the DAG.
+#
+# image-build doesn't cross-compile, so we only ever build for the host
+# arch. Maps `uname -m` to one of {x86_64, aarch64}; anything else is a
+# hard fail with a clear message.
 #
 # Deliberately no `set -e`: each phase must be allowed to fail and report
-# independently. A bare `set -e` aborts silently on the first podman
-# failure with no diagnostic output — useless in CI.
+# independently, otherwise the first podman failure aborts the suite with
+# no diagnostic output.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-OUTPUT_DIR="${SCRIPT_DIR}/test-output/manifests-build-all"
+OUTPUT_DIR="${SCRIPT_DIR}/test-output/manifests-build"
 mkdir -p "$OUTPUT_DIR"
 
-# Map uname -m → the arch token our var files use (tests/rocky/templates/
-# {x86_64,aarch64}.yaml). Anything else is a hard fail because the tool
-# can't cross-compile and we won't pretend.
 HOST_ARCH_RAW=$(uname -m)
 case "$HOST_ARCH_RAW" in
     x86_64|amd64)  HOST_ARCH=x86_64  ;;
@@ -43,10 +43,11 @@ COMPUTE_LAYER="rocky-compute-${HOST_ARCH}"
 MANIFEST="/tests/manifests/rocky-multiarch.yaml"
 
 echo "════════════════════════════════════════════════════════════════"
-echo "Manifests Test: build-all + skip-if-exists"
+echo "Manifests Test: build --manifest --layer (single-layer builds)"
 echo "  host arch:    $HOST_ARCH_RAW ($HOST_ARCH)"
 echo "  manifest:     $MANIFEST"
-echo "  target leaf:  $COMPUTE_LAYER"
+echo "  base layer:   $BASE_LAYER"
+echo "  compute:      $COMPUTE_LAYER"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 
@@ -63,9 +64,6 @@ fail() {
     FAILED_TESTS=$((FAILED_TESTS + 1))
 }
 
-# Print the tail of a log file with a clear divider — used by every fail
-# path that has a log to point at, so the user gets immediate context
-# instead of having to grep through test-output/.
 dump_log() {
     local log_file="$1"
     if [ -s "$log_file" ]; then
@@ -91,7 +89,6 @@ run_image_build() {
         image-build --log-level info "$@"
 }
 
-# Build the test image if missing or REBUILD_IMAGE=1
 echo "Preparing image-build container (if needed)..."
 NEEDS_BUILD=0
 if [ "${REBUILD_IMAGE:-0}" = "1" ]; then
@@ -113,87 +110,90 @@ fi
 echo ""
 
 echo "════════════════════════════════════════════════════════════════"
-echo "Phase 1: build-all --layer $COMPUTE_LAYER from clean state"
+echo "Phase 1: build the base layer from clean state"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
-echo "[$TOTAL_TESTS] builds both layers in dependency order"
-if run_image_build build-all --manifest "$MANIFEST" --layer "$COMPUTE_LAYER" \
-       > "${OUTPUT_DIR}/build-all-clean.log" 2>&1
+echo "[$TOTAL_TESTS] build --manifest --layer $BASE_LAYER"
+if run_image_build build --manifest "$MANIFEST" --layer "$BASE_LAYER" \
+       > "${OUTPUT_DIR}/build-base.log" 2>&1
 then
-    # The logger emits "computed tag layer=$BASE_LAYER" before
-    # "computed tag layer=$COMPUTE_LAYER" when we walk topologically.
-    base_line=$(grep -n "computed tag.*${BASE_LAYER}" "${OUTPUT_DIR}/build-all-clean.log" | head -1 | cut -d: -f1)
-    comp_line=$(grep -n "computed tag.*${COMPUTE_LAYER}" "${OUTPUT_DIR}/build-all-clean.log" | head -1 | cut -d: -f1)
-    if [ -n "$base_line" ] && [ -n "$comp_line" ] && [ "$base_line" -lt "$comp_line" ]; then
-        pass "$BASE_LAYER built before $COMPUTE_LAYER"
+    if grep -q "computed tag.*${BASE_LAYER}" "${OUTPUT_DIR}/build-base.log"; then
+        pass "base layer built and tag was computed"
     else
-        fail "dependency order not observed (base line=$base_line, compute line=$comp_line)"
+        fail "no 'computed tag' log line for ${BASE_LAYER}"
+        dump_log "${OUTPUT_DIR}/build-base.log"
     fi
 else
-    fail "build-all exited non-zero"
-    dump_log "${OUTPUT_DIR}/build-all-clean.log"
+    fail "build base exited non-zero"
+    dump_log "${OUTPUT_DIR}/build-base.log"
 fi
 
 echo ""
 echo "════════════════════════════════════════════════════════════════"
-echo "Phase 2: --skip-if-exists short-circuits a warm run"
+echo "Phase 2: build the compute layer (parent_tag must resolve)"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
-echo "[$TOTAL_TESTS] re-running build-all --skip-if-exists is a no-op"
-if run_image_build build-all --manifest "$MANIFEST" --layer "$COMPUTE_LAYER" \
+echo "[$TOTAL_TESTS] build --manifest --layer $COMPUTE_LAYER"
+if run_image_build build --manifest "$MANIFEST" --layer "$COMPUTE_LAYER" \
+       > "${OUTPUT_DIR}/build-compute.log" 2>&1
+then
+    # The compute template's `from: localhost/rocky-base:{{ .parent_tag }}`
+    # must render to a concrete tag that exists in local storage. If
+    # parent_tag injection were broken, buildah would fail to pull the
+    # base image and the build would error before getting here.
+    if grep -q "computed tag.*${COMPUTE_LAYER}" "${OUTPUT_DIR}/build-compute.log"; then
+        pass "compute layer built (parent_tag resolved to a real base image)"
+    else
+        fail "no 'computed tag' log line for ${COMPUTE_LAYER}"
+        dump_log "${OUTPUT_DIR}/build-compute.log"
+    fi
+else
+    fail "build compute exited non-zero"
+    dump_log "${OUTPUT_DIR}/build-compute.log"
+fi
+
+echo ""
+echo "════════════════════════════════════════════════════════════════"
+echo "Phase 3: --skip-if-exists short-circuits warm rebuilds"
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+
+TOTAL_TESTS=$((TOTAL_TESTS + 1))
+echo "[$TOTAL_TESTS] re-build base with --skip-if-exists is a no-op"
+if run_image_build build --manifest "$MANIFEST" --layer "$BASE_LAYER" \
        --skip-if-exists \
-       > "${OUTPUT_DIR}/build-all-warm.log" 2>&1
+       > "${OUTPUT_DIR}/skip-base.log" 2>&1
 then
-    # Both layers should log "skipping build, image already exists".
-    skipped=$(grep -c 'skipping build, image already exists' "${OUTPUT_DIR}/build-all-warm.log" || true)
-    if [ "$skipped" = "2" ]; then
-        pass "both layers reported skipped"
+    if grep -q 'skipping build, image already exists' "${OUTPUT_DIR}/skip-base.log"; then
+        pass "base reported skipped"
     else
-        fail "expected 2 skipped layers, got $skipped"
-        dump_log "${OUTPUT_DIR}/build-all-warm.log"
+        fail "expected 'skipping build, image already exists' log line"
+        dump_log "${OUTPUT_DIR}/skip-base.log"
     fi
 else
-    fail "build-all --skip-if-exists exited non-zero"
-    dump_log "${OUTPUT_DIR}/build-all-warm.log"
+    fail "build base --skip-if-exists exited non-zero"
+    dump_log "${OUTPUT_DIR}/skip-base.log"
 fi
 
-echo ""
-echo "════════════════════════════════════════════════════════════════"
-echo "Phase 3: --layer narrows to a subtree (siblings not walked)"
-echo "════════════════════════════════════════════════════════════════"
-echo ""
-
-# The multi-arch manifest has 4 layers total. Targeting --layer
-# rocky-compute-<host-arch> should iterate exactly 2 (the host's base +
-# compute) and never touch the foreign-arch branch.
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
-echo "[$TOTAL_TESTS] foreign-arch branch is NOT iterated"
-case "$HOST_ARCH" in
-    x86_64)  FOREIGN_BASE="rocky-base-aarch64"; FOREIGN_COMPUTE="rocky-compute-aarch64" ;;
-    aarch64) FOREIGN_BASE="rocky-base-x86_64";  FOREIGN_COMPUTE="rocky-compute-x86_64"  ;;
-esac
-
-if [ "$(grep -c "computed tag.*${FOREIGN_BASE}" "${OUTPUT_DIR}/build-all-warm.log" || true)" = "0" ] \
-   && [ "$(grep -c "computed tag.*${FOREIGN_COMPUTE}" "${OUTPUT_DIR}/build-all-warm.log" || true)" = "0" ]; then
-    pass "foreign-arch layers ($FOREIGN_BASE, $FOREIGN_COMPUTE) were not touched"
+echo "[$TOTAL_TESTS] re-build compute with --skip-if-exists is a no-op"
+if run_image_build build --manifest "$MANIFEST" --layer "$COMPUTE_LAYER" \
+       --skip-if-exists \
+       > "${OUTPUT_DIR}/skip-compute.log" 2>&1
+then
+    if grep -q 'skipping build, image already exists' "${OUTPUT_DIR}/skip-compute.log"; then
+        pass "compute reported skipped"
+    else
+        fail "expected 'skipping build, image already exists' log line"
+        dump_log "${OUTPUT_DIR}/skip-compute.log"
+    fi
 else
-    fail "foreign-arch layer appeared in the build log"
-    dump_log "${OUTPUT_DIR}/build-all-warm.log"
-fi
-
-# Also assert build-all logged the subtree order it intends to walk.
-TOTAL_TESTS=$((TOTAL_TESTS + 1))
-echo "[$TOTAL_TESTS] build-all logs the subtree order"
-if grep -q "\"order\":\\[\"${BASE_LAYER}\",\"${COMPUTE_LAYER}\"\\]" "${OUTPUT_DIR}/build-all-warm.log" \
-   || grep -q "order=\\[${BASE_LAYER} ${COMPUTE_LAYER}\\]" "${OUTPUT_DIR}/build-all-warm.log"; then
-    pass "subtree order log entry present"
-else
-    fail "subtree order log entry missing"
-    dump_log "${OUTPUT_DIR}/build-all-warm.log"
+    fail "build compute --skip-if-exists exited non-zero"
+    dump_log "${OUTPUT_DIR}/skip-compute.log"
 fi
 
 echo ""
@@ -209,9 +209,9 @@ echo "Output: $OUTPUT_DIR"
 echo ""
 
 if [ $FAILED_TESTS -eq 0 ]; then
-    echo "✓ All build-all tests passed!"
+    echo "✓ All build --manifest tests passed!"
     exit 0
 else
-    echo "✗ Some build-all tests failed"
+    echo "✗ Some build --manifest tests failed"
     exit 1
 fi

@@ -51,7 +51,7 @@ Options:
   --dnf             Run only DNF backend tests
   --apt             Run only APT backend tests
   --zypper          Run only Zypper backend tests
-  --manifests       Run only manifest tests (render + build-all)
+  --manifests       Run only manifest tests (render + build-manifest)
   --no-manifests    Skip manifest tests (run only per-backend)
   -h, --help        Show this help
 
@@ -59,7 +59,7 @@ Examples:
   $0                    # Run all tests sequentially (backends + manifests)
   $0 --parallel         # Run scratch tests in parallel
   $0 --dnf              # Run only DNF backend tests
-  $0 --manifests        # Run only the manifest/template/build-all suite
+  $0 --manifests        # Run only the manifest/template/build-manifest suite
   $0 --parallel --apt   # Run APT tests with parallel scratch
 
 EOF
@@ -130,7 +130,7 @@ run_test() {
     fi
 }
 
-# Function to run a manifest test script (render / build-all). These live
+# Function to run a manifest test script (render / build-manifest). These live
 # under tests/manifests/ and don't follow the per-backend naming, so they
 # get their own runner.
 run_manifest_test() {
@@ -163,10 +163,10 @@ run_manifest_test() {
 }
 
 # Manifests-only short-circuit: skip every per-backend test, just run the
-# manifest suite. Useful for iterating on templating / build-all changes.
+# manifest suite. Useful for iterating on templating / build-manifest changes.
 if [ "$ONLY_MANIFESTS" = true ]; then
     run_manifest_test "render"    || true
-    run_manifest_test "build-all" || true
+    run_manifest_test "build-manifest" || true
     echo ""
     echo "════════════════════════════════════════════════════════════════"
     echo "                      Final Results                             "
@@ -239,11 +239,11 @@ fi
 if [ "$SKIP_MANIFESTS" = false ] && [ -z "$PACKAGE_MANAGER" ]; then
     echo ""
     echo "════════════════════════════════════════════════════════════════"
-    echo "Phase: Manifests (templating / build-all / skip-if-exists)"
+    echo "Phase: Manifests (templating / build-manifest / skip-if-exists)"
     echo "════════════════════════════════════════════════════════════════"
     echo ""
     run_manifest_test "render"    || true
-    run_manifest_test "build-all" || true
+    run_manifest_test "build-manifest" || true
 fi
 
 # Summary
