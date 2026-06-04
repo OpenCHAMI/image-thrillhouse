@@ -160,20 +160,25 @@ func combineVarFiles(globals, layerSpecific []string) []string {
 // Always injected:
 //   - "tag" — this layer's computed hash.
 //
-// Injected when the layer has a single direct parent:
-//   - "parent_tag" — that parent's computed hash. Lets templates stay
-//     arch-agnostic: a single rocky-compute.yaml can be reused as
-//     rocky-compute-x86_64 and rocky-compute-aarch64 with
-//     `from: localhost/rocky-base:{{ .parent_tag }}` instead of
-//     hard-coding the parent layer name. Not injected when the layer has
-//     zero or multiple direct parents — those cases are ambiguous and the
-//     caller should use the explicit "<name>_tag" form below.
+// Injected for every DIRECT parent (entries in layer.DependsOn):
+//   - "<parent>_tag" — that parent's computed hash, with hyphens replaced
+//     by underscores (so "rocky-base" becomes "rocky_base_tag"). A child
+//     references its parents by name.
 //
-// Injected for every transitive ancestor:
-//   - "<ancestor>_tag" — the ancestor's computed hash, with hyphens
-//     replaced by underscores (so "rocky-base" becomes "rocky_base_tag").
-//     A grandchild can reference any layer up-chain by name without the
-//     intermediate layer forwarding it.
+// Additionally injected when the layer has a single direct parent:
+//   - "parent_tag" — alias for that one parent's hash. Lets a multi-arch
+//     template stay layer-name-agnostic: a single rocky-compute.yaml can
+//     be reused as rocky-compute-x86_64 and rocky-compute-aarch64 with
+//     `from: localhost/rocky-base:{{ .parent_tag }}` instead of having to
+//     hard-code which arch-specific parent name applies. Not injected for
+//     forks (>1 parent, ambiguous) or roots (0 parents, nothing to alias).
+//
+// Note: transitive ancestor tags are intentionally NOT injected. A
+// grandchild that needs its grandparent's tag must list the grandparent
+// directly in depends_on, or have an intermediate layer forward the
+// value. This matches the original design — "computes the current layer's
+// tag and all parent tags" — and keeps the template-visible var surface
+// proportional to what the manifest declares.
 //
 // globalVarFiles must be only the CLI-level globals; layer var files are
 // applied inside ComputeTag.
@@ -192,31 +197,20 @@ func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string) (map[
 	vars["tag"] = layerTag
 	slog.Info("computed tag", "layer", layerName, "tag", layerTag)
 
+	for _, depName := range layer.DependsOn {
+		depTag, err := dag.ComputeTag(depName, globalVarFiles)
+		if err != nil {
+			return nil, fmt.Errorf("compute tag for parent %s: %w", depName, err)
+		}
+		varName := strings.ReplaceAll(depName, "-", "_") + "_tag"
+		vars[varName] = depTag
+		slog.Debug("computed parent tag", "layer", depName, "var", varName, "tag", depTag)
+	}
+
 	// Singular parent_tag alias when the layer has exactly one direct
-	// parent. Skipped for forks (>1 parent) because "the parent" is
-	// ambiguous, and for roots (0 parents) because there's nothing to
-	// alias. Callers in those cases get only the per-name _tag form.
+	// parent. Skipped for forks (ambiguous) and roots (nothing to alias).
 	if len(layer.DependsOn) == 1 {
-		parentTag, err := dag.ComputeTag(layer.DependsOn[0], globalVarFiles)
-		if err != nil {
-			return nil, fmt.Errorf("compute parent tag: %w", err)
-		}
-		vars["parent_tag"] = parentTag
-	}
-
-	ancestors, err := dag.Ancestors(layerName)
-	if err != nil {
-		return nil, fmt.Errorf("ancestors: %w", err)
-	}
-	for _, ancestor := range ancestors {
-		ancestorTag, err := dag.ComputeTag(ancestor.Name, globalVarFiles)
-		if err != nil {
-			return nil, fmt.Errorf("compute tag for ancestor %s: %w", ancestor.Name, err)
-		}
-
-		varName := strings.ReplaceAll(ancestor.Name, "-", "_") + "_tag"
-		vars[varName] = ancestorTag
-		slog.Debug("computed ancestor tag", "layer", ancestor.Name, "var", varName, "tag", ancestorTag)
+		vars["parent_tag"] = vars[strings.ReplaceAll(layer.DependsOn[0], "-", "_")+"_tag"]
 	}
 
 	return vars, nil

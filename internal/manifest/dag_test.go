@@ -374,12 +374,12 @@ func TestComputeTag_LayerStableAsDep(t *testing.T) {
 	}
 }
 
-// TestComputeBuildVars_TransitiveAncestors verifies that a deep child (here
-// "grandchild") gets a *_tag entry for every transitive ancestor, not just
-// its direct parent. Without this, a grandchild template couldn't reference
-// `{{ .grandparent_tag }}` without forwarding the value through the
-// intermediate layer.
-func TestComputeBuildVars_TransitiveAncestors(t *testing.T) {
+// TestComputeBuildVars_DirectParentsOnly locks in the design's "direct
+// parents only" rule: a grandchild gets vars for its direct parent (and
+// parent_tag, since there's exactly one), but NOT for any grandparent.
+// Templates that need a grandparent's tag must either list it directly in
+// depends_on or have an intermediate layer forward the value.
+func TestComputeBuildVars_DirectParentsOnly(t *testing.T) {
 	dir := t.TempDir()
 	gpCfg := writeConfig(t, dir, "gp.yaml", minimalConfig)
 	pCfg := writeConfig(t, dir, "p.yaml", minimalConfig)
@@ -402,7 +402,8 @@ func TestComputeBuildVars_TransitiveAncestors(t *testing.T) {
 		t.Fatalf("compute build vars: %v", err)
 	}
 
-	for _, key := range []string{"tag", "parent_tag", "grandparent_tag"} {
+	// Present: tag (this layer), parent_tag (single-parent alias), parent_tag-by-name.
+	for _, key := range []string{"tag", "parent_tag", "parent_tag"} {
 		v, ok := vars[key]
 		if !ok {
 			t.Errorf("missing var %q", key)
@@ -413,15 +414,9 @@ func TestComputeBuildVars_TransitiveAncestors(t *testing.T) {
 		}
 	}
 
-	// Sanity: the injected ancestor tag must agree with what ComputeTag
-	// returns standalone — guards against the ComputeBuildVars helper
-	// quietly re-deriving the tag a different way.
-	want, err := dag.ComputeTag("grandparent", nil)
-	if err != nil {
-		t.Fatalf("compute grandparent: %v", err)
-	}
-	if got := vars["grandparent_tag"]; got != want {
-		t.Errorf("grandparent_tag mismatch:\n  injected   = %v\n  standalone = %v", got, want)
+	// Absent: grandparent_tag. Transitive ancestors are not injected.
+	if _, ok := vars["grandparent_tag"]; ok {
+		t.Errorf("grandparent_tag should NOT be injected for an indirect ancestor; got %v", vars)
 	}
 }
 
@@ -477,11 +472,16 @@ func TestComputeBuildVars_ParentTagSingleParent(t *testing.T) {
 	if _, ok := joinVars["parent_tag"]; ok {
 		t.Errorf("join: parent_tag must not be injected when a layer has multiple direct parents")
 	}
-	// but the explicit per-name aliases must still be present.
-	for _, key := range []string{"left_tag", "right_tag", "root_tag"} {
+	// Direct parents (left, right) get per-name aliases. root is a
+	// grandparent via both branches and must NOT be injected — transitive
+	// ancestors are not exposed.
+	for _, key := range []string{"left_tag", "right_tag"} {
 		if _, ok := joinVars[key]; !ok {
-			t.Errorf("join: missing %q (per-name tag should still be available even when parent_tag is omitted)", key)
+			t.Errorf("join: missing %q (direct parent should always have a per-name tag)", key)
 		}
+	}
+	if _, ok := joinVars["root_tag"]; ok {
+		t.Errorf("join: root_tag must not be injected (root is a grandparent, not a direct parent)")
 	}
 
 	// orphan root: parent_tag absent (nothing to alias).
