@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 
 	"github.com/mattn/go-shellwords"
 	"github.com/travisbcotton/image-build/internal/backend"
@@ -381,8 +383,30 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 		cmds := b.backend.InstallCommands(b.cfg.Layer.Actions.Install)
 		for _, cmd := range cmds {
 			log.Debug("Install", "action", cmd)
-			out := b.backend.OutputWriter()
-			if err := c.Run(ctx, cmd, container.RunModeContainer, out); err != nil {
+			// Wrap the backend's output writer to capture output for exit code checking
+			out := container.NewCapturingWriter(b.backend.OutputWriter())
+			err := c.Run(ctx, cmd, container.RunModeContainer, out)
+
+			// Check if the error is an acceptable exit code
+			if err != nil {
+				// Try to extract exit code from error
+				exitCode := extractExitCode(err)
+				log.Debug("install command exited non-zero",
+					"exitCode", exitCode, "backend", b.cfg.Layer.Manager.Name, "cmd", cmd)
+				if exitCode > 0 && b.backend.IsAcceptableExitCode(exitCode, out.String()) {
+					log.Warn("Command returned non-zero exit code but packages were installed successfully",
+						"exitCode", exitCode, "cmd", cmd)
+					// Treat as success
+					continue
+				}
+				if exitCode == -1 {
+					// Diagnostic for the case where the error chain doesn't
+					// contain an *exec.ExitError — the acceptable-exit-code
+					// check can't even run, so a backend that *would* tolerate
+					// this code silently won't get the chance.
+					log.Warn("could not determine exit code from error; acceptable-exit-code checks skipped",
+						"err", err)
+				}
 				return fmt.Errorf("run %v: %w", cmd, err)
 			}
 		}
@@ -531,9 +555,25 @@ func extractExitCode(err error) int {
 	if err == nil {
 		return 0
 	}
+	// First try to extract from *exec.ExitError in the error chain
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		return exitErr.ExitCode()
+	}
+	// Fallback: parse "exit status N" from error message
+	// This handles cases where buildah or other wrappers convert
+	// the ExitError to a string before wrapping it
+	errMsg := err.Error()
+	if strings.Contains(errMsg, "exit status ") {
+		// Find "exit status N" pattern
+		parts := strings.Split(errMsg, "exit status ")
+		if len(parts) >= 2 {
+			// Extract the number after "exit status "
+			codeStr := strings.Fields(parts[1])[0]
+			if code, parseErr := strconv.Atoi(codeStr); parseErr == nil {
+				return code
+			}
+		}
 	}
 	return -1
 }
