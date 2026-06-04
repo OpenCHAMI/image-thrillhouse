@@ -219,14 +219,14 @@ func (b *Builder) buildAnsibleHostCommand(ansible *config.AnsibleCommand, contai
 }
 
 // executeAnsibleOnHost runs ansible-playbook on the host using bash
-// with process substitution for the dynamic inventory.
+// with a temporary YAML inventory file for the dynamic inventory.
 //
 // This constructs a command like:
 //
-//	ansible-playbook -i <(dynamic) -i inventory/ --limit container playbook.yaml
+//	ansible-playbook -i /tmp/inventory.yaml -i inventory/ --limit container playbook.yaml
 //
-// Process substitution (<(...)) allows piping the dynamic inventory
-// without creating temporary files on disk.
+// We use a temporary file instead of process substitution because Ansible
+// needs a file extension (.yaml) to determine the inventory format.
 func (b *Builder) executeAnsibleOnHost(ctx context.Context, ansibleCmd []string, dynamicInventory, playbookPath string) error {
 	// Get playbook directory for roles path
 	absPlaybook, _ := filepath.Abs(playbookPath)
@@ -247,39 +247,42 @@ func (b *Builder) executeAnsibleOnHost(ctx context.Context, ansibleCmd []string,
 		rolesPaths = append(rolesPaths, rolesPath)
 	}
 
-	// Build the shell command with process substitution
-	var shellCmd strings.Builder
+	// Write dynamic inventory to a temporary YAML file
+	// Ansible needs the .yaml extension to recognize the format
+	tmpDir := os.TempDir()
+	inventoryFile := filepath.Join(tmpDir, fmt.Sprintf("image-build-ansible-inventory-%d.yaml", time.Now().UnixNano()))
 
-	for i, arg := range ansibleCmd {
-		if i > 0 {
-			shellCmd.WriteString(" ")
-		}
+	// Ensure cleanup
+	defer os.Remove(inventoryFile)
 
+	// Write the dynamic inventory
+	if err := os.WriteFile(inventoryFile, []byte(dynamicInventory), 0600); err != nil {
+		return fmt.Errorf("write dynamic inventory: %w", err)
+	}
+
+	slog.Debug("Wrote dynamic inventory to temp file",
+		"path", inventoryFile,
+		"content", dynamicInventory)
+
+	// Build the command, replacing DYNAMIC_INVENTORY_PLACEHOLDER with the temp file
+	var finalCmd []string
+	for _, arg := range ansibleCmd {
 		if arg == "DYNAMIC_INVENTORY_PLACEHOLDER" {
-			// Replace with process substitution: <(cat <<'EOF' ... EOF)
-			// Using heredoc ensures special chars in YAML are preserved
-			shellCmd.WriteString("<(cat <<'ANSIBLE_INVENTORY_EOF'\n")
-			shellCmd.WriteString(dynamicInventory)
-			shellCmd.WriteString("\nANSIBLE_INVENTORY_EOF\n)")
+			finalCmd = append(finalCmd, inventoryFile)
 		} else {
-			// Quote arguments that contain spaces or special chars
-			if strings.ContainsAny(arg, " \t\n'\"$") {
-				shellCmd.WriteString(fmt.Sprintf("'%s'", strings.ReplaceAll(arg, "'", "'\\''")))
-			} else {
-				shellCmd.WriteString(arg)
-			}
+			finalCmd = append(finalCmd, arg)
 		}
 	}
 
-	command := shellCmd.String()
+	command := strings.Join(finalCmd, " ")
 	slog.Debug("Executing ansible-playbook on host",
-		"shell_command", command,
-		"dynamic_inventory", dynamicInventory,
+		"command", command,
+		"dynamic_inventory_file", inventoryFile,
 		"roles_path", strings.Join(rolesPaths, ":"))
 
-	// Execute via bash with process substitution support
+	// Execute ansible-playbook directly (no need for bash -c anymore)
 	// Important: We need to ensure blocking I/O for Ansible
-	cmd := exec.CommandContext(ctx, "bash", "-c", command)
+	cmd := exec.CommandContext(ctx, finalCmd[0], finalCmd[1:]...)
 
 	// Set environment variables
 	cmd.Env = os.Environ()
