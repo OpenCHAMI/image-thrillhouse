@@ -160,7 +160,7 @@ func (b *Builder) buildAnsibleHostCommand(ansible *config.AnsibleCommand, contai
 	}
 
 	// Get playbook directory for roles path
-	playbookDir := filepath.Dir(absPlaybook)
+	//playbookDir := filepath.Dir(absPlaybook)
 
 	cmd := []string{"ansible-playbook"}
 
