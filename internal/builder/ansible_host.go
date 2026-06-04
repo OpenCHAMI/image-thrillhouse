@@ -71,7 +71,7 @@ func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, 
 		"limit", ansible.Limit)
 
 	// Execute ansible-playbook on host with dynamic inventory
-	if err := b.executeAnsibleOnHost(ctx, ansibleCmd, dynamicInventory); err != nil {
+	if err := b.executeAnsibleOnHost(ctx, ansibleCmd, dynamicInventory, ansible.Playbook); err != nil {
 		return fmt.Errorf("ansible-playbook failed: %w", err)
 	}
 
@@ -159,9 +159,16 @@ func (b *Builder) buildAnsibleHostCommand(ansible *config.AnsibleCommand, contai
 		return nil, fmt.Errorf("resolve playbook path: %w", err)
 	}
 
+	// Get playbook directory for roles path
+	playbookDir := filepath.Dir(absPlaybook)
+
 	cmd := []string{"ansible-playbook"}
 
-	// Add user's inventory if provided
+	// Add dynamic inventory FIRST (process substitution)
+	// This will be replaced with <(...) in the shell execution
+	cmd = append(cmd, "-i", "DYNAMIC_INVENTORY_PLACEHOLDER")
+
+	// Add user's inventory if provided (merged with dynamic)
 	if ansible.Inventory != "" {
 		if _, err := os.Stat(ansible.Inventory); err != nil {
 			return nil, fmt.Errorf("inventory not found: %s", ansible.Inventory)
@@ -172,10 +179,6 @@ func (b *Builder) buildAnsibleHostCommand(ansible *config.AnsibleCommand, contai
 		}
 		cmd = append(cmd, "-i", absInventory)
 	}
-
-	// Add dynamic inventory via process substitution placeholder
-	// This will be replaced with <(...) in the shell execution
-	cmd = append(cmd, "-i", "DYNAMIC_INVENTORY_PLACEHOLDER")
 
 	// Limit to container only (prevents running on other hosts in inventory)
 	limit := ansible.Limit
@@ -211,6 +214,7 @@ func (b *Builder) buildAnsibleHostCommand(ansible *config.AnsibleCommand, contai
 	// Playbook (must be last)
 	cmd = append(cmd, absPlaybook)
 
+	// Store playbook dir for ANSIBLE_ROLES_PATH env var
 	return cmd, nil
 }
 
@@ -219,11 +223,30 @@ func (b *Builder) buildAnsibleHostCommand(ansible *config.AnsibleCommand, contai
 //
 // This constructs a command like:
 //
-//	ansible-playbook -i inventory/ -i <(cat inventory.yaml) --limit container playbook.yaml
+//	ansible-playbook -i <(dynamic) -i inventory/ --limit container playbook.yaml
 //
 // Process substitution (<(...)) allows piping the dynamic inventory
 // without creating temporary files on disk.
-func (b *Builder) executeAnsibleOnHost(ctx context.Context, ansibleCmd []string, dynamicInventory string) error {
+func (b *Builder) executeAnsibleOnHost(ctx context.Context, ansibleCmd []string, dynamicInventory, playbookPath string) error {
+	// Get playbook directory for roles path
+	absPlaybook, _ := filepath.Abs(playbookPath)
+	playbookDir := filepath.Dir(absPlaybook)
+
+	// Look for roles in parent directory (common structure: playbooks/ and roles/ as siblings)
+	rolesPath := filepath.Join(filepath.Dir(playbookDir), "roles")
+
+	// Also check for roles in playbook directory itself
+	playbookRolesPath := filepath.Join(playbookDir, "roles")
+
+	// Build ANSIBLE_ROLES_PATH - check both locations
+	var rolesPaths []string
+	if _, err := os.Stat(playbookRolesPath); err == nil {
+		rolesPaths = append(rolesPaths, playbookRolesPath)
+	}
+	if _, err := os.Stat(rolesPath); err == nil {
+		rolesPaths = append(rolesPaths, rolesPath)
+	}
+
 	// Build the shell command with process substitution
 	var shellCmd strings.Builder
 
@@ -251,11 +274,23 @@ func (b *Builder) executeAnsibleOnHost(ctx context.Context, ansibleCmd []string,
 	command := shellCmd.String()
 	slog.Debug("Executing ansible-playbook on host",
 		"shell_command", command,
-		"dynamic_inventory", dynamicInventory)
+		"dynamic_inventory", dynamicInventory,
+		"roles_path", strings.Join(rolesPaths, ":"))
 
 	// Execute via bash with process substitution support
 	// Important: We need to ensure blocking I/O for Ansible
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
+
+	// Set environment variables
+	cmd.Env = os.Environ()
+
+	// Add ANSIBLE_ROLES_PATH if we found roles directories
+	if len(rolesPaths) > 0 {
+		cmd.Env = append(cmd.Env, "ANSIBLE_ROLES_PATH="+strings.Join(rolesPaths, ":"))
+	}
+
+	// Disable host key checking for buildah containers (they don't have SSH)
+	cmd.Env = append(cmd.Env, "ANSIBLE_HOST_KEY_CHECKING=False")
 
 	// Create pipes for stdout/stderr to ensure blocking I/O
 	// Ansible requires blocking file handles, not the potentially non-blocking
