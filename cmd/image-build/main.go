@@ -67,31 +67,6 @@ The configuration defines:
 	RunE: runBuild,
 }
 
-// buildAllCmd builds every layer in a manifest in topological order.
-//
-// With just --manifest, the whole manifest is built. With --manifest and
-// --layer, only the named layer and its transitive ancestors are built
-// (i.e. its subtree of the DAG), so you can target a leaf without dragging
-// in unrelated branches.
-//
-// Combined with --skip-if-exists, already-published parents short-circuit
-// the per-layer Exists check, so re-running the same command is a fast
-// no-op when nothing has changed.
-//
-// On the first layer that fails, the run aborts immediately (fail-fast).
-var buildAllCmd = &cobra.Command{
-	Use:   "build-all",
-	Short: "Build every layer of a manifest in topological order",
-	Long: `Build every layer of a manifest in dependency order.
-
-Pass --manifest to build the entire manifest. Pass --manifest with --layer
-to build only the named layer and its transitive ancestors. Combine with
---skip-if-exists to skip layers whose images are already published.
-
-The run stops at the first failing layer.`,
-	RunE: runBuildAll,
-}
-
 // validateCmd validates a configuration file without actually building the image.
 // This is useful for CI/CD pipelines and quick syntax checking.
 var validateCmd = &cobra.Command{
@@ -268,21 +243,14 @@ func init() {
 	buildCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 	buildCmd.Flags().BoolVar(&skipIfExists, "skip-if-exists", false, "skip the build when all publishers report the image already exists")
 
-	// build-all-specific flags
-	buildAllCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file (required)")
-	buildAllCmd.Flags().StringVar(&layerName, "layer", "", "build only this layer and its transitive ancestors (default: build all)")
-	buildAllCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
-	buildAllCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
-	buildAllCmd.Flags().BoolVar(&skipIfExists, "skip-if-exists", false, "skip layers whose publishers report the image already exists")
-
 	// Validate-specific flags
 	validateCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
 	validateCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
 	validateCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 
-	// Render-specific flags. Mirrors build/build-all so users have one
-	// flag pattern across subcommands: either --config standalone, or
-	// --manifest + --layer for full manifest context with computed tags.
+	// Render-specific flags. Mirrors build so users have one flag pattern
+	// across subcommands: either --config standalone, or --manifest +
+	// --layer for full manifest context with computed tags.
 	renderCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
 	renderCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file (use with --layer)")
 	renderCmd.Flags().StringVar(&layerName, "layer", "", "layer name in the manifest (requires --manifest)")
@@ -292,7 +260,6 @@ func init() {
 
 	// Register all subcommands under the root command
 	rootCmd.AddCommand(buildCmd)
-	rootCmd.AddCommand(buildAllCmd)
 	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(renderCmd)
 	rootCmd.AddCommand(versionCmd)
@@ -334,8 +301,8 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load vars: %w", err)
 	}
 
-	// Manifest mode: delegate to the shared per-layer builder so build and
-	// build-all share exactly the same per-layer behaviour.
+	// Manifest mode: delegate to buildLayer so the per-layer flow stays in
+	// one place (also shared with runRender's manifest branch).
 	if manifestPath != "" {
 		dag, err := loadDAG(manifestPath)
 		if err != nil {
@@ -369,52 +336,6 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	return bldr.Build(ctx)
 }
 
-// runBuildAll iterates a manifest in topological order and builds each layer
-// with the same per-layer code path runBuild uses in manifest mode. When
-// --layer is provided, the iteration is narrowed to that layer's transitive
-// ancestor subtree (the layer plus everything it depends on).
-//
-// Fails fast on the first layer error.
-func runBuildAll(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
-
-	if err := setupLogger(logLevel, logFormat); err != nil {
-		return err
-	}
-	if manifestPath == "" {
-		return fmt.Errorf("--manifest is required for build-all")
-	}
-
-	cliVars, err := config.LoadVars([]string{varFile}, vars)
-	if err != nil {
-		return fmt.Errorf("load vars: %w", err)
-	}
-
-	dag, err := loadDAG(manifestPath)
-	if err != nil {
-		return err
-	}
-
-	order, err := buildOrder(dag, layerName)
-	if err != nil {
-		return err
-	}
-
-	globalVarFiles := cliGlobalVarFiles()
-	log := slog.With("component", "build-all")
-	log.Info("building layers in order",
-		"count", len(order),
-		"order", layerNames(order),
-		"skip_if_exists", skipIfExists)
-
-	for _, layer := range order {
-		if err := buildLayer(ctx, dag, layer, cliVars, globalVarFiles, skipIfExists); err != nil {
-			return fmt.Errorf("layer %s: %w", layer.Name, err)
-		}
-	}
-	return nil
-}
-
 // loadDAG is a thin wrapper that loads a manifest and constructs its DAG,
 // surfacing both error stages with consistent prefixes.
 func loadDAG(path string) (*manifest.DAG, error) {
@@ -429,34 +350,6 @@ func loadDAG(path string) (*manifest.DAG, error) {
 	return dag, nil
 }
 
-// buildOrder returns the layers to build, in dependency order. When target is
-// empty, every layer in the DAG is returned; otherwise only target and its
-// transitive ancestors are returned, still in dependency order (root first).
-func buildOrder(dag *manifest.DAG, target string) ([]*manifest.Layer, error) {
-	if target == "" {
-		return dag.TopologicalSort()
-	}
-	ancestors, err := dag.Ancestors(target)
-	if err != nil {
-		return nil, fmt.Errorf("ancestors of %s: %w", target, err)
-	}
-	leaf, err := dag.Get(target)
-	if err != nil {
-		return nil, fmt.Errorf("get layer %s: %w", target, err)
-	}
-	return append(ancestors, leaf), nil
-}
-
-// layerNames is a small helper for logging — pulls just the names from a
-// slice of layers so structured logs stay readable.
-func layerNames(layers []*manifest.Layer) []string {
-	out := make([]string, len(layers))
-	for i, l := range layers {
-		out[i] = l.Name
-	}
-	return out
-}
-
 // cliGlobalVarFiles returns the CLI-supplied --var-file as a slice (or empty
 // when the flag wasn't given), in the shape ComputeBuildVars expects.
 func cliGlobalVarFiles() []string {
@@ -468,8 +361,9 @@ func cliGlobalVarFiles() []string {
 
 // buildLayer runs the full per-layer pipeline for a single manifest layer:
 // load layer-specific vars, inject computed tags, render+validate config,
-// construct backend and publishers, and run the build. Used by both runBuild
-// (manifest mode) and runBuildAll, so behaviour stays in lockstep.
+// construct backend and publishers, and run the build. Used by runBuild's
+// manifest branch — kept as a helper so the prelude can stay in lockstep
+// with prepareLayerRender (which runRender's manifest branch reuses).
 func buildLayer(
 	ctx context.Context,
 	dag *manifest.DAG,
@@ -593,8 +487,8 @@ func runValidate(cmd *cobra.Command, args []string) error {
 //     will build actually run?" inspection.
 //
 // --config and --manifest are mutually exclusive; --layer requires
-// --manifest. Same shape as build/build-all so users don't have to learn a
-// second flag pattern.
+// --manifest. Same shape as build so users don't have to learn a second
+// flag pattern.
 func runRender(cmd *cobra.Command, args []string) error {
 	if err := setupLogger(logLevel, logFormat); err != nil {
 		return err
