@@ -15,8 +15,10 @@
 # host arch. We use rocky-multiarch.yaml (which contains both x86_64 and
 # aarch64 branches) and pass --layer rocky-compute-<host arch> so the
 # walker naturally skips the foreign-arch branch.
-
-set -e
+#
+# Deliberately no `set -e`: each phase must be allowed to fail and report
+# independently. A bare `set -e` aborts silently on the first podman
+# failure with no diagnostic output — useless in CI.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUTPUT_DIR="${SCRIPT_DIR}/test-output/manifests-build-all"
@@ -61,6 +63,17 @@ fail() {
     FAILED_TESTS=$((FAILED_TESTS + 1))
 }
 
+# Print the tail of a log file with a clear divider — used by every fail
+# path that has a log to point at, so the user gets immediate context
+# instead of having to grep through test-output/.
+dump_log() {
+    local log_file="$1"
+    if [ -s "$log_file" ]; then
+        echo "    --- last 20 lines of $log_file ---"
+        tail -20 "$log_file" | sed 's/^/    /'
+    fi
+}
+
 # Run image-build inside the test container with the full privileged set
 # (build needs buildah, which needs user namespaces / fuse).
 run_image_build() {
@@ -87,8 +100,12 @@ elif ! podman image exists image-build:test && ! podman image exists localhost/i
     NEEDS_BUILD=1
 fi
 if [ "$NEEDS_BUILD" = "1" ]; then
-    cd "${SCRIPT_DIR}" && podman build -t image-build:test -f Dockerfile . \
-        > "${OUTPUT_DIR}/container-build.log" 2>&1
+    if ! (cd "${SCRIPT_DIR}" && podman build -t image-build:test -f Dockerfile . \
+            > "${OUTPUT_DIR}/container-build.log" 2>&1); then
+        echo "✗ Container build FAILED. See ${OUTPUT_DIR}/container-build.log"
+        tail -30 "${OUTPUT_DIR}/container-build.log" | sed 's/^/    /'
+        exit 1
+    fi
     echo "✓ Container built"
 else
     echo "✓ Container already exists (set REBUILD_IMAGE=1 to force rebuild)"
@@ -115,7 +132,8 @@ then
         fail "dependency order not observed (base line=$base_line, compute line=$comp_line)"
     fi
 else
-    fail "build-all exited non-zero (see ${OUTPUT_DIR}/build-all-clean.log)"
+    fail "build-all exited non-zero"
+    dump_log "${OUTPUT_DIR}/build-all-clean.log"
 fi
 
 echo ""
@@ -135,10 +153,12 @@ then
     if [ "$skipped" = "2" ]; then
         pass "both layers reported skipped"
     else
-        fail "expected 2 skipped layers, got $skipped (see ${OUTPUT_DIR}/build-all-warm.log)"
+        fail "expected 2 skipped layers, got $skipped"
+        dump_log "${OUTPUT_DIR}/build-all-warm.log"
     fi
 else
-    fail "build-all --skip-if-exists exited non-zero (see ${OUTPUT_DIR}/build-all-warm.log)"
+    fail "build-all --skip-if-exists exited non-zero"
+    dump_log "${OUTPUT_DIR}/build-all-warm.log"
 fi
 
 echo ""
@@ -161,7 +181,8 @@ if [ "$(grep -c "computed tag.*${FOREIGN_BASE}" "${OUTPUT_DIR}/build-all-warm.lo
    && [ "$(grep -c "computed tag.*${FOREIGN_COMPUTE}" "${OUTPUT_DIR}/build-all-warm.log" || true)" = "0" ]; then
     pass "foreign-arch layers ($FOREIGN_BASE, $FOREIGN_COMPUTE) were not touched"
 else
-    fail "foreign-arch layer appeared in the build log (see ${OUTPUT_DIR}/build-all-warm.log)"
+    fail "foreign-arch layer appeared in the build log"
+    dump_log "${OUTPUT_DIR}/build-all-warm.log"
 fi
 
 # Also assert build-all logged the subtree order it intends to walk.
@@ -171,7 +192,8 @@ if grep -q "\"order\":\\[\"${BASE_LAYER}\",\"${COMPUTE_LAYER}\"\\]" "${OUTPUT_DI
    || grep -q "order=\\[${BASE_LAYER} ${COMPUTE_LAYER}\\]" "${OUTPUT_DIR}/build-all-warm.log"; then
     pass "subtree order log entry present"
 else
-    fail "subtree order log entry missing (see ${OUTPUT_DIR}/build-all-warm.log)"
+    fail "subtree order log entry missing"
+    dump_log "${OUTPUT_DIR}/build-all-warm.log"
 fi
 
 echo ""
