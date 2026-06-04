@@ -115,26 +115,47 @@ func (b *Builder) listBuildahContainers(targetContainer string) error {
 
 	containers := strings.Split(strings.TrimSpace(string(output)), "\n")
 
+	// Filter out empty strings
+	var nonEmptyContainers []string
+	for _, name := range containers {
+		if name != "" {
+			nonEmptyContainers = append(nonEmptyContainers, name)
+		}
+	}
+
 	// Log all containers found
-	log.Info("Buildah containers list",
-		"count", len(containers),
-		"containers", containers,
+	log.Info("Buildah containers list (CLI)",
+		"count", len(nonEmptyContainers),
+		"containers", nonEmptyContainers,
 		"target", targetContainer)
+
+	// Also get detailed container info
+	detailCmd := exec.Command("buildah", "containers", "--format", "{{.ContainerName}}|{{.ContainerID}}|{{.Builder}}")
+	detailOutput, err := detailCmd.CombinedOutput()
+	if err == nil {
+		log.Debug("Buildah containers details", "output", strings.TrimSpace(string(detailOutput)))
+	}
 
 	// Check if our target container is in the list
 	found := false
-	for _, name := range containers {
+	for _, name := range nonEmptyContainers {
 		if name == targetContainer {
 			found = true
 			break
 		}
 	}
 
-	if !found && len(containers) > 0 && containers[0] != "" {
+	if !found && len(nonEmptyContainers) > 0 {
 		log.Warn("Target container not found in buildah containers list",
 			"target", targetContainer,
-			"available", containers)
-		return fmt.Errorf("container %q not found in buildah containers (found: %v)", targetContainer, containers)
+			"available", nonEmptyContainers)
+		return fmt.Errorf("container %q not found in buildah containers (found: %v)", targetContainer, nonEmptyContainers)
+	}
+
+	if !found && len(nonEmptyContainers) == 0 {
+		log.Warn("No containers found in buildah containers list - possible graph root mismatch",
+			"target", targetContainer)
+		return fmt.Errorf("no containers found via 'buildah containers' - this indicates a storage/graph root mismatch")
 	}
 
 	if found {
@@ -145,7 +166,13 @@ func (b *Builder) listBuildahContainers(targetContainer string) error {
 	graphRootCmd := exec.Command("buildah", "info", "--format", "{{.store.GraphRoot}}")
 	graphOutput, err := graphRootCmd.CombinedOutput()
 	if err == nil {
-		log.Info("Buildah graph root", "path", strings.TrimSpace(string(graphOutput)))
+		cliGraphRoot := strings.TrimSpace(string(graphOutput))
+		log.Info("Buildah graph root (CLI)", "path", cliGraphRoot)
+
+		// Compare with Go library's graph root (if we can get it)
+		// The Go library graph root was logged in openStore()
+	} else {
+		log.Warn("Failed to get buildah graph root", "error", err)
 	}
 
 	return nil
