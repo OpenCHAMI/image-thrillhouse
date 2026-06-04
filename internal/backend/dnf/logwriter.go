@@ -46,7 +46,7 @@ func (c *dnfClassifier) Line(line string, hadErr bool) {
 
 // Done emits summary logs after the buffer has been fully classified.
 func (c *dnfClassifier) Done(raw string, err error) {
-	slog.Debug("DNF raw output", "output", raw)
+	container.LogStreamBlock(slog.LevelDebug, "DNF raw output", raw, "backend", "dnf")
 
 	if len(c.installed) > 0 {
 		slog.Info("packages installed", "packages", c.installed)
@@ -58,6 +58,10 @@ func (c *dnfClassifier) Done(raw string, err error) {
 		for _, e := range c.errors {
 			slog.Error("dnf error", "msg", e)
 		}
-		slog.Error("DNF command failed", "full_output", raw, "exit_error", err)
+		// Note: We don't log the raw output block here on error because:
+		// 1. The parsed errors above already show the key information
+		// 2. The full raw output is available at DEBUG level (line 49)
+		// 3. This prevents duplicate error messages in the output
+		// 4. Matches the behavior of other backends (apt, zypper)
 	}
 }

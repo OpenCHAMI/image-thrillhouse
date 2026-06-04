@@ -401,13 +401,17 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 // All commands run inside the container using "buildah run".
 func (b *Builder) runCommands(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
-	log.Info("Starting Run Commands:", "commands", b.cfg.Layer.Actions.Commands)
 
-	for _, cmd := range b.cfg.Layer.Actions.Commands {
-		log.Debug("Executing", "command", cmd)
+	// Log start with count
+	if len(b.cfg.Layer.Actions.Commands) > 0 {
+		log.Info("Starting Run Commands", "count", len(b.cfg.Layer.Actions.Commands))
+	}
 
+	for i, cmd := range b.cfg.Layer.Actions.Commands {
+		// Log the command being executed with proper formatting
 		switch cmd.Type() {
 		case config.CommandRun:
+			log.Debug("Executing run command", "index", i, "run", cmd.Run)
 			// Parse the command string into parts (handles quoting properly)
 			parts, err := shellwords.Parse(cmd.Run)
 			if err != nil {
@@ -419,6 +423,7 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 			}
 
 		case config.CommandScript:
+			log.Debug("Executing script", "index", i, "script", cmd.Script)
 			// Execute a multi-line script
 			out := container.NewBufLogWriter("stdout")
 			if err := c.RunScript(ctx, cmd.Script, out); err != nil {
@@ -430,7 +435,18 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 		}
 	}
 
-	log.Info("Done Run Commands:", "commands", b.cfg.Layer.Actions.Commands)
+	// Log completion with each command formatted nicely
+	if len(b.cfg.Layer.Actions.Commands) > 0 {
+		log.Info("Done Run Commands", "count", len(b.cfg.Layer.Actions.Commands))
+		for i, cmd := range b.cfg.Layer.Actions.Commands {
+			switch cmd.Type() {
+			case config.CommandRun:
+				log.Info("command", "index", i, "type", "run", "run", cmd.Run)
+			case config.CommandScript:
+				log.Info("command", "index", i, "type", "script", "script", cmd.Script)
+			}
+		}
+	}
 	return nil
 }
 

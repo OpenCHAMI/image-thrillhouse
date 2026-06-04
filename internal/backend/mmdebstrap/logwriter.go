@@ -43,5 +43,10 @@ func (mmdebstrapClassifier) Line(line string, hadErr bool) {
 	}
 }
 
-// Done is a no-op for mmdebstrap — there are no summary logs to emit.
-func (mmdebstrapClassifier) Done(raw string, err error) {}
+// Done logs raw output for consistency with other backends.
+// Note: mmdebstrap already logs most output line-by-line in Line(),
+// but we log the raw output at DEBUG level for consistency and
+// to ensure complete command output is available for debugging.
+func (mmdebstrapClassifier) Done(raw string, err error) {
+	container.LogStreamBlock(slog.LevelDebug, "Mmdebstrap raw output", raw, "backend", "mmdebstrap")
+}

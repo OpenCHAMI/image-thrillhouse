@@ -6,11 +6,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 
 	"github.com/containers/buildah"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"go.podman.io/storage/pkg/reexec"
 	"go.podman.io/storage/pkg/unshare"
@@ -22,6 +22,7 @@ import (
 	"github.com/travisbcotton/image-build/internal/backend/zypper"
 	"github.com/travisbcotton/image-build/internal/builder"
 	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-build/internal/container"
 	"github.com/travisbcotton/image-build/internal/manifest"
 	"github.com/travisbcotton/image-build/internal/publisher"
 	"github.com/travisbcotton/image-build/internal/publisher/local"
@@ -46,9 +47,10 @@ var (
 // rootCmd is the base command that is run when no subcommands are provided.
 // It serves as the entry point for the CLI and holds all subcommands.
 var rootCmd = &cobra.Command{
-	Use:          "image-build",
-	Short:        "Build OS images for multiple distros",
-	SilenceUsage: true, // Don't show usage on errors during execution
+	Use:           "image-build",
+	Short:         "Build OS images for multiple distros",
+	SilenceUsage:  true, // Don't show usage on errors during execution
+	SilenceErrors: true, // Don't let Cobra print errors (we handle them ourselves)
 }
 
 // buildCmd builds a container image from the provided configuration file.
@@ -111,25 +113,25 @@ var versionCmd = &cobra.Command{
 // Returns an error if the package manager name is not recognized or if options are invalid.
 func newBackend(manager config.Manager) (backend.Backend, error) {
 	var b backend.Backend
-	
+
 	switch manager.Name {
-		case "dnf":
-			b = dnf.New(manager.Options)
-		case "mmdebstrap":
-			b = mmdebstrap.New(manager.Options)
-		case "apt":
-			b = apt.New(manager.Options)
-		case "zypper":
-			b = zypper.New(manager.Options)
-		default:
-			return nil, fmt.Errorf("unsupported package manager: %s", manager.Name)
+	case "dnf":
+		b = dnf.New(manager.Options)
+	case "mmdebstrap":
+		b = mmdebstrap.New(manager.Options)
+	case "apt":
+		b = apt.New(manager.Options)
+	case "zypper":
+		b = zypper.New(manager.Options)
+	default:
+		return nil, fmt.Errorf("unsupported package manager: %s", manager.Name)
 	}
-	
+
 	// Validate backend-specific options
 	if err := b.ValidateOptions(manager.Options); err != nil {
 		return nil, fmt.Errorf("invalid options for %s backend: %w", manager.Name, err)
 	}
-	
+
 	return b, nil
 }
 
@@ -144,7 +146,7 @@ func newBackend(manager config.Manager) (backend.Backend, error) {
 //   - squashfs: Create a SquashFS filesystem image (requires path)
 //   - registry: Push to OCI container registry (requires url)
 //   - s3: Upload to S3-compatible storage (requires url, bucket, access (env provided)
-//         and secret (env provided))
+//     and secret (env provided))
 //
 // Returns an error if a publisher type is not supported or missing required fields.
 func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
@@ -156,13 +158,13 @@ func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
 	var publishers []publisher.Publisher
 	for _, p := range publishes {
 		switch p.Type {
-			case "local":
-				publishers = append(publishers, local.New())
-			case "squashfs":
-				if p.Path == "" {
-					return nil, fmt.Errorf("squashfs publisher requires path")
-				}
-				publishers = append(publishers, squashfs.New(p.Path))
+		case "local":
+			publishers = append(publishers, local.New())
+		case "squashfs":
+			if p.Path == "" {
+				return nil, fmt.Errorf("squashfs publisher requires path")
+			}
+			publishers = append(publishers, squashfs.New(p.Path))
 		case "registry":
 			if p.URL == "" {
 				return nil, fmt.Errorf("registry publisher requires url")
@@ -186,8 +188,8 @@ func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
 				return nil, fmt.Errorf("s3 publisher requires S3_ACCESS and S3_SECRET environment variables")
 			}
 			publishers = append(publishers, s3pub.New(p.URL, p.Bucket, p.Prefix, accessKey, secretKey))
-			default:
-				return nil, fmt.Errorf("unsupported publisher type: %s", p.Type)
+		default:
+			return nil, fmt.Errorf("unsupported publisher type: %s", p.Type)
 		}
 	}
 	return publishers, nil
@@ -197,10 +199,14 @@ func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
 //
 // Parameters:
 //   - level: Log level as string (debug, info, warn, error)
-//   - format: Output format (json, text)
+//   - format: Output format (json, text, textblock)
 //
 // The logger is set as the default slog logger and will be used by all packages.
-// JSON format is recommended for production and parsing, while text is more human-readable.
+// JSON format is recommended for production and parsing, while text is more human-readable,
+// and textblock formats all output in human-readable blocks.
+//
+// This function also configures the logrus logger used by buildah and other
+// container libraries to suppress their logs unless debug level is enabled.
 func setupLogger(level, format string) error {
 	var lvl slog.Level
 	if err := lvl.UnmarshalText([]byte(level)); err != nil {
@@ -216,15 +222,35 @@ func setupLogger(level, format string) error {
 	// or strip log lines out of the result, neither of which scales.
 	var handler slog.Handler
 	switch format {
-		case "json":
-			handler = slog.NewJSONHandler(os.Stderr, opts)
-		case "text":
-			handler = slog.NewTextHandler(os.Stderr, opts)
-		default:
-			return fmt.Errorf("invalid log format %q", format)
+	case "json":
+		handler = slog.NewJSONHandler(os.Stderr, opts)
+	case "text":
+		handler = slog.NewTextHandler(os.Stderr, opts)
+	case "textblock":
+		handler = container.NewTextBlockHandler(os.Stderr, opts)
+	default:
+		return fmt.Errorf("invalid log format %q", format)
 	}
 
 	slog.SetDefault(slog.New(handler))
+	container.SetLogFormat(format)
+
+	// Configure logrus (used by buildah and container libraries)
+	// to suppress INFO level logs unless debug is enabled.
+	// This prevents repetitive buildah messages like:
+	//   "network namespace isolation not supported with chroot isolation, forcing host network"
+	if lvl == slog.LevelDebug {
+		logrus.SetLevel(logrus.DebugLevel)
+	} else if lvl == slog.LevelWarn {
+		logrus.SetLevel(logrus.WarnLevel)
+	} else if lvl >= slog.LevelError {
+		logrus.SetLevel(logrus.ErrorLevel)
+	} else {
+		// For INFO and above, set logrus to WARN to suppress buildah noise
+		logrus.SetLevel(logrus.WarnLevel)
+	}
+	logrus.SetOutput(os.Stderr)
+
 	return nil
 }
 
@@ -233,7 +259,7 @@ func setupLogger(level, format string) error {
 func init() {
 	// Persistent flags apply to all subcommands (root and children)
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (debug, info, warn, error)")
-	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "json", "log format (json, text)")
+	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "json", "log format (json, text, textblock)")
 
 	// Build-specific flags
 	buildCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
@@ -578,6 +604,9 @@ func main() {
 
 	// Execute the CLI and handle any errors
 	if err := rootCmd.Execute(); err != nil {
-		log.Fatal(err)
+		// Print the error to stderr in a simple format
+		// We've already set SilenceErrors: true on rootCmd so Cobra won't print it
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 }
