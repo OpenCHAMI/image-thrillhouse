@@ -181,6 +181,14 @@ func (h *TextBlockHandler) Handle(_ context.Context, r slog.Record) error {
 func (h *TextBlockHandler) appendAttrInBlock(buf *bufio.Writer, a slog.Attr) {
 	// Handle different value types
 	switch val := a.Value.Any().(type) {
+	case string:
+		// Check if this is a multiline string (contains \n)
+		if strings.Contains(val, "\n") {
+			h.formatMultilineString(buf, a.Key, val)
+		} else {
+			// Single-line string
+			fmt.Fprintf(buf, "| %s=%q\n", a.Key, val)
+		}
 	case []string:
 		// Array of strings - list each on its own line
 		fmt.Fprintf(buf, "| %s=\n", a.Key)
@@ -253,6 +261,21 @@ func (h *TextBlockHandler) formatStructInBlock(buf *bufio.Writer, key, valStr st
 			}
 		}
 	}
+}
+
+// formatMultilineString formats a multiline string attribute as a sub-block
+func (h *TextBlockHandler) formatMultilineString(buf *bufio.Writer, key, val string) {
+	// Write the key with an indented sub-block
+	fmt.Fprintf(buf, "| %s=\n", key)
+	fmt.Fprintln(buf, "| ┌─────")
+	
+	// Split the string by newlines and write each line with extra indentation
+	lines := strings.Split(val, "\n")
+	for _, line := range lines {
+		fmt.Fprintf(buf, "| │ %s\n", line)
+	}
+	
+	fmt.Fprintln(buf, "| └─────")
 }
 
 // appendValue writes a slog.Value to the buffer.
