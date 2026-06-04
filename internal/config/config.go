@@ -97,25 +97,25 @@ type Module struct {
 type Command struct {
 	Run     string          `yaml:"run"`     // Simple command to run (e.g., "systemctl enable service")
 	Script  string          `yaml:"script"`  // Multi-line shell script to run
-	Ansible *AnsibleCommand `yaml:"ansible"` // Ansible playbook execution (host-based)
+	Ansible *AnsibleCommand `yaml:"ansible"` // Ansible playbook execution (in-container)
 }
 
-// AnsibleCommand configures Ansible playbook execution on the host system.
-// The container is automatically added to the specified groups in a dynamic inventory,
-// and Ansible connects to it using the containers.podman.buildah connection plugin.
+// AnsibleCommand configures Ansible playbook execution inside the container.
+// The playbook runs with ansible_connection=local, and localhost is automatically
+// added to the specified groups.
 //
 // This requires:
-//   - ansible-core installed on the host system
-//   - containers.podman collection installed (ansible-galaxy collection install containers.podman)
-//   - python3 and python3-dnf installed in the container (for Ansible modules)
+//   - ansible-core installed in the container
+//   - python3 installed in the container (for Ansible modules)
+//   - python3-dnf installed (if using dnf module)
 type AnsibleCommand struct {
-	Playbook  string            `yaml:"playbook"`   // Path to Ansible playbook file (required)
-	Inventory string            `yaml:"inventory"`  // Path to inventory directory/file (optional, merges with dynamic)
-	Groups    []string          `yaml:"groups"`     // Ansible groups to add container to (required)
+	Playbook  string            `yaml:"playbook"`   // Path to Ansible playbook file on host (required)
+	Inventory string            `yaml:"inventory"`  // Path to inventory directory/file on host (optional, copied to container)
+	Groups    []string          `yaml:"groups"`     // Ansible groups to add localhost to (required)
 	ExtraVars map[string]string `yaml:"extra_vars"` // Additional variables passed to Ansible (-e key=value)
 	Tags      string            `yaml:"tags"`       // Ansible tags to run (--tags)
 	SkipTags  string            `yaml:"skip_tags"`  // Ansible tags to skip (--skip-tags)
-	Limit     string            `yaml:"limit"`      // Override default limit (defaults to container name)
+	Limit     string            `yaml:"limit"`      // Limit hosts (optional, not typically needed for localhost)
 	Verbose   int               `yaml:"verbose"`    // Verbosity level 0-4 (0=default, 4=-vvvv)
 	CheckMode bool              `yaml:"check_mode"` // Run in check mode without making changes (--check)
 }
