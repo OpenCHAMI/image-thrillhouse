@@ -293,44 +293,74 @@ func (b *Builder) generateLocalhostInventory(ctx context.Context, c container.Co
 // executeAnsibleInContainer runs ansible-playbook inside the container.
 func (b *Builder) executeAnsibleInContainer(ctx context.Context, c container.Container, ansible *config.AnsibleCommand, playbookPath, inventoryPath, baseDir string) error {
 	// Build ansible-playbook command
-	cmd := []string{"ansible-playbook"}
+	var cmdParts []string
+	cmdParts = append(cmdParts, "ansible-playbook")
 
 	// Add inventory
-	cmd = append(cmd, "-i", inventoryPath)
+	cmdParts = append(cmdParts, "-i", inventoryPath)
 
 	// Verbosity
 	if ansible.Verbose > 0 {
 		verbosity := strings.Repeat("v", min(ansible.Verbose, 4))
-		cmd = append(cmd, "-"+verbosity)
+		cmdParts = append(cmdParts, "-"+verbosity)
 	}
 
 	// Extra vars
 	for key, value := range ansible.ExtraVars {
-		cmd = append(cmd, "-e", fmt.Sprintf("%s=%s", key, value))
+		cmdParts = append(cmdParts, "-e", fmt.Sprintf("%s=%s", key, value))
 	}
 
 	// Tags
 	if ansible.Tags != "" {
-		cmd = append(cmd, "--tags", ansible.Tags)
+		cmdParts = append(cmdParts, "--tags", ansible.Tags)
 	}
 	if ansible.SkipTags != "" {
-		cmd = append(cmd, "--skip-tags", ansible.SkipTags)
+		cmdParts = append(cmdParts, "--skip-tags", ansible.SkipTags)
 	}
 
 	// Check mode
 	if ansible.CheckMode {
-		cmd = append(cmd, "--check")
+		cmdParts = append(cmdParts, "--check")
 	}
 
 	// Playbook (must be last)
-	cmd = append(cmd, playbookPath)
+	cmdParts = append(cmdParts, playbookPath)
+
+	// Build a shell script that sets ANSIBLE_ROLES_PATH and runs ansible-playbook
+	// This is necessary because c.Run() doesn't support environment variables
+	rolesPath := filepath.Join(baseDir, "roles")
+
+	var script strings.Builder
+	script.WriteString("#!/bin/bash\n")
+	script.WriteString("set -euo pipefail\n\n")
+	script.WriteString("# Set roles path so Ansible can find roles\n")
+	script.WriteString(fmt.Sprintf("export ANSIBLE_ROLES_PATH=%s\n\n", rolesPath))
+	script.WriteString("# Run ansible-playbook\n")
+
+	// Quote arguments properly
+	for i, part := range cmdParts {
+		if i > 0 {
+			script.WriteString(" ")
+		}
+		// Quote if contains spaces
+		if strings.Contains(part, " ") {
+			script.WriteString(fmt.Sprintf("'%s'", strings.ReplaceAll(part, "'", "'\\''")))
+		} else {
+			script.WriteString(part)
+		}
+	}
+	script.WriteString("\n")
 
 	slog.Info("Executing ansible-playbook in container",
-		"command", strings.Join(cmd, " "))
+		"command", strings.Join(cmdParts, " "),
+		"roles_path", rolesPath)
 
-	// Execute the command
+	slog.Debug("Ansible execution script",
+		"script", script.String())
+
+	// Execute via RunScript
 	out := container.NewBufLogWriter("ansible")
-	if err := c.Run(ctx, cmd, container.RunModeContainer, out); err != nil {
+	if err := c.RunScript(ctx, script.String(), out); err != nil {
 		return fmt.Errorf("ansible-playbook failed: %w", err)
 	}
 
