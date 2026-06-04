@@ -3,11 +3,14 @@ package builder
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
@@ -252,12 +255,51 @@ func (b *Builder) executeAnsibleOnHost(ctx context.Context, ansibleCmd []string,
 		"dynamic_inventory", dynamicInventory)
 
 	// Execute via bash with process substitution support
+	// Important: We need to ensure blocking I/O for Ansible
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
 
-	if err := cmd.Run(); err != nil {
+	// Create pipes for stdout/stderr to ensure blocking I/O
+	// Ansible requires blocking file handles, not the potentially non-blocking
+	// os.Stdout/os.Stderr that the Go process might have inherited
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("create stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("create stderr pipe: %w", err)
+	}
+
+	// Don't attach stdin - Ansible shouldn't need interactive input during builds
+	// Setting to nil gives it /dev/null which is blocking
+	cmd.Stdin = nil
+
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start ansible-playbook: %w", err)
+	}
+
+	// Use WaitGroup to ensure we capture all output before cmd.Wait()
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Stream stdout to our stdout in real-time using io.Copy (blocking)
+	go func() {
+		defer wg.Done()
+		io.Copy(os.Stdout, stdout)
+	}()
+
+	// Stream stderr to our stderr in real-time using io.Copy (blocking)
+	go func() {
+		defer wg.Done()
+		io.Copy(os.Stderr, stderr)
+	}()
+
+	// Wait for output streaming to complete
+	wg.Wait()
+
+	// Wait for command to exit
+	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("ansible-playbook execution failed: %w", err)
 	}
 
