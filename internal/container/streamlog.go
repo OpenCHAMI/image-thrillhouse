@@ -139,24 +139,11 @@ func (h *TextBlockHandler) Enabled(_ context.Context, level slog.Level) bool {
 func (h *TextBlockHandler) Handle(_ context.Context, r slog.Record) error {
 	buf := bufio.NewWriter(h.w)
 
-	// Format: level=LEVEL msg="message" key=value key=value...
-	// Similar to text format but without timestamp
+	// Format: level=LEVEL key=value key=value...
+	// followed by textblock containing the message
 	fmt.Fprintf(buf, "level=%s", r.Level.String())
 
-	if r.Message != "" {
-		fmt.Fprintf(buf, " msg=%q", r.Message)
-	}
-
-	// Add attributes
-	r.Attrs(func(a slog.Attr) bool {
-		if a.Key != "" {
-			fmt.Fprintf(buf, " %s=", a.Key)
-			h.appendValue(buf, a.Value)
-		}
-		return true
-	})
-
-	// Add handler-level attributes
+	// Collect handler-level attributes first (like component=)
 	for _, a := range h.attrs {
 		if a.Key != "" {
 			fmt.Fprintf(buf, " %s=", a.Key)
@@ -165,7 +152,107 @@ func (h *TextBlockHandler) Handle(_ context.Context, r slog.Record) error {
 	}
 
 	fmt.Fprintln(buf)
+
+	// Now emit the textblock with message and attributes
+	fmt.Fprintln(buf, "┌──── output ────")
+	
+	// Start with the message
+	if r.Message != "" {
+		msgLines := strings.Split(r.Message, "\n")
+		for _, line := range msgLines {
+			fmt.Fprintf(buf, "| %s\n", line)
+		}
+	}
+	
+	// Add record attributes in the textblock
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key != "" {
+			h.appendAttrInBlock(buf, a)
+		}
+		return true
+	})
+	
+	fmt.Fprintln(buf, "└────────────────")
+
 	return buf.Flush()
+}
+
+// appendAttrInBlock formats an attribute inside the textblock
+func (h *TextBlockHandler) appendAttrInBlock(buf *bufio.Writer, a slog.Attr) {
+	// Handle different value types
+	switch val := a.Value.Any().(type) {
+	case []string:
+		// Array of strings - list each on its own line
+		fmt.Fprintf(buf, "| %s=\n", a.Key)
+		for _, item := range val {
+			fmt.Fprintf(buf, "| %s\n", item)
+		}
+	case []int:
+		fmt.Fprintf(buf, "| %s=\n", a.Key)
+		for _, item := range val {
+			fmt.Fprintf(buf, "| %d\n", item)
+		}
+	case []interface{}:
+		fmt.Fprintf(buf, "| %s=\n", a.Key)
+		for _, item := range val {
+			fmt.Fprintf(buf, "| %v\n", item)
+		}
+	default:
+		// For structs and other types, format them inline with reflection
+		// Check if it's a struct with fields we can extract
+		valStr := fmt.Sprintf("%v", val)
+		
+		// Check if this looks like a struct (starts with {)
+		if strings.HasPrefix(valStr, "{") {
+			// Parse struct fields and pretty-print them
+			h.formatStructInBlock(buf, a.Key, valStr)
+		} else {
+			// Simple value - write on one line
+			fmt.Fprintf(buf, "| %s=", a.Key)
+			h.appendValue(buf, a.Value)
+			fmt.Fprintln(buf)
+		}
+	}
+}
+
+// formatStructInBlock parses a struct string representation and formats it nicely
+func (h *TextBlockHandler) formatStructInBlock(buf *bufio.Writer, key, valStr string) {
+	// For a struct like {[bash systemd kernel] [] [] []}, extract the arrays
+	fmt.Fprintf(buf, "| %s=\n", key)
+	
+	// Simple parser for struct format: {[item1 item2] [item3]}
+	// Remove outer braces
+	valStr = strings.TrimPrefix(valStr, "{")
+	valStr = strings.TrimSuffix(valStr, "}")
+	
+	// Split by brackets to find arrays
+	inBracket := false
+	currentArray := strings.Builder{}
+	
+	for _, ch := range valStr {
+		switch ch {
+		case '[':
+			inBracket = true
+			currentArray.Reset()
+		case ']':
+			if inBracket {
+				// Process the array content
+				content := strings.TrimSpace(currentArray.String())
+				if content != "" {
+					// Split by spaces and print each item
+					items := strings.Fields(content)
+					for _, item := range items {
+						fmt.Fprintf(buf, "| %s\n", item)
+					}
+				}
+				inBracket = false
+			}
+		default:
+			if inBracket {
+				currentArray.WriteRune(ch)
+			}
+		}
+	}
 }
 
 // appendValue writes a slog.Value to the buffer.
