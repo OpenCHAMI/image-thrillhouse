@@ -60,6 +60,8 @@ func (c *zypperClassifier) Line(line string, hadErr bool) {
 
 // Done emits the summary logs after classification.
 func (c *zypperClassifier) Done(raw string, err error) {
+	container.LogStreamBlock(slog.LevelDebug, "Zypper raw output", raw, "backend", "zypper")
+
 	if len(c.newPackages) > 0 {
 		slog.Info("packages installed", "packages", c.newPackages)
 	}
@@ -67,5 +69,10 @@ func (c *zypperClassifier) Done(raw string, err error) {
 		for _, e := range c.errors {
 			slog.Error("zypper error", "msg", e)
 		}
+		// Note: We don't log the raw output block here on error because:
+		// 1. The parsed errors above already show the key information
+		// 2. The full raw output is available at DEBUG level (line 63)
+		// 3. This prevents duplicate error messages in the output
+		// 4. Matches the behavior of other backends (dnf, apt)
 	}
 }
