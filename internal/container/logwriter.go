@@ -7,6 +7,7 @@ import (
 	"sync"
 )
 
+
 // BufLogWriter is a thread-safe buffered writer that logs output line-by-line.
 // It buffers all writes and logs them when Flush is called.
 // Used for capturing and logging command output from containers.
@@ -31,9 +32,9 @@ func (w *BufLogWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-// Flush logs all buffered output line-by-line and clears the buffer.
-// Output is logged at DEBUG level if err is nil, or ERROR level if err is set.
-// Empty lines are filtered out. The buffer is cleared after flushing.
+// Flush logs the buffered output as a single format-aware block and clears
+// the buffer. Output is logged at DEBUG when err is nil, ERROR otherwise.
+// See LogStreamBlock for how the block is rendered per --log-format.
 func (w *BufLogWriter) Flush(err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -41,14 +42,12 @@ func (w *BufLogWriter) Flush(err error) {
 		return
 	}
 	level := slog.LevelDebug
+	msg := "command output"
 	if err != nil {
 		level = slog.LevelError
+		msg = "command output (failed)"
 	}
-	for _, line := range bytes.Split(w.buf, []byte("\n")) {
-		if msg := string(bytes.TrimRight(line, "\r\n")); msg != "" {
-			slog.Log(nil, level, msg, "stream", w.key)
-		}
-	}
+	LogStreamBlock(level, msg, string(w.buf), "stream", w.key)
 	w.buf = nil
 }
 

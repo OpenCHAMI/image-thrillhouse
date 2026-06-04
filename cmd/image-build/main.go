@@ -22,6 +22,7 @@ import (
 	"github.com/travisbcotton/image-build/internal/backend/zypper"
 	"github.com/travisbcotton/image-build/internal/builder"
 	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-build/internal/container"
 	"github.com/travisbcotton/image-build/internal/manifest"
 	"github.com/travisbcotton/image-build/internal/publisher"
 	"github.com/travisbcotton/image-build/internal/publisher/local"
@@ -225,6 +226,7 @@ func setupLogger(level, format string) error {
 	}
 
 	slog.SetDefault(slog.New(handler))
+	container.SetLogFormat(format)
 	return nil
 }
 
