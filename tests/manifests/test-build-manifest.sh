@@ -21,12 +21,22 @@
 #
 # Storage persistence:
 #   Each `podman run --rm` would normally throw away the container's
-#   /var/lib/containers/storage on exit, which kills any locally-committed
-#   image as soon as the build finishes. We mount a named podman volume
-#   ($STORAGE_VOLUME, default image-build-test-storage) on that path so
-#   rocky-base survives to be the parent of rocky-compute. The volume
-#   also persists between test runs — set RESET_STORAGE=1 to start from
-#   an empty volume.
+#   image store on exit, which kills any locally-committed image as soon
+#   as the build finishes. Two things working together fix this:
+#
+#     1. A named podman volume ($STORAGE_VOLUME, default
+#        image-build-test-storage) mounted on /var/lib/containers/storage
+#        carries the store across --rm boundaries.
+#
+#     2. CONTAINERS_STORAGE_CONF=/etc/containers/storage.conf passed to
+#        the container. The image runs as a non-root user, so rootless
+#        buildah would otherwise ignore the system storage.conf and put
+#        the store under $HOME — which is not covered by the volume.
+#        Pointing at the system config restores graphroot to
+#        /var/lib/containers/storage where the volume is mounted.
+#
+#   The volume persists between test runs too — set RESET_STORAGE=1 to
+#   start from an empty volume.
 #
 # Deliberately no `set -e`: each phase must be allowed to fail and report
 # independently, otherwise the first podman failure aborts the suite with
@@ -108,9 +118,24 @@ fi
 podman volume create "$STORAGE_VOLUME" >/dev/null
 
 # Run image-build inside the test container with the full privileged set
-# (build needs buildah, which needs user namespaces / fuse). The storage
-# volume mount is what lets a layer committed in one invocation survive
-# to be the parent of the next invocation.
+# (build needs buildah, which needs user namespaces / fuse). Two mounts
+# carry state across --rm boundaries:
+#
+#   1. The storage volume on /var/lib/containers/storage carries the
+#      buildah image store, so a layer committed in one invocation
+#      survives to be the parent of the next invocation.
+#
+#   2. CONTAINERS_STORAGE_CONF points buildah at the system storage.conf
+#      baked into the image. The container runs as USER builder (uid
+#      1001), so buildah runs rootless and would otherwise IGNORE
+#      /etc/containers/storage.conf and use $HOME/.local/share/containers/
+#      storage — which is NOT covered by the volume mount above. Without
+#      this env, Phase 1's image is written to /home/builder/... and
+#      vanishes on --rm; Phase 2 then can't find the parent and buildah
+#      falls back to treating localhost/rocky-base:<tag> as a remote
+#      docker registry ref. CONTAINERS_STORAGE_CONF forces rootless
+#      buildah to honor the system config, which graphroots at the
+#      volume-mounted path.
 run_image_build() {
     podman run --rm \
         --device /dev/fuse \
@@ -123,6 +148,7 @@ run_image_build() {
         -v "${OUTPUT_DIR}:/output:Z" \
         -v "${STORAGE_VOLUME}:/var/lib/containers/storage" \
         -e BUILDAH_ISOLATION=chroot \
+        -e CONTAINERS_STORAGE_CONF=/etc/containers/storage.conf \
         image-build:test \
         image-build --log-level info "$@"
 }
