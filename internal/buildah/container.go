@@ -163,7 +163,7 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 // The script is:
 //  1. Written to a temporary file in /tmp
 //  2. Made executable with chmod +x
-//  3. Executed
+//  3. Executed via /bin/sh so a missing shebang doesn't fail with "exec format error"
 //  4. Removed after execution
 //
 // This is useful for running complex multi-line scripts without escaping issues.
@@ -183,7 +183,12 @@ func (c *Container) RunScript(ctx context.Context, script string, out container.
 		return fmt.Errorf("chmod script: %w", err)
 	}
 
-	if err := c.Run(ctx, []string{tmpPath}, container.RunModeContainer, out); err != nil {
+	// Invoke via /bin/sh rather than executing the script path directly. Direct
+	// exec relies on the kernel finding a valid shebang or ELF header; a
+	// shebang-less script fails with "exec format error" before any output is
+	// produced. Routing through /bin/sh lets the shell parse the file.
+	if err := c.Run(ctx, []string{"/bin/sh", tmpPath}, container.RunModeContainer, out); err != nil {
+		slog.With("component", "container").Error("script failed", "path", tmpPath, "script", script)
 		return fmt.Errorf("exec script: %w", err)
 	}
 
