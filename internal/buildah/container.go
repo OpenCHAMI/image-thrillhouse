@@ -71,6 +71,7 @@ func NewContainer(ctx context.Context, name string, from string, tlsverify bool)
 
 	// create new builder
 	builder, err := buildah.NewBuilder(ctx, store, buildah.BuilderOptions{
+		Container: name, // Set the container name explicitly for buildah connection plugin
 		FromImage: from,
 		SystemContext: &types.SystemContext{
 			DockerInsecureSkipTLSVerify: types.NewOptionalBool(!tlsverify),
@@ -347,8 +348,12 @@ func (c *Container) GetParent() string {
 }
 
 // GetName returns the container name.
+// This returns the buildah-internal container name (not the friendly name passed to NewContainer).
+// For buildah connection plugin, this should be the actual container name that buildah knows about.
 func (c *Container) GetName() string {
-
+	// Return the buildah container name (this is what buildah containers shows)
+	// c.Builder.Container contains the generated name like "rockylinux-working-container"
+	// or might contain a hash - we need to verify this is correct for the buildah plugin
 	return c.Builder.Container
 }
 
