@@ -234,12 +234,17 @@ func setupLogger(level, format string) error {
 
 	opts := &slog.HandlerOptions{Level: lvl}
 
+	// Logs go to stderr so that subcommands which print user-facing data
+	// (today: `render`, which writes the rendered YAML to stdout) stay
+	// cleanly redirectable. Mixing log output and program output on the
+	// same stream forces every consumer to either set --log-level=error
+	// or strip log lines out of the result, neither of which scales.
 	var handler slog.Handler
 	switch format {
 		case "json":
-			handler = slog.NewJSONHandler(os.Stdout, opts)
+			handler = slog.NewJSONHandler(os.Stderr, opts)
 		case "text":
-			handler = slog.NewTextHandler(os.Stdout, opts)
+			handler = slog.NewTextHandler(os.Stderr, opts)
 		default:
 			return fmt.Errorf("invalid log format %q", format)
 	}
