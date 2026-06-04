@@ -47,9 +47,10 @@ var (
 // rootCmd is the base command that is run when no subcommands are provided.
 // It serves as the entry point for the CLI and holds all subcommands.
 var rootCmd = &cobra.Command{
-	Use:          "image-build",
-	Short:        "Build OS images for multiple distros",
-	SilenceUsage: true, // Don't show usage on errors during execution
+	Use:           "image-build",
+	Short:         "Build OS images for multiple distros",
+	SilenceUsage:  true, // Don't show usage on errors during execution
+	SilenceErrors: true, // Don't let Cobra print errors (we handle them ourselves)
 }
 
 // buildCmd builds a container image from the provided configuration file.
@@ -583,6 +584,9 @@ func main() {
 
 	// Execute the CLI and handle any errors
 	if err := rootCmd.Execute(); err != nil {
-		log.Fatal(err)
+		// Print the error to stderr in a simple format
+		// We've already set SilenceErrors: true on rootCmd so Cobra won't print it
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 }

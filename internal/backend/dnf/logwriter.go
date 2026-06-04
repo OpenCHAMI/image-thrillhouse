@@ -58,6 +58,10 @@ func (c *dnfClassifier) Done(raw string, err error) {
 		for _, e := range c.errors {
 			slog.Error("dnf error", "msg", e)
 		}
-		container.LogStreamBlock(slog.LevelError, "DNF command failed", raw, "backend", "dnf", "exit_error", err)
+		// Note: We don't log the raw output block here on error because:
+		// 1. The parsed errors above already show the key information
+		// 2. The full raw output is available at DEBUG level (line 49)
+		// 3. This prevents duplicate error messages in the output
+		// 4. Matches the behavior of other backends (apt, zypper)
 	}
 }
