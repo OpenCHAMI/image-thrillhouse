@@ -3,8 +3,11 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"regexp"
+	"text/template"
 
 	"gopkg.in/yaml.v3"
 )
@@ -125,28 +128,70 @@ func (c *Command) Type() CommandType {
 	return CommandRun
 }
 
-// LoadConfig reads and parses a YAML configuration file from the given path.
-// It also validates the configuration structure and required fields.
-//
-// Returns an error if:
-//   - The file cannot be read
-//   - The YAML is invalid
-//   - Validation fails (missing required fields, etc.)
-func LoadConfig(path string) (*Config, error) {
-	c, err := os.ReadFile(path)
+// LoadConfigRaw reads a YAML configuration file from the given path and
+// unmarshals it without validating it. Before unmarshalling, any Go
+// text/template directives ("{{ ... }}") are replaced with a placeholder
+// string so that the raw template can be parsed as valid YAML — this is used
+// by the manifest layer to hash the unrendered template for deterministic
+// tag computation. Validation only happens in LoadConfigWithVars after
+// rendering.
+func LoadConfigRaw(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	cleaned := replaceTemplatePlaceholders(data)
+
+	var cfg Config
+	if err := yaml.Unmarshal(cleaned, &cfg); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return &cfg, nil
+}
+
+// LoadConfigWithVars reads a YAML config file, renders it as a Go template
+// against the provided variables (arbitrary YAML/JSON-shaped data), then
+// unmarshals and validates the result.
+func LoadConfigWithVars(path string, vars map[string]interface{}) (*Config, error) {
+	rendered, err := RenderConfig(path, vars)
 	if err != nil {
 		return nil, err
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal(c, &cfg); err != nil {
+	if err := yaml.Unmarshal([]byte(rendered), &cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
 	return &cfg, nil
+}
+
+// RenderConfig reads the file at path and renders it as a Go text/template
+// using the provided vars (arbitrary YAML/JSON-shaped data). Missing keys are
+// treated as errors so that typos in variable names fail loudly rather than
+// silently producing empty values.
+func RenderConfig(path string, vars map[string]interface{}) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+
+	t, err := template.New("config").Option("missingkey=error").Parse(string(raw))
+	if err != nil {
+		return "", fmt.Errorf("parse template: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, vars); err != nil {
+		return "", fmt.Errorf("execute template: %w", err)
+	}
+
+	return buf.String(), nil
 }
 
 // OpenSCAP defines security scanning configuration using OpenSCAP tools.
@@ -170,4 +215,10 @@ func (m *Meta) TLSVerify() bool {
 		return *m.FromTLSVerify
 	}
 	return true // default to verify
+}
+
+func replaceTemplatePlaceholders(data []byte) []byte {
+	// replace {{ ... }} with a placeholder string
+	re := regexp.MustCompile(`\{\{[^}]*\}\}`)
+	return re.ReplaceAll(data, []byte("__placeholder__"))
 }

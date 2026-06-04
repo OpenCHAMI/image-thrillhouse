@@ -46,7 +46,10 @@ type Container interface {
 	
 	// GetID returns the container ID
 	GetID() string
-	
+
+	// GetParent returns the source/from image for the container.
+	GetParent() string
+
 	// GetName returns the container name
 	GetName() string
 	

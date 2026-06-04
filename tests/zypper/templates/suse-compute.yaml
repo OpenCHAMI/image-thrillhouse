@@ -1,0 +1,21 @@
+meta:
+  name: suse-compute
+  tags:
+    - "{{ .tag }}"
+  from: localhost/suse-base:{{ .parent_tag }}
+
+layer:
+  manager:
+    name: zypper
+    options:
+      no-gpg-checks: "true"
+      no-recommends: "true"
+  actions:
+    install:
+      packages:
+        - vim
+        - git
+        - make
+
+publish:
+  - type: local

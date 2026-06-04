@@ -1,0 +1,23 @@
+meta:
+  name: bookworm-base
+  tags: 
+    - "{{ .tag }}"
+  from: scratch
+
+layer:
+  manager:
+    name: mmdebstrap
+    options:
+      suite: {{ .suite }}
+      mirror: {{ .mirror }}
+      variant: {{ .variant }}
+      mode: {{ .mode }}
+  actions:
+    install:
+      packages:
+        - ssh
+        - vim
+publish:
+  - type: registry
+    url: vm-host:5000
+    tls-verify: false

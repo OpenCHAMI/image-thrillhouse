@@ -31,6 +31,7 @@ type Builder struct {
 	backend      backend.Backend
 	newContainer func(context.Context, string, string, bool) (container.Container, error)
 	publishers   []publisher.Publisher
+	skipIfExists bool
 }
 
 func New(ctx context.Context, cfg *config.Config, b backend.Backend, p []publisher.Publisher) *Builder {
@@ -42,6 +43,15 @@ func New(ctx context.Context, cfg *config.Config, b backend.Backend, p []publish
 		},
 		publishers: p,
 	}
+}
+
+// SetSkipIfExists toggles the skip-if-exists guard. When true, Build will
+// poll every configured publisher's Exists() before doing any work, and skip
+// the whole build (no container created, no commands run, no publish) when
+// all publishers report the image is already present for the configured
+// name + tags.
+func (b *Builder) SetSkipIfExists(v bool) {
+	b.skipIfExists = v
 }
 
 // Build executes the complete image building process.
@@ -58,6 +68,20 @@ func New(ctx context.Context, cfg *config.Config, b backend.Backend, p []publish
 // Returns an error if any step fails. The container is automatically
 // cleaned up via defer, even if the build fails.
 func (b *Builder) Build(ctx context.Context) error {
+
+	if b.skipIfExists {
+		exists, err := b.allExist(ctx, b.cfg.Meta.Name, b.cfg.Meta.Tags)
+		if err != nil {
+			return fmt.Errorf("check exists: %w", err)
+		}
+		if exists {
+			slog.Info("skipping build, image already exists",
+				"name", b.cfg.Meta.Name,
+				"tags", b.cfg.Meta.Tags)
+			return nil
+		}
+	}
+
 	c, err := b.newContainer(ctx, b.cfg.Meta.Name, b.cfg.Meta.From, b.cfg.Meta.TLSVerify())
 	if err != nil {
 		return fmt.Errorf("create container: %w", err)
@@ -65,7 +89,7 @@ func (b *Builder) Build(ctx context.Context) error {
 	defer c.Delete() // Always clean up the container when done
 
 	log := slog.With("component", "builder")
-	log.Debug("Created container", "id", c.GetID(), "name", c.GetName(), "mountPath", c.MountPath())
+	log.Debug("Created container", "id", c.GetID(), "name", c.GetName(), "from", c.GetParent())
 
 	// Apply package manager configuration (e.g., dnf.conf)
 	if err := b.applyManagerConfig(ctx, c); err != nil {
@@ -496,4 +520,20 @@ func extractExitCode(err error) int {
 		return exitErr.ExitCode()
 	}
 	return -1
+}
+
+// allExist reports whether the given (name, tags) pair already exists at
+// every configured publish destination. Used to short-circuit a build when
+// the target image is already published.
+func (b *Builder) allExist(ctx context.Context, name string, tags []string) (bool, error) {
+	for _, p := range b.publishers {
+		exists, err := p.Exists(ctx, name, tags)
+		if err != nil {
+			return false, fmt.Errorf("check exists %T: %w", p, err)
+		}
+		if !exists {
+			return false, nil
+		}
+	}
+	return true, nil
 }

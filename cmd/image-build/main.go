@@ -22,6 +22,7 @@ import (
 	"github.com/travisbcotton/image-build/internal/backend/zypper"
 	"github.com/travisbcotton/image-build/internal/builder"
 	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-build/internal/manifest"
 	"github.com/travisbcotton/image-build/internal/publisher"
 	"github.com/travisbcotton/image-build/internal/publisher/local"
 	"github.com/travisbcotton/image-build/internal/publisher/registry"
@@ -31,9 +32,15 @@ import (
 
 // Global CLI flags that are shared across all subcommands
 var (
-	cfgPath   string // Path to the YAML configuration file
-	logLevel  string // Logging level: debug, info, warn, error
-	logFormat string // Logging format: json or text
+	cfgPath      string   // Path to the YAML configuration file
+	logLevel     string   // Logging level: debug, info, warn, error
+	logFormat    string   // Logging format: json or text
+	varFile      string   // Path to a variables file (yaml or json) used for templating
+	vars         []string // Variable overrides in key=value format
+	renderOutput string   // Output path for the render command (default: stdout)
+	manifestPath string   // Path to a manifest file describing a DAG of layers
+	layerName    string   // Layer name (within the manifest) to build
+	skipIfExists bool     // Skip build when every configured publisher reports the image already exists
 )
 
 // rootCmd is the base command that is run when no subcommands are provided.
@@ -73,6 +80,14 @@ This checks:
   - Package manager is supported
   - Publisher types are valid`,
 	RunE: runValidate,
+}
+
+// renderCmd renders a config file template against the provided variables
+// and prints (or writes) the result without executing a build.
+var renderCmd = &cobra.Command{
+	Use:   "render",
+	Short: "Render a config file template and print the result",
+	RunE:  runRender,
 }
 
 // versionCmd prints the version information for the image-build tool.
@@ -194,12 +209,17 @@ func setupLogger(level, format string) error {
 
 	opts := &slog.HandlerOptions{Level: lvl}
 
+	// Logs go to stderr so that subcommands which print user-facing data
+	// (today: `render`, which writes the rendered YAML to stdout) stay
+	// cleanly redirectable. Mixing log output and program output on the
+	// same stream forces every consumer to either set --log-level=error
+	// or strip log lines out of the result, neither of which scales.
 	var handler slog.Handler
 	switch format {
 		case "json":
-			handler = slog.NewJSONHandler(os.Stdout, opts)
+			handler = slog.NewJSONHandler(os.Stderr, opts)
 		case "text":
-			handler = slog.NewTextHandler(os.Stdout, opts)
+			handler = slog.NewTextHandler(os.Stderr, opts)
 		default:
 			return fmt.Errorf("invalid log format %q", format)
 	}
@@ -215,13 +235,33 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "json", "log format (json, text)")
 
-	// Build-specific flags (only available to build and validate commands)
-	buildCmd.Flags().StringVarP(&cfgPath, "config", "c", "./test.yaml", "path to YAML config")
-	validateCmd.Flags().StringVarP(&cfgPath, "config", "c", "./test.yaml", "path to YAML config")
+	// Build-specific flags
+	buildCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
+	buildCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file")
+	buildCmd.Flags().StringVar(&layerName, "layer", "", "layer name to build (requires --manifest)")
+	buildCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
+	buildCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
+	buildCmd.Flags().BoolVar(&skipIfExists, "skip-if-exists", false, "skip the build when all publishers report the image already exists")
+
+	// Validate-specific flags
+	validateCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
+	validateCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
+	validateCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
+
+	// Render-specific flags. Mirrors build so users have one flag pattern
+	// across subcommands: either --config standalone, or --manifest +
+	// --layer for full manifest context with computed tags.
+	renderCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
+	renderCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file (use with --layer)")
+	renderCmd.Flags().StringVar(&layerName, "layer", "", "layer name in the manifest (requires --manifest)")
+	renderCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
+	renderCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
+	renderCmd.Flags().StringVarP(&renderOutput, "output", "o", "", "output file (default: stdout)")
 
 	// Register all subcommands under the root command
 	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(validateCmd)
+	rootCmd.AddCommand(renderCmd)
 	rootCmd.AddCommand(versionCmd)
 }
 
@@ -241,27 +281,156 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Load the YAML configuration file
-	cfg, err := config.LoadConfig(cfgPath)
+	// Validate mutually-exclusive flag combinations. Either a single config
+	// file is provided, or a manifest + layer pair driving a manifest-based
+	// build — never both.
+	if manifestPath != "" && cfgPath != "" {
+		return fmt.Errorf("--config and --manifest are mutually exclusive")
+	}
+	if manifestPath != "" && layerName == "" {
+		return fmt.Errorf("--layer is required when using --manifest")
+	}
+	if layerName != "" && manifestPath == "" {
+		return fmt.Errorf("--manifest is required when using --layer")
+	}
+
+	// Always load vars (possibly empty). Templating is supported in both
+	// single-config and manifest modes.
+	cliVars, err := config.LoadVars([]string{varFile}, vars)
+	if err != nil {
+		return fmt.Errorf("load vars: %w", err)
+	}
+
+	// Manifest mode: delegate to buildLayer so the per-layer flow stays in
+	// one place (also shared with runRender's manifest branch).
+	if manifestPath != "" {
+		dag, err := loadDAG(manifestPath)
+		if err != nil {
+			return err
+		}
+		layer, err := dag.Get(layerName)
+		if err != nil {
+			return fmt.Errorf("get layer: %w", err)
+		}
+		return buildLayer(ctx, dag, layer, cliVars, cliGlobalVarFiles(), skipIfExists)
+	}
+
+	// Single-config mode: no DAG, no tag injection, just render and build.
+	cfg, err := config.LoadConfigWithVars(cfgPath, cliVars)
 	if err != nil {
 		return err
 	}
 
-	// Create the package manager backend (dnf, zypper, apt, etc.)
 	b, err := newBackend(cfg.Layer.Manager)
 	if err != nil {
 		return fmt.Errorf("backend: %w", err)
 	}
 
-	// Create publishers (local, squashfs, registry, s3, etc.)
 	p, err := newPublishers(cfg.Publish)
 	if err != nil {
 		return fmt.Errorf("publishers: %w", err)
 	}
 
-	// Create the builder and execute the build
 	bldr := builder.New(ctx, cfg, b, p)
+	bldr.SetSkipIfExists(skipIfExists)
 	return bldr.Build(ctx)
+}
+
+// loadDAG is a thin wrapper that loads a manifest and constructs its DAG,
+// surfacing both error stages with consistent prefixes.
+func loadDAG(path string) (*manifest.DAG, error) {
+	m, err := manifest.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("load manifest: %w", err)
+	}
+	dag, err := manifest.NewDAG(m)
+	if err != nil {
+		return nil, fmt.Errorf("build dag: %w", err)
+	}
+	return dag, nil
+}
+
+// cliGlobalVarFiles returns the CLI-supplied --var-file as a slice (or empty
+// when the flag wasn't given), in the shape ComputeBuildVars expects.
+func cliGlobalVarFiles() []string {
+	if varFile == "" {
+		return nil
+	}
+	return []string{varFile}
+}
+
+// buildLayer runs the full per-layer pipeline for a single manifest layer:
+// load layer-specific vars, inject computed tags, render+validate config,
+// construct backend and publishers, and run the build. Used by runBuild's
+// manifest branch — kept as a helper so the prelude can stay in lockstep
+// with prepareLayerRender (which runRender's manifest branch reuses).
+func buildLayer(
+	ctx context.Context,
+	dag *manifest.DAG,
+	layer *manifest.Layer,
+	cliVars map[string]interface{},
+	globalVarFiles []string,
+	skipIfExists bool,
+) error {
+	configPath, mergedVars, err := prepareLayerRender(dag, layer.Name, cliVars, globalVarFiles)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.LoadConfigWithVars(configPath, mergedVars)
+	if err != nil {
+		return err
+	}
+
+	b, err := newBackend(cfg.Layer.Manager)
+	if err != nil {
+		return fmt.Errorf("backend: %w", err)
+	}
+
+	p, err := newPublishers(cfg.Publish)
+	if err != nil {
+		return fmt.Errorf("publishers: %w", err)
+	}
+
+	bldr := builder.New(ctx, cfg, b, p)
+	bldr.SetSkipIfExists(skipIfExists)
+	return bldr.Build(ctx)
+}
+
+// prepareLayerRender resolves the inputs needed to render a manifest layer's
+// template: the config path to feed RenderConfig / LoadConfigWithVars, and
+// the merged variable map containing CLI vars, the layer's own var files,
+// and computed build vars (this layer's tag plus parent/ancestor tags).
+//
+// Used by buildLayer's prelude and by runRender in manifest mode, so the
+// rendered output you preview matches exactly what build will see.
+func prepareLayerRender(
+	dag *manifest.DAG,
+	layerName string,
+	cliVars map[string]interface{},
+	globalVarFiles []string,
+) (string, map[string]interface{}, error) {
+	layer, err := dag.Get(layerName)
+	if err != nil {
+		return "", nil, fmt.Errorf("get layer: %w", err)
+	}
+
+	// Layer-specific var files have lower priority than CLI vars.
+	layerVars, err := config.LoadVars(layer.VarFiles, nil)
+	if err != nil {
+		return "", nil, fmt.Errorf("load layer vars: %w", err)
+	}
+	mergedVars := config.MergeVars(layerVars, cliVars)
+
+	// Inject computed tags (this layer + direct parents) so templates can
+	// reference parent images by their deterministic tags.
+	buildVars, err := manifest.ComputeBuildVars(dag, layerName, globalVarFiles)
+	if err != nil {
+		return "", nil, fmt.Errorf("compute build vars: %w", err)
+	}
+	mergedVars = config.MergeVars(mergedVars, buildVars)
+
+	return layer.Config, mergedVars, nil
 }
 
 // runValidate validates a configuration file without building the image.
@@ -281,8 +450,13 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Load and validate the configuration
-	cfg, err := config.LoadConfig(cfgPath)
+	// Load any provided vars (possibly empty) and render+validate the config.
+	mergedVars, err := config.LoadVars([]string{varFile}, vars)
+	if err != nil {
+		return fmt.Errorf("load vars: %w", err)
+	}
+
+	cfg, err := config.LoadConfigWithVars(cfgPath, mergedVars)
 	if err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
@@ -294,6 +468,85 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	// Log success message
 	slog.Info("config is valid", "path", cfgPath)
+	return nil
+}
+
+// runRender renders a config file template and writes the result to stdout
+// (or to --output). It mirrors build's input model so the previewed YAML is
+// exactly what a build would consume:
+//
+//   - Standalone: --config foo.yaml [--var-file vf] [--var k=v]
+//     Renders foo.yaml with only the user-supplied vars. Templates that
+//     reference manifest-injected vars like {{ .tag }} or {{ .parent_tag }}
+//     must either avoid them or have the user supply them via --var.
+//
+//   - Manifest:   --manifest m.yaml --layer x [--var-file vf] [--var k=v]
+//     Looks up layer x in the manifest, loads the layer's var files,
+//     computes the build vars (this layer's hash tag + ancestor tags),
+//     and renders the layer's referenced template. Useful for "what
+//     will build actually run?" inspection.
+//
+// --config and --manifest are mutually exclusive; --layer requires
+// --manifest. Same shape as build so users don't have to learn a second
+// flag pattern.
+func runRender(cmd *cobra.Command, args []string) error {
+	if err := setupLogger(logLevel, logFormat); err != nil {
+		return err
+	}
+
+	if manifestPath != "" && cfgPath != "" {
+		return fmt.Errorf("--config and --manifest are mutually exclusive")
+	}
+	if manifestPath != "" && layerName == "" {
+		return fmt.Errorf("--layer is required when using --manifest")
+	}
+	if layerName != "" && manifestPath == "" {
+		return fmt.Errorf("--manifest is required when using --layer")
+	}
+	if manifestPath == "" && cfgPath == "" {
+		return fmt.Errorf("either --config or --manifest is required")
+	}
+
+	cliVars, err := config.LoadVars([]string{varFile}, vars)
+	if err != nil {
+		return fmt.Errorf("load vars: %w", err)
+	}
+
+	// Decide which template to render and which vars to apply.
+	var (
+		renderConfigPath string
+		mergedVars       map[string]interface{}
+	)
+	if manifestPath != "" {
+		dag, err := loadDAG(manifestPath)
+		if err != nil {
+			return err
+		}
+		renderConfigPath, mergedVars, err = prepareLayerRender(
+			dag, layerName, cliVars, cliGlobalVarFiles(),
+		)
+		if err != nil {
+			return err
+		}
+	} else {
+		renderConfigPath = cfgPath
+		mergedVars = cliVars
+	}
+
+	rendered, err := config.RenderConfig(renderConfigPath, mergedVars)
+	if err != nil {
+		return fmt.Errorf("render config: %w", err)
+	}
+
+	if renderOutput != "" {
+		if err := os.WriteFile(renderOutput, []byte(rendered), 0644); err != nil {
+			return fmt.Errorf("write output: %w", err)
+		}
+		slog.Info("rendered config written", "path", renderOutput)
+	} else {
+		fmt.Print(rendered)
+	}
+
 	return nil
 }
 

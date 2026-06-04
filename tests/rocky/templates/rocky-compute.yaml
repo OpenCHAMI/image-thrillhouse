@@ -1,0 +1,19 @@
+meta:
+  name: rocky-compute
+  tags:
+    - "{{ .arch }}-{{ .releasever }}"
+  from: localhost/rocky-base:{{ .parent_tag }}
+
+layer:
+  manager: 
+    name: dnf
+  files: []
+  actions:
+    install:
+      groups:
+        - Development Tools
+
+publish:
+  - type: squashfs
+    path: /opt/images/rocky-base-{{ .arch }}.squashfs
+  - type: local

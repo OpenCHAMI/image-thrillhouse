@@ -1,0 +1,6 @@
+suite: bookworm
+mirror: http://deb.debian.org/debian
+variant: minbase
+mode: fakechroot
+
+reposdir: /etc/apt/sources.list.d 

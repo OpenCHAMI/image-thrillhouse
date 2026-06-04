@@ -3,11 +3,12 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// TestLoadConfig tests loading a valid configuration file
-func TestLoadConfig(t *testing.T) {
+// TestLoadConfigWithVars tests loading a valid configuration file
+func TestLoadConfigWithVars(t *testing.T) {
 	// Create a temporary config file
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "test-config.yaml")
@@ -41,9 +42,9 @@ publish:
 	}
 
 	// Test loading the config
-	cfg, err := LoadConfig(configPath)
+	cfg, err := LoadConfigWithVars(configPath, nil)
 	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
+		t.Fatalf("LoadConfigWithVars failed: %v", err)
 	}
 
 	// Verify config was parsed correctly
@@ -66,7 +67,7 @@ publish:
 
 // TestLoadConfigFileNotFound tests error handling for missing config
 func TestLoadConfigFileNotFound(t *testing.T) {
-	_, err := LoadConfig("/nonexistent/config.yaml")
+	_, err := LoadConfigWithVars("/nonexistent/config.yaml", nil)
 	if err == nil {
 		t.Error("Expected error for nonexistent file, got nil")
 	}
@@ -88,9 +89,205 @@ meta:
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	_, err = LoadConfig(configPath)
+	_, err = LoadConfigWithVars(configPath, nil)
 	if err == nil {
 		t.Error("Expected error for invalid YAML, got nil")
+	}
+}
+
+// TestRenderConfig_SubstitutesVars exercises the happy path of the
+// templating engine: every {{ .var }} reference must be replaced and no
+// markers remain in the output.
+func TestRenderConfig_SubstitutesVars(t *testing.T) {
+	tmpl := filepath.Join(t.TempDir(), "tmpl.yaml")
+	if err := os.WriteFile(tmpl, []byte(`meta:
+  name: {{ .name }}
+  tags: ["{{ .version }}"]
+  from: scratch
+layer:
+  manager:
+    name: {{ .mgr }}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := RenderConfig(tmpl, map[string]interface{}{
+		"name":    "demo",
+		"version": "1.2.3",
+		"mgr":     "dnf",
+	})
+	if err != nil {
+		t.Fatalf("RenderConfig: %v", err)
+	}
+
+	for _, want := range []string{"name: demo", `tags: ["1.2.3"]`, "name: dnf"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in rendered output, got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "{{") || strings.Contains(out, "}}") {
+		t.Errorf("rendered output still contains template markers:\n%s", out)
+	}
+}
+
+// TestRenderConfig_MissingKeyErrors guards the missingkey=error contract.
+// A template that references an unset var must fail loudly rather than
+// silently produce an empty value — that's the difference between a typo
+// caught immediately and a broken build hours later.
+func TestRenderConfig_MissingKeyErrors(t *testing.T) {
+	tmpl := filepath.Join(t.TempDir(), "tmpl.yaml")
+	if err := os.WriteFile(tmpl, []byte(`meta:
+  name: {{ .missing }}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := RenderConfig(tmpl, map[string]interface{}{})
+	if err == nil {
+		t.Fatal("expected error from missing template var, got nil")
+	}
+	// missingkey=error surfaces this exact phrase; lock it in so we don't
+	// silently regress to "<no value>" substitution.
+	if !strings.Contains(err.Error(), "map has no entry for key") {
+		t.Errorf("expected missingkey error message, got: %v", err)
+	}
+}
+
+// TestRenderConfig_FileNotFound: a non-existent template path must error,
+// not silently render to empty.
+func TestRenderConfig_FileNotFound(t *testing.T) {
+	_, err := RenderConfig("/does/not/exist.yaml", nil)
+	if err == nil {
+		t.Error("expected error for missing file, got nil")
+	}
+}
+
+// TestLoadConfigRaw_AcceptsRawTemplate verifies that LoadConfigRaw can
+// parse a template file (with {{ }} markers) without expanding it. This is
+// the contract internal/tag relies on for deterministic hashing of the
+// unrendered config.
+func TestLoadConfigRaw_AcceptsRawTemplate(t *testing.T) {
+	tmpl := filepath.Join(t.TempDir(), "tmpl.yaml")
+	body := `meta:
+  name: {{ .name }}
+  tags: ["{{ .version }}"]
+  from: scratch
+layer:
+  manager:
+    name: dnf
+`
+	if err := os.WriteFile(tmpl, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfigRaw(tmpl)
+	if err != nil {
+		t.Fatalf("LoadConfigRaw: %v", err)
+	}
+	// Placeholder substitution should leave us with a parseable Config
+	// whose Manager.Name is the static value from the template (the
+	// template markers in meta.name don't break YAML parsing — they're
+	// replaced by the placeholder string).
+	if cfg.Layer.Manager.Name != "dnf" {
+		t.Errorf("expected manager dnf, got %q", cfg.Layer.Manager.Name)
+	}
+}
+
+// TestLoadVars_CLIWinsOverFile verifies the documented precedence: --var
+// key=value on the command line overrides the same key in --var-file.
+// This is the property templates rely on for per-build pin-tweaks.
+func TestLoadVars_CLIWinsOverFile(t *testing.T) {
+	dir := t.TempDir()
+	vf := filepath.Join(dir, "vars.yaml")
+	if err := os.WriteFile(vf, []byte("arch: aarch64\nreleasever: '9'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	merged, err := LoadVars([]string{vf}, []string{"arch=x86_64"})
+	if err != nil {
+		t.Fatalf("LoadVars: %v", err)
+	}
+
+	if got := merged["arch"]; got != "x86_64" {
+		t.Errorf("CLI --var arch should win: got %v, want x86_64", got)
+	}
+	if got := merged["releasever"]; got != "9" {
+		t.Errorf("file-only key should pass through: got %v, want 9", got)
+	}
+}
+
+// TestLoadVars_DeepMerge: a nested map in a var file must merge key-wise
+// rather than the second file's map clobbering the first's. Without
+// deep-merge, layering two var files (e.g. arch + per-env overrides)
+// silently loses keys.
+func TestLoadVars_DeepMerge(t *testing.T) {
+	dir := t.TempDir()
+	vf1 := filepath.Join(dir, "base.yaml")
+	vf2 := filepath.Join(dir, "override.yaml")
+	if err := os.WriteFile(vf1, []byte("repo:\n  base: rocky\n  arch: x86_64\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(vf2, []byte("repo:\n  arch: aarch64\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	merged, err := LoadVars([]string{vf1, vf2}, nil)
+	if err != nil {
+		t.Fatalf("LoadVars: %v", err)
+	}
+
+	repo, ok := merged["repo"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected repo to be a map, got %T", merged["repo"])
+	}
+	if repo["base"] != "rocky" {
+		t.Errorf("repo.base from first file should survive: got %v, want rocky", repo["base"])
+	}
+	if repo["arch"] != "aarch64" {
+		t.Errorf("repo.arch from second file should win: got %v, want aarch64", repo["arch"])
+	}
+}
+
+// TestLoadVars_CLIDottedKey: dotted CLI keys (--var repo.arch=...) should
+// create a nested map, matching the var-file layout. Without this, users
+// can't override a nested key from the command line.
+func TestLoadVars_CLIDottedKey(t *testing.T) {
+	merged, err := LoadVars(nil, []string{"repo.arch=x86_64", "repo.base=rocky"})
+	if err != nil {
+		t.Fatalf("LoadVars: %v", err)
+	}
+	repo, ok := merged["repo"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected repo to be a map, got %T", merged["repo"])
+	}
+	if repo["arch"] != "x86_64" {
+		t.Errorf("repo.arch: got %v, want x86_64", repo["arch"])
+	}
+	if repo["base"] != "rocky" {
+		t.Errorf("repo.base: got %v, want rocky", repo["base"])
+	}
+}
+
+// TestLoadVars_EmptyVarFileSkipped: passing an empty string in the
+// varFiles slice (which happens when --var-file wasn't given but
+// the global slice still carries one "" entry) must be a no-op rather
+// than an open("") error.
+func TestLoadVars_EmptyVarFileSkipped(t *testing.T) {
+	merged, err := LoadVars([]string{""}, []string{"k=v"})
+	if err != nil {
+		t.Fatalf("LoadVars: %v", err)
+	}
+	if merged["k"] != "v" {
+		t.Errorf("CLI var lost: got %v, want v", merged["k"])
+	}
+}
+
+// TestLoadVars_BadCLIVar: a CLI var without "=" must fail loudly. Silent
+// acceptance would let typos like `--var arch x86_64` become no-ops.
+func TestLoadVars_BadCLIVar(t *testing.T) {
+	_, err := LoadVars(nil, []string{"no-equals-sign"})
+	if err == nil {
+		t.Error("expected error from malformed --var, got nil")
 	}
 }
 

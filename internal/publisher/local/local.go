@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/travisbcotton/image-build/internal/buildah"
 	"github.com/travisbcotton/image-build/internal/container"
 )
 
@@ -42,4 +43,21 @@ func (l *LocalPublisher) Publish(ctx context.Context, c container.Container, nam
 	}
 	log.Info("Committed locally", "images", images, "containerID", id)
 	return nil
+}
+
+// Exists reports whether every (name, tag) pair is already present in local
+// container storage as "localhost/<name>:<tag>". Returns false as soon as any
+// tag is missing.
+func (l *LocalPublisher) Exists(ctx context.Context, name string, tags []string) (bool, error) {
+	for _, t := range tags {
+		ref := fmt.Sprintf("localhost/%s:%s", name, t)
+		ok, err := buildah.ImageExists(ref)
+		if err != nil {
+			return false, fmt.Errorf("check local image %s: %w", ref, err)
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
 }

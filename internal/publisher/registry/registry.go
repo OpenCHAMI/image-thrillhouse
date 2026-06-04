@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 
+	"go.podman.io/image/v5/docker"
+	"go.podman.io/image/v5/types"
+
 	"github.com/travisbcotton/image-build/internal/container"
 )
 
@@ -51,4 +54,57 @@ func (r *RegistryPublisher) Publish(ctx context.Context, c container.Container, 
 		slog.Info("pushed to registry", "ref", ref)
 	}
 	return nil
+}
+
+// Exists reports whether every (name, tag) pair is already present in the
+// remote registry. It probes each tag's manifest endpoint and short-circuits
+// on the first missing tag.
+//
+// A network/auth/transport error surfaces as (false, err) rather than being
+// silently treated as "missing" — skip-if-exists should fail loud when it
+// can't tell. Operators who want best-effort behaviour can disable the flag.
+func (r *RegistryPublisher) Exists(ctx context.Context, name string, tags []string) (bool, error) {
+	sys := &types.SystemContext{
+		DockerInsecureSkipTLSVerify: types.NewOptionalBool(!r.tlsVerify),
+	}
+
+	for _, t := range tags {
+		ref := fmt.Sprintf("%s/%s:%s", r.url, name, t)
+		ok, err := manifestExists(ctx, sys, ref)
+		if err != nil {
+			return false, fmt.Errorf("probe %s: %w", ref, err)
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// manifestExists returns true if the manifest for ref is reachable in the
+// registry. Pulled into a helper because docker.NewReference / NewImageSource
+// / GetManifest is the canonical "does this exist" probe in containers/image
+// and we want one consistent failure-handling spot.
+func manifestExists(ctx context.Context, sys *types.SystemContext, ref string) (bool, error) {
+	imageRef, err := docker.ParseReference("//" + ref)
+	if err != nil {
+		return false, fmt.Errorf("parse ref: %w", err)
+	}
+
+	src, err := imageRef.NewImageSource(ctx, sys)
+	if err != nil {
+		// Authoritative "not found" surfaces as a manifest-not-found error
+		// here on most registries. We can't reliably distinguish 404 from
+		// other transport failures without inspecting registry-specific
+		// error types, so surface every failure to the caller — the
+		// skip-if-exists feature must not silently treat an outage as
+		// "build it anyway".
+		return false, err
+	}
+	defer src.Close()
+
+	if _, _, err := src.GetManifest(ctx, nil); err != nil {
+		return false, err
+	}
+	return true, nil
 }
