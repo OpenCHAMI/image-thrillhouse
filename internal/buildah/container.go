@@ -133,9 +133,9 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 		case container.RunModeContainer:
 			// chroot into mountpath, rootfs must have a shell
 			err := c.Builder.Run(cmd, buildah.RunOptions{
-				Isolation: c.GetIsolation(),
-				Stdout:    out,
-				Stderr:    out,
+				Isolation:       c.GetIsolation(),
+				Stdout:          out,
+				Stderr:          out,
 				AddCapabilities: defaultCaps,
 			})
 			out.Flush(err)
@@ -146,9 +146,9 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 		}
 	} else {
 		err := c.Builder.Run(cmd, buildah.RunOptions{
-			Isolation: c.GetIsolation(),
-			Stdout:    out,
-			Stderr:    out,
+			Isolation:       c.GetIsolation(),
+			Stdout:          out,
+			Stderr:          out,
 			AddCapabilities: defaultCaps,
 		})
 		out.Flush(err)

@@ -50,6 +50,12 @@ func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, 
 		return fmt.Errorf("buildah connection plugin not available: %w", err)
 	}
 
+	// Debug: List all buildah containers to verify our container exists
+	// This helps diagnose graph root mismatches when running as non-root
+	if err := b.listBuildahContainers(containerName); err != nil {
+		log.Warn("Failed to list buildah containers", "error", err)
+	}
+
 	// Generate dynamic inventory with container in specified groups
 	dynamicInventory, err := b.generateDynamicInventory(containerName, ansible.Groups)
 	if err != nil {
@@ -92,6 +98,56 @@ func (b *Builder) ensureAnsibleInstalledOnHost() error {
 			"  # Or via pip:\n" +
 			"  pip install ansible-core")
 	}
+	return nil
+}
+
+// listBuildahContainers lists all buildah containers and checks if our target container exists.
+// This helps diagnose issues with non-root users and graph root mismatches.
+func (b *Builder) listBuildahContainers(targetContainer string) error {
+	log := slog.With("component", "builder", "subsystem", "ansible")
+
+	// Run buildah containers to list all containers
+	cmd := exec.Command("buildah", "containers", "--format", "{{.ContainerName}}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("buildah containers failed: %w (output: %s)", err, string(output))
+	}
+
+	containers := strings.Split(strings.TrimSpace(string(output)), "\n")
+
+	// Log all containers found
+	log.Info("Buildah containers list",
+		"count", len(containers),
+		"containers", containers,
+		"target", targetContainer)
+
+	// Check if our target container is in the list
+	found := false
+	for _, name := range containers {
+		if name == targetContainer {
+			found = true
+			break
+		}
+	}
+
+	if !found && len(containers) > 0 && containers[0] != "" {
+		log.Warn("Target container not found in buildah containers list",
+			"target", targetContainer,
+			"available", containers)
+		return fmt.Errorf("container %q not found in buildah containers (found: %v)", targetContainer, containers)
+	}
+
+	if found {
+		log.Info("Target container confirmed in buildah containers", "container", targetContainer)
+	}
+
+	// Also check graph root for non-root users
+	graphRootCmd := exec.Command("buildah", "info", "--format", "{{.store.GraphRoot}}")
+	graphOutput, err := graphRootCmd.CombinedOutput()
+	if err == nil {
+		log.Info("Buildah graph root", "path", strings.TrimSpace(string(graphOutput)))
+	}
+
 	return nil
 }
 
@@ -287,6 +343,20 @@ func (b *Builder) executeAnsibleOnHost(ctx context.Context, ansibleCmd []string,
 
 	// Set environment variables
 	cmd.Env = os.Environ()
+
+	// Check if we need to pass graph root to Ansible/buildah connection plugin
+	// This is critical for non-root users where buildah might use a different storage location
+	if graphRoot := os.Getenv("BUILDAH_GRAPH_ROOT"); graphRoot != "" {
+		slog.Debug("Using BUILDAH_GRAPH_ROOT from environment", "path", graphRoot)
+		// Already in environment via os.Environ()
+	} else if graphRoot := os.Getenv("STORAGE_DRIVER"); graphRoot != "" {
+		slog.Debug("STORAGE_DRIVER set", "driver", graphRoot)
+	}
+
+	// Log the user context for debugging
+	if user := os.Getenv("USER"); user != "" {
+		slog.Debug("Running as user", "user", user, "uid", os.Getuid())
+	}
 
 	// Add ANSIBLE_ROLES_PATH if we found roles directories
 	if len(rolesPaths) > 0 {
