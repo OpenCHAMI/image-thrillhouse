@@ -156,47 +156,69 @@ fi
 echo ""
 
 echo "════════════════════════════════════════════════════════════════"
-echo "Phase 1: --var-file substitution"
+echo "Phase 1: --manifest --layer renders with computed tags + layer vars"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 
+# Manifest mode is the realistic path: render previews exactly what build
+# will consume. The layer's var_files are loaded automatically, tag and
+# parent_tag are computed, and we can assert per-arch repo URLs come
+# through correctly.
+
 assert_render_contains "rocky-base-x86_64" \
-    --config /tests/rocky/templates/rocky-base.yaml \
-    --var-file /tests/rocky/templates/x86_64.yaml \
+    --manifest /tests/manifests/rocky-multiarch.yaml \
+    --layer rocky-base-x86_64 \
     -- \
     "BaseOS/x86_64/os" \
     "https://dl.rockylinux.org/pub/rocky/9/BaseOS" \
     "/etc/image-build/yum.repos.d/rocky-baseos.repo"
 
 assert_render_contains "rocky-base-aarch64" \
-    --config /tests/rocky/templates/rocky-base.yaml \
-    --var-file /tests/rocky/templates/aarch64.yaml \
+    --manifest /tests/manifests/rocky-multiarch.yaml \
+    --layer rocky-base-aarch64 \
     -- \
     "BaseOS/aarch64/os"
 
 assert_render_contains "suse-base-x86_64" \
-    --config /tests/zypper/templates/suse-base.yaml \
-    --var-file /tests/zypper/templates/x86_64.yaml \
+    --manifest /tests/manifests/suse-multiarch.yaml \
+    --layer suse-base-x86_64 \
     -- \
     "openSUSE Leap 15.6" \
     "/etc/zypp/repos.d/opensuse-oss.repo"
 
 assert_render_contains "suse-base-aarch64" \
-    --config /tests/zypper/templates/suse-base.yaml \
-    --var-file /tests/zypper/templates/aarch64.yaml \
+    --manifest /tests/manifests/suse-multiarch.yaml \
+    --layer suse-base-aarch64 \
     -- \
     "download.opensuse.org/ports/aarch64"
 
 echo ""
 echo "════════════════════════════════════════════════════════════════"
-echo "Phase 2: --var CLI override priority"
+echo "Phase 2: parent_tag is injected into compute layers"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 
-# CLI --var must win over a value present in --var-file.
+# rocky-compute-x86_64 templates `from: localhost/rocky-base:{{ .parent_tag }}`,
+# which only resolves if ComputeBuildVars injects parent_tag for the
+# single-direct-parent case. Catches regressions in that path end-to-end.
+assert_render_contains "rocky-compute-x86_64-parent" \
+    --manifest /tests/manifests/rocky-multiarch.yaml \
+    --layer rocky-compute-x86_64 \
+    -- \
+    "from: localhost/rocky-base:"
+
+echo ""
+echo "════════════════════════════════════════════════════════════════"
+echo "Phase 3: --var CLI override priority"
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+
+# CLI --var must win over a value present in --var-file. Render in
+# manifest mode so tag/parent_tag come from the manifest while we
+# override one of the layer's vars on the command line.
 assert_render_contains "rocky-base-cli-override" \
-    --config /tests/rocky/templates/rocky-base.yaml \
-    --var-file /tests/rocky/templates/x86_64.yaml \
+    --manifest /tests/manifests/rocky-multiarch.yaml \
+    --layer rocky-base-x86_64 \
     --var "releasever=10" \
     -- \
     "BaseOS/x86_64/os" \
@@ -204,14 +226,31 @@ assert_render_contains "rocky-base-cli-override" \
 
 echo ""
 echo "════════════════════════════════════════════════════════════════"
-echo "Phase 3: missingkey=error"
+echo "Phase 4: missingkey=error (standalone --config mode)"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 
-# Rendering without a var-file should fail loudly because the template
-# references {{ .reposdir }} etc. with no value.
+# Standalone --config render with no var-file must fail loudly: the
+# template references {{ .reposdir }} etc. which are undefined, and
+# {{ .tag }} which only manifest mode injects.
 assert_render_errors "missing-var-fails-loud" \
     --config /tests/rocky/templates/rocky-base.yaml
+
+echo ""
+echo "════════════════════════════════════════════════════════════════"
+echo "Phase 5: mutually-exclusive flag validation"
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+
+# Passing both --config and --manifest must be rejected, and --layer
+# without --manifest must be rejected. Mirrors build's flag contract.
+assert_render_errors "config-and-manifest-conflict" \
+    --config /tests/rocky/templates/rocky-base.yaml \
+    --manifest /tests/manifests/rocky-multiarch.yaml \
+    --layer rocky-base-x86_64
+
+assert_render_errors "layer-without-manifest" \
+    --layer rocky-base-x86_64
 
 echo ""
 echo "════════════════════════════════════════════════════════════════"
