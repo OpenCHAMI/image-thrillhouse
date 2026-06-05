@@ -1,16 +1,72 @@
 package builder
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
 )
+
+// ansibleOutputWriter buffers Ansible output and displays it in a readable block
+type ansibleOutputWriter struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+func newAnsibleOutputWriter() *ansibleOutputWriter {
+	return &ansibleOutputWriter{}
+}
+
+func (w *ansibleOutputWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.buf = append(w.buf, p...)
+	return len(p), nil
+}
+
+func (w *ansibleOutputWriter) Flush(err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	
+	if len(w.buf) == 0 {
+		return
+	}
+	
+	// Write header with log level
+	level := slog.LevelInfo
+	msg := "ansible playbook output"
+	if err != nil {
+		level = slog.LevelError
+		msg = "ansible playbook output (failed)"
+	}
+	
+	// Log the header
+	slog.Log(nil, level, msg, "component", "ansible")
+	
+	// Write the output block directly to stderr
+	// This avoids any slog handler formatting issues
+	writer := bufio.NewWriter(os.Stderr)
+	fmt.Fprintln(writer, "┌──── output ────")
+	
+	// Split into lines and write each with prefix
+	lines := bytes.Split(bytes.TrimRight(w.buf, "\n"), []byte("\n"))
+	for _, line := range lines {
+		fmt.Fprintf(writer, "│ %s\n", string(line))
+	}
+	
+	fmt.Fprintln(writer, "└────────────────")
+	writer.Flush()
+	
+	w.buf = nil
+}
 
 
 // runAnsibleCommand executes an Ansible playbook inside the container.
@@ -375,9 +431,9 @@ func (b *Builder) executeAnsiblePlaybook(ctx context.Context, c container.Contai
 	configPath := filepath.Join(ansibleDir, "ansible.cfg")
 	wrappedCmd := fmt.Sprintf("ANSIBLE_CONFIG=%s %s", configPath, strings.Join(cmd, " "))
 
-	// Execute the command with standard buffered output
-	// This will show all output in a nice readable block at the end
-	out := container.NewBufLogWriter("stdout")
+	// Execute the command with ansible output writer
+	// Uses INFO level (not DEBUG) so output is visible
+	out := newAnsibleOutputWriter()
 	if err := c.RunScript(ctx, wrappedCmd, out); err != nil {
 		return fmt.Errorf("ansible-playbook failed: %w", err)
 	}
