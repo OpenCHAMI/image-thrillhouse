@@ -259,14 +259,24 @@ func (b *Builder) copyRolesDirectory(ctx context.Context, c container.Container,
 
 		containerPath := filepath.Join(containerBaseDir, "roles", relPath)
 
+		// Check if it's a directory (follows symlinks)
+		// We use os.Stat() instead of info.IsDir() because:
+		// 1. filepath.Walk's info parameter may not follow symlinks consistently
+		// 2. When path is a symlink to a directory, we need to resolve it first
+		// 3. Otherwise, we'd try to read a directory as a file, causing "is a directory" errors
+		fileInfo, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", path, err)
+		}
+
 		// If it's a directory, create it in the container
-		if info.IsDir() {
+		if fileInfo.IsDir() {
 			cmd := []string{"mkdir", "-p", containerPath}
 			out := container.NewBufLogWriter("stdout")
 			return c.Run(ctx, cmd, container.RunModeContainer, out)
 		}
 
-		// If it's a file, copy it
+		// If it's a file (or symlink to a file), copy it
 		// Use Src instead of Content to support empty files like .gitkeep
 		return c.WriteFile(ctx, config.File{
 			Path: containerPath,
@@ -305,22 +315,23 @@ func (b *Builder) copyInventoryToContainer(ctx context.Context, c container.Cont
 
 			containerPath := filepath.Join(containerBaseDir, "inventory", relPath)
 
-			if info.IsDir() {
+			// Check if it's a directory (follows symlinks)
+			// We use os.Stat() instead of info.IsDir() because:
+			// 1. filepath.Walk's info parameter may not follow symlinks consistently
+			// 2. When path is a symlink to a directory, we need to resolve it first
+			// 3. Otherwise, we'd try to read a directory as a file, causing "is a directory" errors
+			fileInfo, err := os.Stat(path)
+			if err != nil {
+				return fmt.Errorf("stat %s: %w", path, err)
+			}
+
+			if fileInfo.IsDir() {
 				cmd := []string{"mkdir", "-p", containerPath}
 				out := container.NewBufLogWriter("stdout")
 				return c.Run(ctx, cmd, container.RunModeContainer, out)
 			}
 
-			// Skip files with extensions (Ansible convention)
-			if filepath.Ext(info.Name()) != "" {
-				// Still copy them, but they won't be auto-loaded
-				// Use Src to support empty files
-				return c.WriteFile(ctx, config.File{
-					Path: containerPath,
-					Src:  path,
-				})
-			}
-
+			// Copy the file (whether it has an extension or not)
 			// Use Src to support empty files
 			return c.WriteFile(ctx, config.File{
 				Path: containerPath,
