@@ -1,84 +1,16 @@
 package builder
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
 )
-
-// ansibleOutputWriter buffers Ansible output and displays it in readable blocks
-// It shows output periodically (every few lines) so you can see progress
-type ansibleOutputWriter struct {
-	mu         sync.Mutex
-	buf        bytes.Buffer
-	lineCount  int
-	flushEvery int // Flush every N lines to show progress
-}
-
-func newAnsibleOutputWriter() *ansibleOutputWriter {
-	return &ansibleOutputWriter{
-		flushEvery: 10, // Show output every 10 lines for progress feedback
-	}
-}
-
-func (w *ansibleOutputWriter) Write(p []byte) (n int, err error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	n, err = w.buf.Write(p)
-	
-	// Count newlines to detect when we have enough lines to show
-	for i := 0; i < len(p); i++ {
-		if p[i] == '\n' {
-			w.lineCount++
-			if w.lineCount >= w.flushEvery {
-				// Show accumulated output
-				w.flushInternal()
-			}
-		}
-	}
-	
-	return n, err
-}
-
-func (w *ansibleOutputWriter) flushInternal() {
-	if w.buf.Len() == 0 {
-		return
-	}
-	
-	container.LogStreamBlock(slog.LevelInfo, "ansible playbook output", w.buf.String(), "component", "ansible")
-	w.buf.Reset()
-	w.lineCount = 0
-}
-
-func (w *ansibleOutputWriter) Flush(err error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if w.buf.Len() == 0 {
-		return
-	}
-
-	// Final flush - use error level if command failed
-	level := slog.LevelInfo
-	msg := "ansible playbook output"
-	if err != nil {
-		level = slog.LevelError
-		msg = "ansible playbook output (failed)"
-	}
-	
-	container.LogStreamBlock(level, msg, w.buf.String(), "component", "ansible")
-	w.buf.Reset()
-	w.lineCount = 0
-}
 
 
 // runAnsibleCommand executes an Ansible playbook inside the container.
@@ -443,8 +375,9 @@ func (b *Builder) executeAnsiblePlaybook(ctx context.Context, c container.Contai
 	configPath := filepath.Join(ansibleDir, "ansible.cfg")
 	wrappedCmd := fmt.Sprintf("ANSIBLE_CONFIG=%s %s", configPath, strings.Join(cmd, " "))
 
-	// Execute the command with streaming output
-	out := newAnsibleOutputWriter()
+	// Execute the command with standard buffered output
+	// This will show all output in a nice readable block at the end
+	out := container.NewBufLogWriter("stdout")
 	if err := c.RunScript(ctx, wrappedCmd, out); err != nil {
 		return fmt.Errorf("ansible-playbook failed: %w", err)
 	}
