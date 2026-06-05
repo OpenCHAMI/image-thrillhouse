@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/containers/buildah"
@@ -168,6 +169,11 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 //
 // This is useful for running complex multi-line scripts without escaping issues.
 func (c *Container) RunScript(ctx context.Context, script string, out container.OutputWriter) error {
+	// Validate that script is not empty
+	if strings.TrimSpace(script) == "" {
+		return fmt.Errorf("script content is empty")
+	}
+
 	// write script to temp file in container
 	tmpPath := fmt.Sprintf("/tmp/image-build-script-%d.sh", time.Now().UnixNano())
 

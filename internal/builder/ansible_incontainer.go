@@ -194,10 +194,23 @@ func (b *Builder) resolveConfigPath(path string) string {
 
 // copyPlaybookToContainer copies the playbook file to the container
 func (b *Builder) copyPlaybookToContainer(ctx context.Context, c container.Container, hostPath, containerBaseDir string) (string, error) {
+	// Validate that the playbook file exists
+	if _, err := os.Stat(hostPath); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("playbook file not found: %s (make sure the path is relative to where you run the command)", hostPath)
+		}
+		return "", fmt.Errorf("cannot access playbook file %s: %w", hostPath, err)
+	}
+
 	// Read the playbook file
 	content, err := os.ReadFile(hostPath)
 	if err != nil {
 		return "", fmt.Errorf("read playbook: %w", err)
+	}
+
+	// Validate that the playbook is not empty
+	if len(content) == 0 {
+		return "", fmt.Errorf("playbook file is empty: %s", hostPath)
 	}
 
 	// Determine container path
@@ -269,10 +282,13 @@ func (b *Builder) copyRolesDirectory(ctx context.Context, c container.Container,
 
 // copyInventoryToContainer copies inventory files/directories to the container
 func (b *Builder) copyInventoryToContainer(ctx context.Context, c container.Container, hostPath, containerBaseDir string) error {
-	// Check if it's a file or directory
+	// Validate that the inventory path exists
 	info, err := os.Stat(hostPath)
 	if err != nil {
-		return fmt.Errorf("stat inventory: %w", err)
+		if os.IsNotExist(err) {
+			return fmt.Errorf("inventory path not found: %s (make sure the path is relative to where you run the command)", hostPath)
+		}
+		return fmt.Errorf("cannot access inventory path %s: %w", hostPath, err)
 	}
 
 	if info.IsDir() {
@@ -427,9 +443,23 @@ func (b *Builder) executeAnsiblePlaybook(ctx context.Context, c container.Contai
 	// Add playbook path
 	cmd = append(cmd, playbookPath)
 
+	// Validate that we have a valid command
+	if len(cmd) == 0 {
+		return fmt.Errorf("ansible command is empty")
+	}
+
 	// Set ANSIBLE_CONFIG environment variable to point to our config
 	configPath := filepath.Join(ansibleDir, "ansible.cfg")
 	wrappedCmd := fmt.Sprintf("ANSIBLE_CONFIG=%s %s", configPath, strings.Join(cmd, " "))
+
+	// Validate that the wrapped command is not empty
+	if strings.TrimSpace(wrappedCmd) == "" || strings.TrimSpace(wrappedCmd) == fmt.Sprintf("ANSIBLE_CONFIG=%s", configPath) {
+		return fmt.Errorf("generated ansible command is empty")
+	}
+
+	// Debug: log the full command
+	log.Debug("Executing ansible command", "cmd", wrappedCmd, "cmdSlice", cmd)
+	log.Info("Running ansible-playbook", "playbook", ansible.Playbook, "groups", ansible.Groups)
 
 	// Execute the command with ansible output writer
 	// Uses INFO level (not DEBUG) so output is visible
