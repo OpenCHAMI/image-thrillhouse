@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/rs/zerolog/log"
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
 )
@@ -403,6 +402,8 @@ host_key_checking = False
 
 // executeAnsiblePlaybook runs ansible-playbook with the specified options
 func (b *Builder) executeAnsiblePlaybook(ctx context.Context, c container.Container, ansible *config.AnsibleCommand, playbookPath, ansibleDir, localhostInventoryPath string) error {
+	log := slog.With("component", "builder", "subsystem", "ansible")
+
 	// Build the command with absolute paths
 	// Specify the generated localhost inventory first to ensure it's read before other inventory files
 	cmd := []string{
