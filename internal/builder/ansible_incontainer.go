@@ -228,22 +228,24 @@ func (b *Builder) copyInventoryToContainer(ctx context.Context, c container.Cont
 		return "", fmt.Errorf("stat inventory %s: %w", inventorySrc, err)
 	}
 
-	inventoryDest := filepath.Join(baseDir, "inventory", "user")
+	inventoryDestDir := filepath.Join(baseDir, "inventory")
 
 	if info.IsDir() {
-		// Copy entire directory
-		if err := b.copyDirectoryToContainer(ctx, c, inventorySrc, inventoryDest); err != nil {
+		// Copy entire directory contents directly to inventory/ (not to a subdirectory)
+		// Ansible doesn't read subdirectories, so we must copy files to the top level
+		if err := b.copyDirectoryToContainer(ctx, c, inventorySrc, inventoryDestDir); err != nil {
 			return "", fmt.Errorf("copy inventory directory: %w", err)
 		}
 	} else {
-		// Copy single file
+		// Copy single file as "user_inventory.ini"
 		content, err := os.ReadFile(inventorySrc)
 		if err != nil {
 			return "", fmt.Errorf("read inventory: %w", err)
 		}
 
+		inventoryDestFile := filepath.Join(inventoryDestDir, "user_inventory.ini")
 		if err := c.WriteFile(ctx, config.File{
-			Path:    inventoryDest,
+			Path:    inventoryDestFile,
 			Content: string(content),
 		}); err != nil {
 			return "", fmt.Errorf("write inventory: %w", err)
@@ -252,7 +254,7 @@ func (b *Builder) copyInventoryToContainer(ctx context.Context, c container.Cont
 
 	slog.Debug("Copied user inventory to container",
 		"src", inventorySrc,
-		"dest", inventoryDest)
+		"dest", inventoryDestDir)
 
 	return filepath.Join(baseDir, "inventory"), nil
 }
