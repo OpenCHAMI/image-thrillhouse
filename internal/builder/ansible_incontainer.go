@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/rs/zerolog/log"
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
 )
@@ -35,11 +36,11 @@ func (w *ansibleOutputWriter) Write(p []byte) (n int, err error) {
 func (w *ansibleOutputWriter) Flush(err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	
+
 	if len(w.buf) == 0 {
 		return
 	}
-	
+
 	// Write header with log level
 	level := slog.LevelInfo
 	msg := "ansible playbook output"
@@ -47,27 +48,26 @@ func (w *ansibleOutputWriter) Flush(err error) {
 		level = slog.LevelError
 		msg = "ansible playbook output (failed)"
 	}
-	
+
 	// Log the header
 	slog.Log(nil, level, msg, "component", "ansible")
-	
+
 	// Write the output block directly to stderr
 	// This avoids any slog handler formatting issues
 	writer := bufio.NewWriter(os.Stderr)
 	fmt.Fprintln(writer, "┌──── output ────")
-	
+
 	// Split into lines and write each with prefix
 	lines := bytes.Split(bytes.TrimRight(w.buf, "\n"), []byte("\n"))
 	for _, line := range lines {
 		fmt.Fprintf(writer, "│ %s\n", string(line))
 	}
-	
+
 	fmt.Fprintln(writer, "└────────────────")
 	writer.Flush()
-	
+
 	w.buf = nil
 }
-
 
 // runAnsibleCommand executes an Ansible playbook inside the container.
 // It performs the following steps:
@@ -231,7 +231,7 @@ func (b *Builder) copyPlaybookToContainer(ctx context.Context, c container.Conta
 // copyRolesDirectory copies the roles directory to the container if it exists
 func (b *Builder) copyRolesDirectory(ctx context.Context, c container.Container, rolesPath, containerBaseDir string) error {
 	log := slog.With("component", "builder", "subsystem", "ansible")
-	
+
 	// Check if roles directory exists
 	if _, err := os.Stat(rolesPath); os.IsNotExist(err) {
 		// Roles directory doesn't exist, that's ok
@@ -384,7 +384,7 @@ func (b *Builder) generateLocalhostInventory(ctx context.Context, c container.Co
 // generateAnsibleConfig generates ansible.cfg in the container
 func (b *Builder) generateAnsibleConfig(ctx context.Context, c container.Container, containerBaseDir string) error {
 	log := slog.With("component", "builder", "subsystem", "ansible")
-	
+
 	// Use absolute paths for roles_path
 	rolesPath := filepath.Join(containerBaseDir, "roles")
 	configContent := fmt.Sprintf(`[defaults]
@@ -394,7 +394,7 @@ host_key_checking = False
 
 	configPath := filepath.Join(containerBaseDir, "ansible.cfg")
 	log.Debug("Writing ansible.cfg", "path", configPath, "roles_path", rolesPath)
-	
+
 	return c.WriteFile(ctx, config.File{
 		Path:    configPath,
 		Content: configContent,
