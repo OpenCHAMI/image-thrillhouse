@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.2
 	github.com/containers/buildah v1.43.1
 	github.com/mattn/go-shellwords v1.0.13
+	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.10.2
 	go.podman.io/image/v5 v5.39.2
 	go.podman.io/storage v1.62.0
@@ -116,8 +117,7 @@ require (
 	github.com/secure-systems-lab/go-securesystemslib v0.9.1 // indirect
 	github.com/sigstore/fulcio v1.8.5 // indirect
 	github.com/sigstore/protobuf-specs v0.5.0 // indirect
-	github.com/sigstore/sigstore v1.10.3 // indirect
-	github.com/sirupsen/logrus v1.9.3 // indirect
+	github.com/sigstore/sigstore v1.10.4 // indirect
 	github.com/smallstep/pkcs7 v0.1.1 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/stefanberger/go-pkcs11uri v0.0.0-20230803200340-78284954bff6 // indirect
