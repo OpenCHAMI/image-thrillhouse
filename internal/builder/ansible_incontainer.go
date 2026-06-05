@@ -1,16 +1,68 @@
 package builder
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
 )
+
+// ansibleOutputWriter streams Ansible output line-by-line as it's received
+type ansibleOutputWriter struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func newAnsibleOutputWriter() *ansibleOutputWriter {
+	return &ansibleOutputWriter{}
+}
+
+func (w *ansibleOutputWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// Write to buffer for line parsing
+	n, err = w.buf.Write(p)
+
+	// Process complete lines
+	for {
+		line, err := w.buf.ReadString('\n')
+		if err != nil {
+			// No complete line yet, put it back
+			w.buf.WriteString(line)
+			break
+		}
+		// Log the line (trimming the newline)
+		line = strings.TrimRight(line, "\r\n")
+		if line != "" {
+			container.LogStreamBlock(slog.LevelInfo, "ansible", line, "stream", "stdout")
+		}
+	}
+
+	return n, nil
+}
+
+func (w *ansibleOutputWriter) Flush(err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// Flush any remaining partial line
+	if w.buf.Len() > 0 {
+		line := strings.TrimRight(w.buf.String(), "\r\n")
+		if line != "" {
+			container.LogStreamBlock(slog.LevelInfo, "ansible", line, "stream", "stdout")
+		}
+		w.buf.Reset()
+	}
+}
+
 
 // runAnsibleCommand executes an Ansible playbook inside the container.
 // It performs the following steps:
@@ -374,8 +426,8 @@ func (b *Builder) executeAnsiblePlaybook(ctx context.Context, c container.Contai
 	configPath := filepath.Join(ansibleDir, "ansible.cfg")
 	wrappedCmd := fmt.Sprintf("ANSIBLE_CONFIG=%s %s", configPath, strings.Join(cmd, " "))
 
-	// Execute the command
-	out := container.NewBufLogWriter("stdout")
+	// Execute the command with streaming output
+	out := newAnsibleOutputWriter()
 	if err := c.RunScript(ctx, wrappedCmd, out); err != nil {
 		return fmt.Errorf("ansible-playbook failed: %w", err)
 	}
