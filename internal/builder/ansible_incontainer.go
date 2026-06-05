@@ -14,53 +14,70 @@ import (
 	"github.com/travisbcotton/image-build/internal/container"
 )
 
-// ansibleOutputWriter streams Ansible output line-by-line as it's received
+// ansibleOutputWriter buffers Ansible output and displays it in readable blocks
+// It shows output periodically (every few lines) so you can see progress
 type ansibleOutputWriter struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
+	mu         sync.Mutex
+	buf        bytes.Buffer
+	lineCount  int
+	flushEvery int // Flush every N lines to show progress
 }
 
 func newAnsibleOutputWriter() *ansibleOutputWriter {
-	return &ansibleOutputWriter{}
+	return &ansibleOutputWriter{
+		flushEvery: 10, // Show output every 10 lines for progress feedback
+	}
 }
 
 func (w *ansibleOutputWriter) Write(p []byte) (n int, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	// Write to buffer for line parsing
 	n, err = w.buf.Write(p)
-
-	// Process complete lines
-	for {
-		line, err := w.buf.ReadString('\n')
-		if err != nil {
-			// No complete line yet, put it back
-			w.buf.WriteString(line)
-			break
-		}
-		// Log the line (trimming the newline)
-		line = strings.TrimRight(line, "\r\n")
-		if line != "" {
-			container.LogStreamBlock(slog.LevelInfo, "ansible", line, "stream", "stdout")
+	
+	// Count newlines to detect when we have enough lines to show
+	for i := 0; i < len(p); i++ {
+		if p[i] == '\n' {
+			w.lineCount++
+			if w.lineCount >= w.flushEvery {
+				// Show accumulated output
+				w.flushInternal()
+			}
 		}
 	}
+	
+	return n, err
+}
 
-	return n, nil
+func (w *ansibleOutputWriter) flushInternal() {
+	if w.buf.Len() == 0 {
+		return
+	}
+	
+	container.LogStreamBlock(slog.LevelInfo, "ansible playbook output", w.buf.String(), "component", "ansible")
+	w.buf.Reset()
+	w.lineCount = 0
 }
 
 func (w *ansibleOutputWriter) Flush(err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	// Flush any remaining partial line
-	if w.buf.Len() > 0 {
-		line := strings.TrimRight(w.buf.String(), "\r\n")
-		if line != "" {
-			container.LogStreamBlock(slog.LevelInfo, "ansible", line, "stream", "stdout")
-		}
-		w.buf.Reset()
+	if w.buf.Len() == 0 {
+		return
 	}
+
+	// Final flush - use error level if command failed
+	level := slog.LevelInfo
+	msg := "ansible playbook output"
+	if err != nil {
+		level = slog.LevelError
+		msg = "ansible playbook output (failed)"
+	}
+	
+	container.LogStreamBlock(level, msg, w.buf.String(), "component", "ansible")
+	w.buf.Reset()
+	w.lineCount = 0
 }
 
 
