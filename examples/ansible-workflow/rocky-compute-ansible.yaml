@@ -23,6 +23,7 @@ layer:
       - ansible:
           playbook: ./playbooks/compute.yaml
           inventory: ./inventory/
+          roles: ./roles              # Optional: defaults to "roles" if not specified
           groups:
             - compute
           extra_vars:

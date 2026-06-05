@@ -106,6 +106,7 @@ type Command struct {
 type AnsibleCommand struct {
 	Playbook  string            `yaml:"playbook"`   // Path to playbook file (required, relative to config)
 	Inventory string            `yaml:"inventory"`  // Path to inventory directory or file (optional)
+	Roles     string            `yaml:"roles"`      // Path to roles directory (optional, defaults to "roles")
 	Groups    []string          `yaml:"groups"`     // Groups to assign localhost to (required)
 	ExtraVars map[string]string `yaml:"extra_vars"` // Extra variables to pass with -e flag
 	Tags      string            `yaml:"tags"`       // Tags to run (--tags)

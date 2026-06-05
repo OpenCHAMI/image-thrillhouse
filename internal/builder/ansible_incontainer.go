@@ -52,8 +52,14 @@ func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, 
 	}
 
 	// Step 4: Copy roles directory if it exists
-	log.Debug("Checking for roles directory")
-	if err := b.copyRolesDirectory(ctx, c, playbookPath, ansibleTmpDir); err != nil {
+	// Use configured roles path or default to "roles"
+	rolesPath := ansible.Roles
+	if rolesPath == "" {
+		rolesPath = "roles"
+	}
+	rolesPath = b.resolveConfigPath(rolesPath)
+	log.Debug("Checking for roles directory", "roles", rolesPath)
+	if err := b.copyRolesDirectory(ctx, c, rolesPath, ansibleTmpDir); err != nil {
 		return fmt.Errorf("copy roles: %w", err)
 	}
 
@@ -153,30 +159,31 @@ func (b *Builder) copyPlaybookToContainer(ctx context.Context, c container.Conta
 }
 
 // copyRolesDirectory copies the roles directory to the container if it exists
-func (b *Builder) copyRolesDirectory(ctx context.Context, c container.Container, playbookPath, containerBaseDir string) error {
-	// Look for roles directory in the same directory as the playbook
-	playbookDir := filepath.Dir(playbookPath)
-	rolesDir := filepath.Join(playbookDir, "roles")
-
+func (b *Builder) copyRolesDirectory(ctx context.Context, c container.Container, rolesPath, containerBaseDir string) error {
+	log := slog.With("component", "builder", "subsystem", "ansible")
+	
 	// Check if roles directory exists
-	if _, err := os.Stat(rolesDir); os.IsNotExist(err) {
+	if _, err := os.Stat(rolesPath); os.IsNotExist(err) {
 		// Roles directory doesn't exist, that's ok
+		log.Debug("Roles directory not found, skipping", "path", rolesPath)
 		return nil
 	}
 
+	log.Info("Copying roles directory to container", "roles", rolesPath)
+
 	// Walk the roles directory and copy all files
-	return filepath.Walk(rolesDir, func(path string, info os.FileInfo, err error) error {
+	return filepath.Walk(rolesPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
 		// Skip the root roles directory itself
-		if path == rolesDir {
+		if path == rolesPath {
 			return nil
 		}
 
 		// Get relative path from roles directory
-		relPath, err := filepath.Rel(rolesDir, path)
+		relPath, err := filepath.Rel(rolesPath, path)
 		if err != nil {
 			return err
 		}

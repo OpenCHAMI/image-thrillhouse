@@ -54,6 +54,7 @@ commands:
   - ansible:
       playbook: ./playbooks/compute.yaml
       inventory: ./inventory/
+      roles: ./roles              # Optional: defaults to "roles"
       groups:
         - compute
       extra_vars:
@@ -82,8 +83,8 @@ When the build runs, the tool:
    ```
 3. **Copies files**:
    - Playbook from `./playbooks/compute.yaml` → container
-   - Inventory from `./inventory/` → container
-   - Roles from `./roles/` → container
+   - Inventory from `./inventory/` → container (if specified)
+   - Roles from `./roles/` → container (defaults to `roles` if not specified)
 4. **Generates files**:
    - `ansible.cfg` with `roles_path = /tmp/image-build-ansible/roles` (absolute path)
    - `00-generated-localhost` inventory file with group assignments (prefix ensures it's read first)
@@ -111,6 +112,7 @@ This ensures the playbook runs against localhost within the container, and local
 ### Optional Fields
 
 - `inventory`: Path to inventory directory or file (optional)
+- `roles`: Path to roles directory (optional, defaults to `roles` relative to config file)
 - `extra_vars`: Dictionary of extra variables to pass with `-e`
 - `tags`: Ansible tags to run (`--tags`)
 - `skip_tags`: Ansible tags to skip (`--skip-tags`)
@@ -148,6 +150,19 @@ extra_vars:
      ansible.builtin.include_role:
        name: myrole
    ```
+
+### Using Custom Roles Path
+
+If your roles are in a different location:
+```yaml
+- ansible:
+    playbook: ./playbooks/compute.yaml
+    roles: /path/to/my/roles  # Can be absolute or relative to config
+    groups:
+      - compute
+```
+
+The default is `roles` (relative to the config file location).
 
 ### Using Tags
 
