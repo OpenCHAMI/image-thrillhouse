@@ -1,0 +1,9 @@
+---
+# Group variables for compute nodes
+# These can be overridden by extra_vars in the config
+
+# Default timezone
+timezone: "America/New_York"
+
+# Default domain
+domain: "compute.local"

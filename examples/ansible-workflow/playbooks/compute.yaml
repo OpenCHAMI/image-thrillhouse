@@ -1,0 +1,36 @@
+---
+# Compute node configuration playbook
+# This playbook configures basic compute node settings
+
+- name: Configure compute nodes
+  hosts: compute
+  become: true
+  
+  tasks:
+    - name: Display datacenter information
+      ansible.builtin.debug:
+        msg: "Configuring node in datacenter: {{ datacenter }}"
+    
+    - name: Display NTP server
+      ansible.builtin.debug:
+        msg: "Using NTP server: {{ ntp_server }}"
+    
+    - name: Install chrony role
+      ansible.builtin.include_role:
+        name: chrony
+    
+    - name: Ensure chrony is enabled
+      ansible.builtin.systemd:
+        name: chronyd
+        enabled: yes
+        state: started
+      when: ansible_facts['service_mgr'] == 'systemd'
+    
+    - name: Create compute node marker
+      ansible.builtin.copy:
+        content: |
+          Datacenter: {{ datacenter }}
+          NTP Server: {{ ntp_server }}
+          Configured: {{ ansible_date_time.iso8601 }}
+        dest: /etc/compute-node-config
+        mode: '0644'

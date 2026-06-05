@@ -35,10 +35,10 @@ type Meta struct {
 // Layer defines how to build the image layer.
 // It specifies the package manager, repositories, files, and actions to perform.
 type Layer struct {
-	Manager Manager  `yaml:"manager"`  // Package manager configuration
-	Repos   []Repo   `yaml:"repos"`    // Repository configurations
-	Files   []File   `yaml:"files"`    // Files to add to the image
-	Actions Actions  `yaml:"actions"`  // Installation and command actions
+	Manager  Manager   `yaml:"manager"`  // Package manager configuration
+	Repos    []Repo    `yaml:"repos"`    // Repository configurations
+	Files    []File    `yaml:"files"`    // Files to add to the image
+	Actions  Actions   `yaml:"actions"`  // Installation and command actions
 	OpenSCAP *OpenSCAP `yaml:"openscap"` // Optional: OpenSCAP security scanning configuration
 }
 
@@ -93,10 +93,25 @@ type Module struct {
 }
 
 // Command represents a command to run in the container.
-// Exactly one of Run or Script must be specified.
+// Exactly one of Run, Script, or Ansible must be specified.
 type Command struct {
-	Run    string `yaml:"run"`    // Simple command to run (e.g., "systemctl enable service")
-	Script string `yaml:"script"` // Multi-line shell script to run
+	Run     string          `yaml:"run"`     // Simple command to run (e.g., "systemctl enable service")
+	Script  string          `yaml:"script"`  // Multi-line shell script to run
+	Ansible *AnsibleCommand `yaml:"ansible"` // Ansible playbook execution
+}
+
+// AnsibleCommand configures Ansible playbook execution inside the container.
+// It copies playbooks, inventory, and roles to the container, generates a
+// dynamic inventory for localhost, and executes ansible-playbook.
+type AnsibleCommand struct {
+	Playbook  string            `yaml:"playbook"`   // Path to playbook file (required, relative to config)
+	Inventory string            `yaml:"inventory"`  // Path to inventory directory or file (optional)
+	Groups    []string          `yaml:"groups"`     // Groups to assign localhost to (required)
+	ExtraVars map[string]string `yaml:"extra_vars"` // Extra variables to pass with -e flag
+	Tags      string            `yaml:"tags"`       // Tags to run (--tags)
+	SkipTags  string            `yaml:"skip_tags"`  // Tags to skip (--skip-tags)
+	Verbose   int               `yaml:"verbose"`    // Verbosity level (0-4)
+	CheckMode bool              `yaml:"check_mode"` // Run in check mode (--check)
 }
 
 // Publish defines where to publish the built image.
@@ -116,13 +131,17 @@ type Publish struct {
 type CommandType int
 
 const (
-	CommandRun    CommandType = iota // Simple command (Run field)
-	CommandScript                    // Multi-line script (Script field)
+	CommandRun     CommandType = iota // Simple command (Run field)
+	CommandScript                     // Multi-line script (Script field)
+	CommandAnsible                    // Ansible playbook execution (Ansible field)
 )
 
 // Type returns the CommandType for this command.
-// It determines whether to execute the Run field or the Script field.
+// It determines whether to execute the Run field, Script field, or Ansible field.
 func (c *Command) Type() CommandType {
+	if c.Ansible != nil {
+		return CommandAnsible
+	}
 	if c.Script != "" {
 		return CommandScript
 	}

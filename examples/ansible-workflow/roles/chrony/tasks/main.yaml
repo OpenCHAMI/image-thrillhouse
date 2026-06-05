@@ -1,0 +1,22 @@
+---
+# Chrony role - Configure NTP time synchronization
+
+- name: Install chrony package
+  ansible.builtin.dnf:
+    name: chrony
+    state: present
+
+- name: Configure chrony
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart chrony
+
+- name: Ensure chrony service is enabled and started
+  ansible.builtin.systemd:
+    name: chronyd
+    enabled: yes
+    state: started

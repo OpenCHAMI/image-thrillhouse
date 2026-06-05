@@ -1,0 +1,7 @@
+---
+# Handlers for chrony role
+
+- name: restart chrony
+  ansible.builtin.systemd:
+    name: chronyd
+    state: restarted
