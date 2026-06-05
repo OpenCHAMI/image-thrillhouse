@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
@@ -358,13 +359,51 @@ func (b *Builder) executeAnsibleInContainer(ctx context.Context, c container.Con
 	slog.Debug("Ansible execution script",
 		"script", script.String())
 
-	// Execute via RunScript
-	out := container.NewBufLogWriter("ansible")
+	// Execute via RunScript with a custom output writer that logs at INFO level
+	// We want to see Ansible output even for successful runs
+	out := &ansibleOutputWriter{key: "ansible"}
 	if err := c.RunScript(ctx, script.String(), out); err != nil {
 		return fmt.Errorf("ansible-playbook failed: %w", err)
 	}
 
 	return nil
+}
+
+// ansibleOutputWriter is a custom output writer for Ansible that logs output at INFO level.
+// Unlike BufLogWriter which logs at DEBUG for success, we want to see Ansible playbook
+// output (PLAY, TASK, etc.) even for successful runs.
+type ansibleOutputWriter struct {
+	mu  sync.Mutex
+	buf []byte
+	key string
+}
+
+func (w *ansibleOutputWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.buf = append(w.buf, p...)
+	return len(p), nil
+}
+
+func (w *ansibleOutputWriter) Flush(err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if len(w.buf) == 0 {
+		return
+	}
+
+	// Always log at INFO level so users can see Ansible output
+	// Even successful Ansible runs should be visible
+	level := slog.LevelInfo
+	msg := "ansible-playbook output"
+	if err != nil {
+		level = slog.LevelError
+		msg = "ansible-playbook output (failed)"
+	}
+
+	container.LogStreamBlock(level, msg, string(w.buf), "stream", w.key)
+	w.buf = nil
 }
 
 // cleanupAnsibleFiles removes the temporary Ansible directory from the container.
