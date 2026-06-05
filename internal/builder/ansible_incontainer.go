@@ -201,7 +201,7 @@ func (b *Builder) copyPlaybookToContainer(ctx context.Context, c container.Conta
 		return "", fmt.Errorf("cannot access playbook file %s: %w", hostPath, err)
 	}
 
-	// Read the playbook file
+	// Read the playbook file to validate it's not empty
 	content, err := os.ReadFile(hostPath)
 	if err != nil {
 		return "", fmt.Errorf("read playbook: %w", err)
@@ -216,10 +216,10 @@ func (b *Builder) copyPlaybookToContainer(ctx context.Context, c container.Conta
 	playbookName := filepath.Base(hostPath)
 	containerPath := filepath.Join(containerBaseDir, "playbooks", playbookName)
 
-	// Write to container
+	// Write to container using Src for consistency
 	if err := c.WriteFile(ctx, config.File{
-		Path:    containerPath,
-		Content: string(content),
+		Path: containerPath,
+		Src:  hostPath,
 	}); err != nil {
 		return "", fmt.Errorf("write playbook to container: %w", err)
 	}
@@ -267,14 +267,10 @@ func (b *Builder) copyRolesDirectory(ctx context.Context, c container.Container,
 		}
 
 		// If it's a file, copy it
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read file %s: %w", path, err)
-		}
-
+		// Use Src instead of Content to support empty files like .gitkeep
 		return c.WriteFile(ctx, config.File{
-			Path:    containerPath,
-			Content: string(content),
+			Path: containerPath,
+			Src:  path,
 		})
 	})
 }
@@ -318,41 +314,29 @@ func (b *Builder) copyInventoryToContainer(ctx context.Context, c container.Cont
 			// Skip files with extensions (Ansible convention)
 			if filepath.Ext(info.Name()) != "" {
 				// Still copy them, but they won't be auto-loaded
-				content, err := os.ReadFile(path)
-				if err != nil {
-					return fmt.Errorf("read file %s: %w", path, err)
-				}
-
+				// Use Src to support empty files
 				return c.WriteFile(ctx, config.File{
-					Path:    containerPath,
-					Content: string(content),
+					Path: containerPath,
+					Src:  path,
 				})
 			}
 
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return fmt.Errorf("read file %s: %w", path, err)
-			}
-
+			// Use Src to support empty files
 			return c.WriteFile(ctx, config.File{
-				Path:    containerPath,
-				Content: string(content),
+				Path: containerPath,
+				Src:  path,
 			})
 		})
 	}
 
 	// Single inventory file
-	content, err := os.ReadFile(hostPath)
-	if err != nil {
-		return fmt.Errorf("read inventory file: %w", err)
-	}
-
+	// Use Src to support empty files
 	fileName := filepath.Base(hostPath)
 	containerPath := filepath.Join(containerBaseDir, "inventory", fileName)
 
 	return c.WriteFile(ctx, config.File{
-		Path:    containerPath,
-		Content: string(content),
+		Path: containerPath,
+		Src:  hostPath,
 	})
 }
 
