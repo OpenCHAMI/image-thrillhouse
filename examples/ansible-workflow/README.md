@@ -17,7 +17,7 @@ This example creates a Rocky Linux 9 compute node image with Ansible-based confi
 ├── inventory/
 │   ├── group_vars/
 │   │   └── compute.yaml          # Group variables
-│   └── hosts                      # Static inventory
+│   └── hosts                      # Static inventory (optional)
 ├── playbooks/
 │   └── compute.yaml               # Main playbook
 └── roles/
@@ -29,6 +29,8 @@ This example creates a Rocky Linux 9 compute node image with Ansible-based confi
         └── handlers/
             └── main.yaml          # Service restart handlers
 ```
+
+**Note:** The `inventory/hosts` file is optional. The tool will automatically generate a `localhost` inventory file with the groups specified in your config.
 
 ## How It Works
 
@@ -83,9 +85,9 @@ When the build runs, the tool:
    - Inventory from `./inventory/` → container
    - Roles from `./roles/` → container
 4. **Generates files**:
-   - `ansible.cfg` with `roles_path = ./roles`
+   - `ansible.cfg` with `roles_path = /tmp/image-build-ansible/roles` (absolute path)
    - `localhost` inventory file with group assignments
-5. **Executes** `ansible-playbook -i /tmp/image-build-ansible/inventory /tmp/image-build-ansible/playbooks/compute.yaml`
+5. **Executes** `ANSIBLE_CONFIG=/tmp/image-build-ansible/ansible.cfg ansible-playbook -i /tmp/image-build-ansible/inventory /tmp/image-build-ansible/playbooks/compute.yaml`
 6. **Cleans up** temporary files after execution
 
 ### 4. Dynamic Localhost Inventory
@@ -93,10 +95,8 @@ When the build runs, the tool:
 The tool automatically generates a `localhost` inventory file (without extension, following Ansible conventions):
 
 ```ini
-localhost ansible_connection=local
-
 [compute]
-localhost
+localhost ansible_connection=local
 ```
 
 This ensures the playbook runs against localhost within the container, and localhost is assigned to the specified groups.

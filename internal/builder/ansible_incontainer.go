@@ -278,16 +278,13 @@ func (b *Builder) copyInventoryToContainer(ctx context.Context, c container.Cont
 
 // generateLocalhostInventory generates a dynamic inventory file for localhost
 func (b *Builder) generateLocalhostInventory(ctx context.Context, c container.Container, groups []string, containerBaseDir string) error {
-	// Build the inventory content
+	// Build the inventory content in proper INI format
 	var sb strings.Builder
 
-	// Start with localhost definition
-	sb.WriteString("localhost ansible_connection=local\n\n")
-
-	// Add group definitions
+	// Add group definitions first
 	for _, group := range groups {
 		sb.WriteString(fmt.Sprintf("[%s]\n", group))
-		sb.WriteString("localhost\n\n")
+		sb.WriteString("localhost ansible_connection=local\n\n")
 	}
 
 	// Write to container without extension (Ansible convention)
@@ -300,10 +297,12 @@ func (b *Builder) generateLocalhostInventory(ctx context.Context, c container.Co
 
 // generateAnsibleConfig generates ansible.cfg in the container
 func (b *Builder) generateAnsibleConfig(ctx context.Context, c container.Container, containerBaseDir string) error {
-	configContent := `[defaults]
-roles_path = ./roles
+	// Use absolute paths for roles_path
+	rolesPath := filepath.Join(containerBaseDir, "roles")
+	configContent := fmt.Sprintf(`[defaults]
+roles_path = %s
 host_key_checking = False
-`
+`, rolesPath)
 
 	configPath := filepath.Join(containerBaseDir, "ansible.cfg")
 	return c.WriteFile(ctx, config.File{
@@ -314,7 +313,7 @@ host_key_checking = False
 
 // executeAnsiblePlaybook runs ansible-playbook with the specified options
 func (b *Builder) executeAnsiblePlaybook(ctx context.Context, c container.Container, ansible *config.AnsibleCommand, playbookPath, ansibleDir string) error {
-	// Build the command
+	// Build the command with absolute paths
 	cmd := []string{
 		"ansible-playbook",
 		"-i", filepath.Join(ansibleDir, "inventory"),
@@ -348,9 +347,9 @@ func (b *Builder) executeAnsiblePlaybook(ctx context.Context, c container.Contai
 	// Add playbook path
 	cmd = append(cmd, playbookPath)
 
-	// Change to the ansible directory before running
-	// We'll do this by prepending a cd command
-	wrappedCmd := fmt.Sprintf("cd %s && %s", ansibleDir, strings.Join(cmd, " "))
+	// Set ANSIBLE_CONFIG environment variable to point to our config
+	configPath := filepath.Join(ansibleDir, "ansible.cfg")
+	wrappedCmd := fmt.Sprintf("ANSIBLE_CONFIG=%s %s", configPath, strings.Join(cmd, " "))
 
 	// Execute the command
 	out := container.NewBufLogWriter("stdout")
