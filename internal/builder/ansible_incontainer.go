@@ -33,10 +33,17 @@ import (
 func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, ansible *config.AnsibleCommand) error {
 	log := slog.With("component", "builder", "subsystem", "ansible")
 
+	// Resolve paths relative to config directory
+	resolvedPlaybook := b.resolvePath(ansible.Playbook)
+	resolvedInventory := ""
+	if ansible.Inventory != "" {
+		resolvedInventory = b.resolvePath(ansible.Inventory)
+	}
+
 	log.Info("Starting Ansible playbook execution (in-container)",
-		"playbook", ansible.Playbook,
+		"playbook", resolvedPlaybook,
 		"groups", ansible.Groups,
-		"inventory", ansible.Inventory)
+		"inventory", resolvedInventory)
 
 	// Verify Ansible is installed in the container
 	if err := b.ensureAnsibleInstalledInContainer(ctx, c); err != nil {
@@ -51,20 +58,20 @@ func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, 
 		return fmt.Errorf("create ansible directories: %w", err)
 	}
 
-	// Copy playbook to container
-	playbookPath, err := b.copyPlaybookToContainer(ctx, c, ansible.Playbook, ansibleTmpDir)
+	// Copy playbook to container (using resolved path)
+	playbookPath, err := b.copyPlaybookToContainer(ctx, c, resolvedPlaybook, ansibleTmpDir)
 	if err != nil {
 		return fmt.Errorf("copy playbook: %w", err)
 	}
 
-	// Copy roles directory if it exists
-	if err := b.copyRolesDirectory(ctx, c, ansible.Playbook, ansibleTmpDir); err != nil {
+	// Copy roles directory if it exists (using resolved path)
+	if err := b.copyRolesDirectory(ctx, c, resolvedPlaybook, ansibleTmpDir); err != nil {
 		log.Warn("Failed to copy roles directory", "error", err)
 		// Non-fatal - playbook might not use roles
 	}
 
-	// Copy user's inventory if provided, or create minimal one
-	inventoryPath, err := b.copyInventoryToContainer(ctx, c, ansible.Inventory, ansibleTmpDir)
+	// Copy user's inventory if provided, or create minimal one (using resolved path)
+	inventoryPath, err := b.copyInventoryToContainer(ctx, c, resolvedInventory, ansibleTmpDir)
 	if err != nil {
 		return fmt.Errorf("copy inventory: %w", err)
 	}
@@ -412,6 +419,19 @@ func (w *ansibleOutputWriter) Flush(err error) {
 func (b *Builder) cleanupAnsibleFiles(ctx context.Context, c container.Container, baseDir string) error {
 	out := container.NewBufLogWriter("cleanup")
 	return c.Run(ctx, []string{"rm", "-rf", baseDir}, container.RunModeContainer, out)
+}
+
+// resolvePath resolves a path relative to the config directory if it's not absolute.
+// This ensures that relative paths in the config file are resolved correctly
+// regardless of where the image-build command is run from.
+func (b *Builder) resolvePath(path string) string {
+	if path == "" {
+		return ""
+	}
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(b.configDir, path)
 }
 
 func min(a, b int) int {

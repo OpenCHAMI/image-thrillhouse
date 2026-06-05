@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -30,16 +31,18 @@ import (
 // executing commands, and publishing the result.
 type Builder struct {
 	cfg          *config.Config
+	configDir    string // Directory containing the config file, used for resolving relative paths
 	backend      backend.Backend
 	newContainer func(context.Context, string, string, bool) (container.Container, error)
 	publishers   []publisher.Publisher
 	skipIfExists bool
 }
 
-func New(ctx context.Context, cfg *config.Config, b backend.Backend, p []publisher.Publisher) *Builder {
+func New(ctx context.Context, cfg *config.Config, configDir string, b backend.Backend, p []publisher.Publisher) *Builder {
 	return &Builder{
-		cfg:     cfg,
-		backend: b,
+		cfg:       cfg,
+		configDir: configDir,
+		backend:   b,
 		newContainer: func(ctx context.Context, name string, from string, tlsverify bool) (container.Container, error) {
 			return ibuildah.NewContainer(ctx, name, from, tlsverify)
 		},
@@ -181,11 +184,16 @@ func (b *Builder) writeRepos(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	for _, repo := range b.cfg.Layer.Repos {
 		log.Info("writing repos:", "repo", repo.Path)
+		// Resolve repo.Src path if it's relative
+		src := repo.Src
+		if src != "" && !filepath.IsAbs(src) {
+			src = filepath.Join(b.configDir, src)
+		}
 		file := config.File{
 			Path:    repo.Path,
 			Content: repo.Content,
 			URL:     repo.URL,
-			Src:     repo.Src,
+			Src:     src,
 		}
 		if err := c.WriteFile(ctx, file); err != nil {
 			return fmt.Errorf("write repo %s: %w", repo.Path, err)
@@ -309,7 +317,12 @@ func (b *Builder) writeFiles(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	for _, file := range b.cfg.Layer.Files {
 		log.Info("Writing Files:", "file", file.Path)
-		if err := c.WriteFile(ctx, file); err != nil {
+		// Resolve file.Src path if it's relative
+		resolvedFile := file
+		if resolvedFile.Src != "" && !filepath.IsAbs(resolvedFile.Src) {
+			resolvedFile.Src = filepath.Join(b.configDir, resolvedFile.Src)
+		}
+		if err := c.WriteFile(ctx, resolvedFile); err != nil {
 			return fmt.Errorf("write file %s: %w", file.Path, err)
 		}
 	}
