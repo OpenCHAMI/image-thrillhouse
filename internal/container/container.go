@@ -33,6 +33,12 @@ type Container interface {
 	// of the underlying buildah Add operation.
 	WriteFile(ctx context.Context, file config.File) error
 	
+	// CopyDirectory copies an entire directory from the host to the container.
+	// This is much faster than walking and copying individual files.
+	// srcDir is the source directory path on the host.
+	// destDir is the destination directory path in the container.
+	CopyDirectory(ctx context.Context, srcDir, destDir string) error
+	
 	// Commit commits the container to local storage with the given name and tag
 	Commit(ctx context.Context, name, tag string) (string, error)
 

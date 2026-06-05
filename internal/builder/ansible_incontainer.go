@@ -240,49 +240,10 @@ func (b *Builder) copyRolesDirectory(ctx context.Context, c container.Container,
 
 	log.Info("Copying roles directory to container", "roles", rolesPath)
 
-	// Walk the roles directory and copy all files
-	return filepath.Walk(rolesPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Skip the root roles directory itself
-		if path == rolesPath {
-			return nil
-		}
-
-		// Get relative path from roles directory
-		relPath, err := filepath.Rel(rolesPath, path)
-		if err != nil {
-			return err
-		}
-
-		containerPath := filepath.Join(containerBaseDir, "roles", relPath)
-
-		// Check if it's a directory (follows symlinks)
-		// We use os.Stat() instead of info.IsDir() because:
-		// 1. filepath.Walk's info parameter may not follow symlinks consistently
-		// 2. When path is a symlink to a directory, we need to resolve it first
-		// 3. Otherwise, we'd try to read a directory as a file, causing "is a directory" errors
-		fileInfo, err := os.Stat(path)
-		if err != nil {
-			return fmt.Errorf("stat %s: %w", path, err)
-		}
-
-		// If it's a directory, create it in the container
-		if fileInfo.IsDir() {
-			cmd := []string{"mkdir", "-p", containerPath}
-			out := container.NewBufLogWriter("stdout")
-			return c.Run(ctx, cmd, container.RunModeContainer, out)
-		}
-
-		// If it's a file (or symlink to a file), copy it
-		// Use Src instead of Content to support empty files like .gitkeep
-		return c.WriteFile(ctx, config.File{
-			Path: containerPath,
-			Src:  path,
-		})
-	})
+	// Use the fast directory copy method instead of walking individual files
+	// This copies the entire directory tree in a single buildah operation
+	destDir := filepath.Join(containerBaseDir, "roles")
+	return c.CopyDirectory(ctx, rolesPath, destDir)
 }
 
 // copyInventoryToContainer copies inventory files/directories to the container
@@ -297,50 +258,12 @@ func (b *Builder) copyInventoryToContainer(ctx context.Context, c container.Cont
 	}
 
 	if info.IsDir() {
-		// Copy entire directory
-		return filepath.Walk(hostPath, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-
-			// Skip the root directory
-			if path == hostPath {
-				return nil
-			}
-
-			relPath, err := filepath.Rel(hostPath, path)
-			if err != nil {
-				return err
-			}
-
-			containerPath := filepath.Join(containerBaseDir, "inventory", relPath)
-
-			// Check if it's a directory (follows symlinks)
-			// We use os.Stat() instead of info.IsDir() because:
-			// 1. filepath.Walk's info parameter may not follow symlinks consistently
-			// 2. When path is a symlink to a directory, we need to resolve it first
-			// 3. Otherwise, we'd try to read a directory as a file, causing "is a directory" errors
-			fileInfo, err := os.Stat(path)
-			if err != nil {
-				return fmt.Errorf("stat %s: %w", path, err)
-			}
-
-			if fileInfo.IsDir() {
-				cmd := []string{"mkdir", "-p", containerPath}
-				out := container.NewBufLogWriter("stdout")
-				return c.Run(ctx, cmd, container.RunModeContainer, out)
-			}
-
-			// Copy the file (whether it has an extension or not)
-			// Use Src to support empty files
-			return c.WriteFile(ctx, config.File{
-				Path: containerPath,
-				Src:  path,
-			})
-		})
+		// Use the fast directory copy method for entire directory
+		destDir := filepath.Join(containerBaseDir, "inventory")
+		return c.CopyDirectory(ctx, hostPath, destDir)
 	}
 
-	// Single inventory file
+	// Single inventory file - use WriteFile for individual files
 	// Use Src to support empty files
 	fileName := filepath.Base(hostPath)
 	containerPath := filepath.Join(containerBaseDir, "inventory", fileName)

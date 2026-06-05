@@ -269,6 +269,46 @@ func (c *Container) WriteFile(ctx context.Context, file config.File) error {
 	return nil
 }
 
+// CopyDirectory copies an entire directory from the host to the container.
+// This is much faster than walking through individual files because it uses
+// buildah's native directory copy functionality in a single operation.
+//
+// srcDir: source directory path on the host (must exist)
+// destDir: destination directory path in the container
+//
+// The directory contents are copied recursively, preserving the directory structure.
+func (c *Container) CopyDirectory(ctx context.Context, srcDir, destDir string) error {
+	log := slog.With("component", "container")
+	
+	// Validate source directory exists
+	info, err := os.Stat(srcDir)
+	if err != nil {
+		return fmt.Errorf("stat source directory %s: %w", srcDir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("source path %s is not a directory", srcDir)
+	}
+
+	log.Debug("Copying directory to container", "src", srcDir, "dest", destDir)
+
+	// Use buildah's Add method which can handle entire directories efficiently.
+	// The trailing slash ensures we copy the contents, not the directory itself.
+	// For example: srcDir="/path/to/roles" with destDir="/tmp/ansible/roles"
+	// will copy all contents of roles/ into /tmp/ansible/roles/
+	addOpts := buildah.AddAndCopyOptions{
+		// ContextDir tells buildah where to find the source
+		ContextDir: srcDir,
+	}
+
+	// Add "." as source (relative to ContextDir) to copy all contents
+	// destDir is where the contents will be placed in the container
+	if err := c.Builder.Add(destDir, false, addOpts, "."); err != nil {
+		return fmt.Errorf("copy directory %s to %s: %w", srcDir, destDir, err)
+	}
+
+	return nil
+}
+
 // Commit commits the container as an image to local storage.
 // This is a convenience wrapper around CommitWithLabels that passes no labels.
 func (c *Container) Commit(ctx context.Context, name, tag string) (string, error) {
