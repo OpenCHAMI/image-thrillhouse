@@ -68,7 +68,8 @@ func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, 
 
 	// Step 6: Generate dynamic localhost inventory
 	log.Debug("Generating localhost inventory", "groups", ansible.Groups)
-	if err := b.generateLocalhostInventory(ctx, c, ansible.Groups, ansibleTmpDir); err != nil {
+	localhostInventoryPath, err := b.generateLocalhostInventory(ctx, c, ansible.Groups, ansibleTmpDir)
+	if err != nil {
 		return fmt.Errorf("generate localhost inventory: %w", err)
 	}
 
@@ -80,7 +81,7 @@ func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, 
 
 	// Step 8: Execute ansible-playbook
 	log.Info("Executing Ansible playbook", "playbook", containerPlaybookPath)
-	if err := b.executeAnsiblePlaybook(ctx, c, ansible, containerPlaybookPath, ansibleTmpDir); err != nil {
+	if err := b.executeAnsiblePlaybook(ctx, c, ansible, containerPlaybookPath, ansibleTmpDir, localhostInventoryPath); err != nil {
 		return fmt.Errorf("execute ansible-playbook: %w", err)
 	}
 
@@ -277,7 +278,8 @@ func (b *Builder) copyInventoryToContainer(ctx context.Context, c container.Cont
 }
 
 // generateLocalhostInventory generates a dynamic inventory file for localhost
-func (b *Builder) generateLocalhostInventory(ctx context.Context, c container.Container, groups []string, containerBaseDir string) error {
+// Returns the path to the generated inventory file
+func (b *Builder) generateLocalhostInventory(ctx context.Context, c container.Container, groups []string, containerBaseDir string) (string, error) {
 	// Build the inventory content in proper INI format
 	var sb strings.Builder
 
@@ -287,16 +289,22 @@ func (b *Builder) generateLocalhostInventory(ctx context.Context, c container.Co
 		sb.WriteString("localhost ansible_connection=local\n\n")
 	}
 
-	// Write to container without extension (Ansible convention)
-	inventoryPath := filepath.Join(containerBaseDir, "inventory", "localhost")
-	return c.WriteFile(ctx, config.File{
+	// Use a filename that sorts first and won't conflict with user files
+	// Ansible reads files in alphanumeric order, so 00- prefix ensures it's read first
+	inventoryPath := filepath.Join(containerBaseDir, "inventory", "00-generated-localhost")
+	if err := c.WriteFile(ctx, config.File{
 		Path:    inventoryPath,
 		Content: sb.String(),
-	})
+	}); err != nil {
+		return "", err
+	}
+	return inventoryPath, nil
 }
 
 // generateAnsibleConfig generates ansible.cfg in the container
 func (b *Builder) generateAnsibleConfig(ctx context.Context, c container.Container, containerBaseDir string) error {
+	log := slog.With("component", "builder", "subsystem", "ansible")
+	
 	// Use absolute paths for roles_path
 	rolesPath := filepath.Join(containerBaseDir, "roles")
 	configContent := fmt.Sprintf(`[defaults]
@@ -305,6 +313,8 @@ host_key_checking = False
 `, rolesPath)
 
 	configPath := filepath.Join(containerBaseDir, "ansible.cfg")
+	log.Debug("Writing ansible.cfg", "path", configPath, "roles_path", rolesPath)
+	
 	return c.WriteFile(ctx, config.File{
 		Path:    configPath,
 		Content: configContent,
@@ -312,11 +322,17 @@ host_key_checking = False
 }
 
 // executeAnsiblePlaybook runs ansible-playbook with the specified options
-func (b *Builder) executeAnsiblePlaybook(ctx context.Context, c container.Container, ansible *config.AnsibleCommand, playbookPath, ansibleDir string) error {
+func (b *Builder) executeAnsiblePlaybook(ctx context.Context, c container.Container, ansible *config.AnsibleCommand, playbookPath, ansibleDir, localhostInventoryPath string) error {
 	// Build the command with absolute paths
+	// Specify the generated localhost inventory first to ensure it's read before other inventory files
 	cmd := []string{
 		"ansible-playbook",
-		"-i", filepath.Join(ansibleDir, "inventory"),
+		"-i", localhostInventoryPath,
+	}
+
+	// Add the inventory directory if user provided one
+	if ansible.Inventory != "" {
+		cmd = append(cmd, "-i", filepath.Join(ansibleDir, "inventory"))
 	}
 
 	// Add verbosity

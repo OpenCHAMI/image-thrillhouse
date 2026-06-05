@@ -74,7 +74,7 @@ When the build runs, the tool:
    ├── inventory/
    │   ├── group_vars/
    │   ├── hosts
-   │   └── localhost        # Auto-generated
+   │   └── 00-generated-localhost  # Auto-generated, sorts first
    ├── playbooks/
    │   └── compute.yaml
    └── roles/
@@ -86,20 +86,20 @@ When the build runs, the tool:
    - Roles from `./roles/` → container
 4. **Generates files**:
    - `ansible.cfg` with `roles_path = /tmp/image-build-ansible/roles` (absolute path)
-   - `localhost` inventory file with group assignments
-5. **Executes** `ANSIBLE_CONFIG=/tmp/image-build-ansible/ansible.cfg ansible-playbook -i /tmp/image-build-ansible/inventory /tmp/image-build-ansible/playbooks/compute.yaml`
+   - `00-generated-localhost` inventory file with group assignments (prefix ensures it's read first)
+5. **Executes** `ANSIBLE_CONFIG=/tmp/image-build-ansible/ansible.cfg ansible-playbook -i /tmp/image-build-ansible/inventory/00-generated-localhost -i /tmp/image-build-ansible/inventory /tmp/image-build-ansible/playbooks/compute.yaml`
 6. **Cleans up** temporary files after execution
 
 ### 4. Dynamic Localhost Inventory
 
-The tool automatically generates a `localhost` inventory file (without extension, following Ansible conventions):
+The tool automatically generates a `00-generated-localhost` inventory file (without extension, following Ansible conventions). The `00-` prefix ensures it's read first in alphanumeric order:
 
 ```ini
 [compute]
 localhost ansible_connection=local
 ```
 
-This ensures the playbook runs against localhost within the container, and localhost is assigned to the specified groups.
+This ensures the playbook runs against localhost within the container, and localhost is assigned to the specified groups. The file is explicitly specified first with `-i` to guarantee it's read before any user-provided inventory files.
 
 ## Configuration Options
 
