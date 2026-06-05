@@ -1,0 +1,398 @@
+package builder
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-build/internal/container"
+)
+
+// ansibleOutputWriter buffers Ansible output and displays it in a readable block
+type ansibleOutputWriter struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+func newAnsibleOutputWriter() *ansibleOutputWriter {
+	return &ansibleOutputWriter{}
+}
+
+func (w *ansibleOutputWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.buf = append(w.buf, p...)
+	return len(p), nil
+}
+
+func (w *ansibleOutputWriter) Flush(err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if len(w.buf) == 0 {
+		return
+	}
+
+	// Write header with log level
+	level := slog.LevelInfo
+	msg := "ansible playbook output"
+	if err != nil {
+		level = slog.LevelError
+		msg = "ansible playbook output (failed)"
+	}
+
+	// Log the header
+	slog.Log(nil, level, msg, "component", "ansible")
+
+	// Write the output block directly to stderr
+	// This avoids any slog handler formatting issues
+	writer := bufio.NewWriter(os.Stderr)
+	fmt.Fprintln(writer, "┌──── output ────")
+
+	// Split into lines and write each with prefix
+	lines := bytes.Split(bytes.TrimRight(w.buf, "\n"), []byte("\n"))
+	for _, line := range lines {
+		fmt.Fprintf(writer, "│ %s\n", string(line))
+	}
+
+	fmt.Fprintln(writer, "└────────────────")
+	writer.Flush()
+
+	w.buf = nil
+}
+
+// runAnsibleCommand executes an Ansible playbook inside the container.
+// It performs the following steps:
+//  1. Verifies Ansible is installed in the container
+//  2. Creates temporary Ansible directory structure
+//  3. Copies playbook, inventory, and roles to the container
+//  4. Generates dynamic localhost inventory
+//  5. Generates ansible.cfg
+//  6. Executes ansible-playbook with specified options
+//  7. Cleans up temporary files
+func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, ansible *config.AnsibleCommand) error {
+	log := slog.With("component", "builder", "subsystem", "ansible")
+
+	// Step 1: Verify Ansible is installed
+	log.Debug("Verifying Ansible installation")
+	if err := b.verifyAnsibleInstalled(ctx, c); err != nil {
+		return fmt.Errorf("ansible not installed: %w", err)
+	}
+
+	// Step 2: Create Ansible directory structure in container
+	ansibleTmpDir := "/tmp/image-build-ansible"
+	log.Debug("Creating Ansible directory structure", "dir", ansibleTmpDir)
+	if err := b.createAnsibleDirectories(ctx, c, ansibleTmpDir); err != nil {
+		return fmt.Errorf("create ansible directories: %w", err)
+	}
+
+	// Ensure cleanup happens even if steps fail
+	defer func() {
+		log.Debug("Cleaning up Ansible files")
+		_ = b.cleanupAnsibleFiles(ctx, c, ansibleTmpDir)
+	}()
+
+	// Step 3: Copy playbook to container
+	playbookPath := b.resolveConfigPath(ansible.Playbook)
+	log.Info("Copying playbook to container", "playbook", playbookPath)
+	containerPlaybookPath, err := b.copyPlaybookToContainer(ctx, c, playbookPath, ansibleTmpDir)
+	if err != nil {
+		return fmt.Errorf("copy playbook: %w", err)
+	}
+
+	// Step 4: Copy roles directory if it exists
+	// Use configured roles path or default to "roles"
+	rolesPath := ansible.Roles
+	if rolesPath == "" {
+		rolesPath = "roles"
+	}
+	rolesPath = b.resolveConfigPath(rolesPath)
+	log.Debug("Checking for roles directory", "roles", rolesPath)
+	if err := b.copyRolesDirectory(ctx, c, rolesPath, ansibleTmpDir); err != nil {
+		return fmt.Errorf("copy roles: %w", err)
+	}
+
+	// Step 5: Copy inventory to container (if specified)
+	if ansible.Inventory != "" {
+		inventoryPath := b.resolveConfigPath(ansible.Inventory)
+		log.Info("Copying inventory to container", "inventory", inventoryPath)
+		if err := b.copyInventoryToContainer(ctx, c, inventoryPath, ansibleTmpDir); err != nil {
+			return fmt.Errorf("copy inventory: %w", err)
+		}
+	}
+
+	// Step 6: Generate dynamic localhost inventory
+	log.Debug("Generating localhost inventory", "groups", ansible.Groups)
+	localhostInventoryPath, err := b.generateLocalhostInventory(ctx, c, ansible.Groups, ansibleTmpDir)
+	if err != nil {
+		return fmt.Errorf("generate localhost inventory: %w", err)
+	}
+
+	// Step 7: Generate ansible.cfg
+	log.Debug("Generating ansible.cfg")
+	if err := b.generateAnsibleConfig(ctx, c, ansibleTmpDir); err != nil {
+		return fmt.Errorf("generate ansible.cfg: %w", err)
+	}
+
+	// Step 8: Execute ansible-playbook
+	log.Info("Executing Ansible playbook", "playbook", containerPlaybookPath)
+	if err := b.executeAnsiblePlaybook(ctx, c, ansible, containerPlaybookPath, ansibleTmpDir, localhostInventoryPath); err != nil {
+		return fmt.Errorf("execute ansible-playbook: %w", err)
+	}
+
+	log.Info("Ansible playbook execution completed successfully")
+	return nil
+}
+
+// verifyAnsibleInstalled checks if Ansible is installed in the container
+func (b *Builder) verifyAnsibleInstalled(ctx context.Context, c container.Container) error {
+	out := container.NewBufLogWriter("stdout")
+	err := c.Run(ctx, []string{"ansible-playbook", "--version"}, container.RunModeContainer, out)
+	if err != nil {
+		return fmt.Errorf("ansible-playbook not found - ensure ansible-core or ansible is installed")
+	}
+	return nil
+}
+
+// createAnsibleDirectories creates the directory structure for Ansible in the container
+func (b *Builder) createAnsibleDirectories(ctx context.Context, c container.Container, baseDir string) error {
+	dirs := []string{
+		baseDir,
+		filepath.Join(baseDir, "playbooks"),
+		filepath.Join(baseDir, "inventory"),
+		filepath.Join(baseDir, "roles"),
+	}
+
+	for _, dir := range dirs {
+		cmd := []string{"mkdir", "-p", dir}
+		out := container.NewBufLogWriter("stdout")
+		if err := c.Run(ctx, cmd, container.RunModeContainer, out); err != nil {
+			return fmt.Errorf("create directory %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// resolveConfigPath resolves a path relative to the config file directory
+func (b *Builder) resolveConfigPath(path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	// Get the directory containing the config file
+	// For now, we'll use the current working directory
+	// In a real implementation, you'd track the config file path
+	return path
+}
+
+// copyPlaybookToContainer copies the playbook file to the container
+func (b *Builder) copyPlaybookToContainer(ctx context.Context, c container.Container, hostPath, containerBaseDir string) (string, error) {
+	// Validate that the playbook file exists
+	if _, err := os.Stat(hostPath); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("playbook file not found: %s (make sure the path is relative to where you run the command)", hostPath)
+		}
+		return "", fmt.Errorf("cannot access playbook file %s: %w", hostPath, err)
+	}
+
+	// Read the playbook file to validate it's not empty
+	content, err := os.ReadFile(hostPath)
+	if err != nil {
+		return "", fmt.Errorf("read playbook: %w", err)
+	}
+
+	// Validate that the playbook is not empty
+	if len(content) == 0 {
+		return "", fmt.Errorf("playbook file is empty: %s", hostPath)
+	}
+
+	// Determine container path
+	playbookName := filepath.Base(hostPath)
+	containerPath := filepath.Join(containerBaseDir, "playbooks", playbookName)
+
+	// Write to container using Src for consistency
+	if err := c.WriteFile(ctx, config.File{
+		Path: containerPath,
+		Src:  hostPath,
+	}); err != nil {
+		return "", fmt.Errorf("write playbook to container: %w", err)
+	}
+
+	return containerPath, nil
+}
+
+// copyRolesDirectory copies the roles directory to the container if it exists
+func (b *Builder) copyRolesDirectory(ctx context.Context, c container.Container, rolesPath, containerBaseDir string) error {
+	log := slog.With("component", "builder", "subsystem", "ansible")
+
+	// Check if roles directory exists
+	if _, err := os.Stat(rolesPath); os.IsNotExist(err) {
+		// Roles directory doesn't exist, that's ok
+		log.Debug("Roles directory not found, skipping", "path", rolesPath)
+		return nil
+	}
+
+	log.Info("Copying roles directory to container", "roles", rolesPath)
+
+	// Use the fast directory copy method instead of walking individual files
+	// This copies the entire directory tree in a single buildah operation
+	destDir := filepath.Join(containerBaseDir, "roles")
+	return c.CopyDirectory(ctx, rolesPath, destDir)
+}
+
+// copyInventoryToContainer copies inventory files/directories to the container
+func (b *Builder) copyInventoryToContainer(ctx context.Context, c container.Container, hostPath, containerBaseDir string) error {
+	// Validate that the inventory path exists
+	info, err := os.Stat(hostPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("inventory path not found: %s (make sure the path is relative to where you run the command)", hostPath)
+		}
+		return fmt.Errorf("cannot access inventory path %s: %w", hostPath, err)
+	}
+
+	if info.IsDir() {
+		// Use the fast directory copy method for entire directory
+		destDir := filepath.Join(containerBaseDir, "inventory")
+		return c.CopyDirectory(ctx, hostPath, destDir)
+	}
+
+	// Single inventory file - use WriteFile for individual files
+	// Use Src to support empty files
+	fileName := filepath.Base(hostPath)
+	containerPath := filepath.Join(containerBaseDir, "inventory", fileName)
+
+	return c.WriteFile(ctx, config.File{
+		Path: containerPath,
+		Src:  hostPath,
+	})
+}
+
+// generateLocalhostInventory generates a dynamic inventory file for localhost
+// Returns the path to the generated inventory file
+func (b *Builder) generateLocalhostInventory(ctx context.Context, c container.Container, groups []string, containerBaseDir string) (string, error) {
+	// Build the inventory content in proper INI format
+	var sb strings.Builder
+
+	// Add group definitions first
+	for _, group := range groups {
+		sb.WriteString(fmt.Sprintf("[%s]\n", group))
+		sb.WriteString("localhost ansible_connection=local\n\n")
+	}
+
+	// Use a filename that sorts first and won't conflict with user files
+	// Ansible reads files in alphanumeric order, so 00- prefix ensures it's read first
+	inventoryPath := filepath.Join(containerBaseDir, "inventory", "00-generated-localhost")
+	if err := c.WriteFile(ctx, config.File{
+		Path:    inventoryPath,
+		Content: sb.String(),
+	}); err != nil {
+		return "", err
+	}
+	return inventoryPath, nil
+}
+
+// generateAnsibleConfig generates ansible.cfg in the container
+func (b *Builder) generateAnsibleConfig(ctx context.Context, c container.Container, containerBaseDir string) error {
+	log := slog.With("component", "builder", "subsystem", "ansible")
+
+	// Use absolute paths for roles_path
+	rolesPath := filepath.Join(containerBaseDir, "roles")
+	configContent := fmt.Sprintf(`[defaults]
+roles_path = %s
+host_key_checking = False
+`, rolesPath)
+
+	configPath := filepath.Join(containerBaseDir, "ansible.cfg")
+	log.Debug("Writing ansible.cfg", "path", configPath, "roles_path", rolesPath)
+
+	return c.WriteFile(ctx, config.File{
+		Path:    configPath,
+		Content: configContent,
+	})
+}
+
+// executeAnsiblePlaybook runs ansible-playbook with the specified options
+func (b *Builder) executeAnsiblePlaybook(ctx context.Context, c container.Container, ansible *config.AnsibleCommand, playbookPath, ansibleDir, localhostInventoryPath string) error {
+	log := slog.With("component", "builder", "subsystem", "ansible")
+
+	// Build the command with absolute paths
+	// Specify the generated localhost inventory first to ensure it's read before other inventory files
+	cmd := []string{
+		"ansible-playbook",
+		"-i", localhostInventoryPath,
+	}
+
+	// Add the inventory directory if user provided one
+	if ansible.Inventory != "" {
+		cmd = append(cmd, "-i", filepath.Join(ansibleDir, "inventory"))
+	}
+
+	// Add verbosity
+	if ansible.Verbose > 0 {
+		cmd = append(cmd, strings.Repeat("-v", ansible.Verbose))
+	}
+
+	// Add extra vars
+	for key, value := range ansible.ExtraVars {
+		cmd = append(cmd, "-e", fmt.Sprintf("%s=%s", key, value))
+	}
+
+	// Add tags
+	if ansible.Tags != "" {
+		cmd = append(cmd, "--tags", ansible.Tags)
+	}
+
+	// Add skip-tags
+	if ansible.SkipTags != "" {
+		cmd = append(cmd, "--skip-tags", ansible.SkipTags)
+	}
+
+	// Add check mode
+	if ansible.CheckMode {
+		cmd = append(cmd, "--check")
+	}
+
+	// Add playbook path
+	cmd = append(cmd, playbookPath)
+
+	// Validate that we have a valid command
+	if len(cmd) == 0 {
+		return fmt.Errorf("ansible command is empty")
+	}
+
+	// Set ANSIBLE_CONFIG environment variable to point to our config
+	configPath := filepath.Join(ansibleDir, "ansible.cfg")
+	wrappedCmd := fmt.Sprintf("ANSIBLE_CONFIG=%s %s", configPath, strings.Join(cmd, " "))
+
+	// Validate that the wrapped command is not empty
+	if strings.TrimSpace(wrappedCmd) == "" || strings.TrimSpace(wrappedCmd) == fmt.Sprintf("ANSIBLE_CONFIG=%s", configPath) {
+		return fmt.Errorf("generated ansible command is empty")
+	}
+
+	// Debug: log the full command
+	log.Debug("Executing ansible command", "cmd", wrappedCmd, "cmdSlice", cmd)
+	log.Info("Running ansible-playbook", "playbook", ansible.Playbook, "groups", ansible.Groups)
+
+	// Execute the command with ansible output writer
+	// Uses INFO level (not DEBUG) so output is visible
+	out := newAnsibleOutputWriter()
+	if err := c.RunScript(ctx, wrappedCmd, out); err != nil {
+		return fmt.Errorf("ansible-playbook failed: %w", err)
+	}
+
+	return nil
+}
+
+// cleanupAnsibleFiles removes the temporary Ansible directory from the container
+func (b *Builder) cleanupAnsibleFiles(ctx context.Context, c container.Container, ansibleDir string) error {
+	cmd := []string{"rm", "-rf", ansibleDir}
+	out := container.NewBufLogWriter("stdout")
+	return c.Run(ctx, cmd, container.RunModeContainer, out)
+}

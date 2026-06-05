@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/containers/buildah"
@@ -168,6 +169,11 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 //
 // This is useful for running complex multi-line scripts without escaping issues.
 func (c *Container) RunScript(ctx context.Context, script string, out container.OutputWriter) error {
+	// Validate that script is not empty
+	if strings.TrimSpace(script) == "" {
+		return fmt.Errorf("script content is empty")
+	}
+
 	// write script to temp file in container
 	tmpPath := fmt.Sprintf("/tmp/image-build-script-%d.sh", time.Now().UnixNano())
 
@@ -258,6 +264,46 @@ func (c *Container) WriteFile(ctx context.Context, file config.File) error {
 
 	if err := c.Builder.Add(file.Path, false, addOpts, tmp.Name()); err != nil {
 		return fmt.Errorf("add file %s: %w", file.Path, err)
+	}
+
+	return nil
+}
+
+// CopyDirectory copies an entire directory from the host to the container.
+// This is much faster than walking through individual files because it uses
+// buildah's native directory copy functionality in a single operation.
+//
+// srcDir: source directory path on the host (must exist)
+// destDir: destination directory path in the container
+//
+// The directory contents are copied recursively, preserving the directory structure.
+func (c *Container) CopyDirectory(ctx context.Context, srcDir, destDir string) error {
+	log := slog.With("component", "container")
+	
+	// Validate source directory exists
+	info, err := os.Stat(srcDir)
+	if err != nil {
+		return fmt.Errorf("stat source directory %s: %w", srcDir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("source path %s is not a directory", srcDir)
+	}
+
+	log.Debug("Copying directory to container", "src", srcDir, "dest", destDir)
+
+	// Use buildah's Add method which can handle entire directories efficiently.
+	// The trailing slash ensures we copy the contents, not the directory itself.
+	// For example: srcDir="/path/to/roles" with destDir="/tmp/ansible/roles"
+	// will copy all contents of roles/ into /tmp/ansible/roles/
+	addOpts := buildah.AddAndCopyOptions{
+		// ContextDir tells buildah where to find the source
+		ContextDir: srcDir,
+	}
+
+	// Add "." as source (relative to ContextDir) to copy all contents
+	// destDir is where the contents will be placed in the container
+	if err := c.Builder.Add(destDir, false, addOpts, "."); err != nil {
+		return fmt.Errorf("copy directory %s to %s: %w", srcDir, destDir, err)
 	}
 
 	return nil

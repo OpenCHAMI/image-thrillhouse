@@ -1,0 +1,5 @@
+# Inventory file for compute nodes
+# This is a static inventory that can be extended
+
+[compute:vars]
+ansible_connection=local
