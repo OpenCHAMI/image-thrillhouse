@@ -169,6 +169,11 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 				AddCapabilities: defaultCaps,
 				Env:             runOpts.Env,
 				Mounts:          toSpecsMounts(runOpts.Mounts),
+				// Force pipes (not a pty) so the container's stdout/stderr
+				// reliably reach the writer above. Buildah's default
+				// auto-detects the parent terminal, which can intercept
+				// streaming output (notably ansible-playbook with -v).
+				Terminal: buildah.WithoutTerminal,
 			})
 			out.Flush(err)
 			if err != nil {
@@ -184,6 +189,8 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 			AddCapabilities: defaultCaps,
 			Env:             runOpts.Env,
 			Mounts:          toSpecsMounts(runOpts.Mounts),
+			// See comment in the scratch branch above for why we pin this.
+			Terminal: buildah.WithoutTerminal,
 		})
 		out.Flush(err)
 		if err != nil {

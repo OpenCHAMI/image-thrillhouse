@@ -29,6 +29,14 @@ func currentLogFormat() string {
 	return "json"
 }
 
+// LogFormat returns the active log format ("json", "text", or "textblock") so
+// callers outside this package can branch on it — useful for streaming writers
+// that want to bypass the textblock per-record handler and emit one atomic
+// line per piece of output instead of one 4-line box.
+func LogFormat() string {
+	return currentLogFormat()
+}
+
 // ansiRe matches CSI ANSI escape sequences (color, cursor moves) that DNF
 // and user scripts occasionally emit even when not on a TTY.
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)

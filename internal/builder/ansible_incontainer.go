@@ -35,46 +35,60 @@ var (
 	failedRe    = regexp.MustCompile(`^failed:\s+\[([^\]]+)\]`)
 	recapRe     = regexp.MustCompile(`^PLAY RECAP\s*\*+\s*$`)
 	hostRecapRe = regexp.MustCompile(`^(\S+)\s*:\s+(ok=\d+.*)$`)
+
+	// Lines emitted by buildah's chroot-runtime helper (logrus default text
+	// formatter or the bracketed shorthand) leak into our writer because the
+	// helper inherits our writer as its stdout/stderr. They're not ansible
+	// output, so they should be quiet by default — demote to DEBUG.
+	buildahLogrusRe = regexp.MustCompile(`^time="[^"]+"\s+level=`)
+	buildahShortRe  = regexp.MustCompile(`^(DEBU|INFO|WARN|ERRO)\[\s*\d+\s*\]`)
 )
 
 // classifyAnsibleLine inspects one line of ansible default-callback output
-// and emits it via log with appropriate level + structured attributes.
-// Unrecognized lines fall through to log.Info(line) so nothing is lost. The
-// raw line is always preserved as the slog Message so text-mode output stays
-// human-readable; structured attrs are added on top for JSON consumers.
-func classifyAnsibleLine(log *slog.Logger, line string) {
+// and returns the slog level it should be logged at plus structured
+// attributes describing the event. The raw line is always meant to be the
+// log Message so text-mode output stays human-readable.
+//
+// Unknown lines come back as (slog.LevelInfo, nil) so nothing is silently
+// dropped. Lines that match buildah's own logrus format come back as Debug
+// so they're hidden at the default INFO threshold.
+func classifyAnsibleLine(line string) (slog.Level, []slog.Attr) {
 	switch {
+	case buildahLogrusRe.MatchString(line), buildahShortRe.MatchString(line):
+		return slog.LevelDebug, []slog.Attr{slog.String("source", "buildah")}
 	case playRe.MatchString(line):
 		m := playRe.FindStringSubmatch(line)
-		log.Info(line, "event", "play", "name", m[1])
+		return slog.LevelInfo, []slog.Attr{slog.String("event", "play"), slog.String("name", m[1])}
 	case taskRe.MatchString(line):
 		m := taskRe.FindStringSubmatch(line)
-		log.Info(line, "event", "task", "name", m[1])
+		return slog.LevelInfo, []slog.Attr{slog.String("event", "task"), slog.String("name", m[1])}
 	case handlerRe.MatchString(line):
 		m := handlerRe.FindStringSubmatch(line)
-		log.Info(line, "event", "handler", "name", m[1])
+		return slog.LevelInfo, []slog.Attr{slog.String("event", "handler"), slog.String("name", m[1])}
 	case fatalRe.MatchString(line):
 		m := fatalRe.FindStringSubmatch(line)
-		log.Error(line, "event", "result", "status", strings.ToLower(m[2]), "host", m[1])
+		return slog.LevelError, []slog.Attr{slog.String("event", "result"), slog.String("status", strings.ToLower(m[2])), slog.String("host", m[1])}
 	case failedRe.MatchString(line):
 		m := failedRe.FindStringSubmatch(line)
-		log.Error(line, "event", "result", "status", "failed", "host", m[1])
+		return slog.LevelError, []slog.Attr{slog.String("event", "result"), slog.String("status", "failed"), slog.String("host", m[1])}
 	case changedRe.MatchString(line):
 		m := changedRe.FindStringSubmatch(line)
-		log.Info(line, "event", "result", "status", "changed", "host", m[1])
+		return slog.LevelInfo, []slog.Attr{slog.String("event", "result"), slog.String("status", "changed"), slog.String("host", m[1])}
 	case okRe.MatchString(line):
 		m := okRe.FindStringSubmatch(line)
-		log.Debug(line, "event", "result", "status", "ok", "host", m[1])
+		return slog.LevelInfo, []slog.Attr{slog.String("event", "result"), slog.String("status", "ok"), slog.String("host", m[1])}
 	case skippingRe.MatchString(line):
 		m := skippingRe.FindStringSubmatch(line)
-		log.Debug(line, "event", "result", "status", "skipped", "host", m[1])
+		return slog.LevelDebug, []slog.Attr{slog.String("event", "result"), slog.String("status", "skipped"), slog.String("host", m[1])}
 	case recapRe.MatchString(line):
-		log.Info(line, "event", "recap")
+		return slog.LevelInfo, []slog.Attr{slog.String("event", "recap")}
 	case hostRecapRe.MatchString(line):
 		m := hostRecapRe.FindStringSubmatch(line)
-		log.Info(line, "event", "host_summary", "host", strings.TrimSpace(m[1]))
+		return slog.LevelInfo, []slog.Attr{slog.String("event", "host_summary"), slog.String("host", strings.TrimSpace(m[1]))}
 	default:
-		log.Info(line)
+		// Unrecognized line — surface it at INFO so the user sees the raw
+		// stdout from ansible (or whatever the container ran).
+		return slog.LevelInfo, nil
 	}
 }
 
@@ -83,10 +97,17 @@ func classifyAnsibleLine(log *slog.Logger, line string) {
 // it at the end. Partial trailing lines (no newline yet) are held in `pending`
 // until the next Write completes the line or Flush is called.
 //
+// Output routing branches on the active --log-format:
+//   - json: each line becomes one slog record (one JSON object) with
+//     component=ansible and the classifier's structured attrs.
+//   - text/textblock: each line is written as a single atomic line directly
+//     to stderr. We bypass the TextBlockHandler here because its per-record
+//     4-line ┌── output ── boxes are designed for one-shot post-run dumps,
+//     not high-volume streaming — under load they interleave with buildah's
+//     own logrus output and produce visual chaos.
+//
 // ANSI escapes are stripped and CR-progress redraws are folded so progress
-// bars don't leave breadcrumbs in the log. Each emitted line becomes one slog
-// record with component=ansible — in --log-format=json that's one JSON
-// object per line, in text/textblock it's one human-readable line.
+// bars don't leave breadcrumbs in the log.
 type ansibleStreamWriter struct {
 	mu      sync.Mutex
 	pending []byte
@@ -123,12 +144,25 @@ func (w *ansibleStreamWriter) Flush(err error) {
 	}
 }
 
-// emit cleans one line and routes it through classifyAnsibleLine, which
-// picks an appropriate slog level (INFO for play/task/changed/recap, DEBUG
-// for ok/skipped, ERROR for fatal/failed) and attaches structured attributes
-// (event=, name=, host=, status=) so JSON consumers can filter without
-// regex-matching the message. Empty lines after cleaning are dropped so
-// progress-bar redraws don't generate noise records.
+// shortLevelTag returns a 3-letter tag for one-line log prefixes (DBG/INF/WRN/ERR).
+// Mirrors what humans expect from a compact streaming format without dragging
+// in a third-party logger.
+func shortLevelTag(level slog.Level) string {
+	switch {
+	case level >= slog.LevelError:
+		return "ERR"
+	case level >= slog.LevelWarn:
+		return "WRN"
+	case level >= slog.LevelInfo:
+		return "INF"
+	default:
+		return "DBG"
+	}
+}
+
+// emit cleans one line, classifies it (level + structured attrs), filters
+// it against the active slog level, and routes it according to the log
+// format. See ansibleStreamWriter's type doc for the routing rules.
 func (w *ansibleStreamWriter) emit(line []byte) {
 	// Fold CR-progress redraws: keep only the segment after the last \r.
 	if idx := bytes.LastIndexByte(line, '\r'); idx >= 0 {
@@ -138,7 +172,27 @@ func (w *ansibleStreamWriter) emit(line []byte) {
 	if strings.TrimSpace(cleaned) == "" {
 		return
 	}
-	classifyAnsibleLine(w.log, cleaned)
+
+	level, attrs := classifyAnsibleLine(cleaned)
+
+	// Respect the global level threshold up front so we don't pay the cost
+	// of formatting lines that won't be shown.
+	if !slog.Default().Enabled(context.Background(), level) {
+		return
+	}
+
+	if container.LogFormat() == "json" {
+		// JSON mode: each line is one slog record. The classifier's attrs
+		// become structured JSON fields downstream tooling can filter on.
+		w.log.LogAttrs(context.Background(), level, cleaned, attrs...)
+		return
+	}
+
+	// text / textblock: write a single atomic line directly to stderr.
+	// Going through slog's TextBlockHandler would wrap each line in a
+	// multi-line ┌── output ── box, which is unreadable when ansible emits
+	// hundreds of lines back-to-back.
+	fmt.Fprintf(os.Stderr, "%s [ansible] %s\n", shortLevelTag(level), cleaned)
 }
 
 // Container-side paths used for the bind-mounted ansible payload. None of
