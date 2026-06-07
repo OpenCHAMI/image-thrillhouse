@@ -4,12 +4,16 @@
 package oscap
 
 import (
+	"bytes"
+	"compress/bzip2"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 
 	"github.com/travisbcotton/image-build/internal/config"
 	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-build/internal/fetch"
 )
 
 // Scanner handles OpenSCAP security scanning operations.
@@ -180,13 +184,18 @@ func (s *Scanner) RunOVALEval(ctx context.Context, c container.Container) error 
 		ovalResultPath = "/root/vulnerabilities.xml"
 	}
 	
-	// Download and decompress OVAL definitions
-	downloadCmd := fmt.Sprintf("curl -L -o - %s | bzip2 --decompress > %s", s.cfg.OVALUrl, ovalXMLPath)
+	// Fetch and decompress OVAL definitions on the host, then write the
+	// resulting XML into the container. Doing the work in Go avoids piping a
+	// user-supplied URL through `sh -c`, which was a shell-injection sink, and
+	// removes the implicit dependency on curl + bzip2 being present in the
+	// container.
 	s.log.Info("Downloading OVAL definitions", "url", s.cfg.OVALUrl)
-	
-	out := container.NewBufLogWriter("stdout")
-	if err := c.RunScript(ctx, downloadCmd, out); err != nil {
+	ovalXML, err := fetchOVAL(ctx, s.cfg.OVALUrl)
+	if err != nil {
 		return fmt.Errorf("download OVAL definitions: %w", err)
+	}
+	if err := c.WriteFile(ctx, config.File{Path: ovalXMLPath, Content: string(ovalXML)}); err != nil {
+		return fmt.Errorf("write OVAL definitions: %w", err)
 	}
 	
 	// Run OVAL evaluation
@@ -197,8 +206,8 @@ func (s *Scanner) RunOVALEval(ctx context.Context, c container.Container) error 
 	}
 	
 	s.log.Info("Running OVAL evaluation")
-	out = container.NewBufLogWriter("stdout")
-	
+	out := container.NewBufLogWriter("stdout")
+
 	// OVAL evaluations return non-zero when vulnerabilities are found
 	if err := c.Run(ctx, evalCmd, container.RunModeContainer, out); err != nil {
 		s.log.Warn("OVAL evaluation completed with vulnerabilities found", "error", err)
@@ -236,6 +245,38 @@ func (s *Scanner) Run(ctx context.Context, c container.Container, pkgManager str
 			return fmt.Errorf("OVAL evaluation: %w", err)
 		}
 	}
-	
+
 	return nil
+}
+
+// fetchOVAL downloads an OVAL definitions file from url and returns the
+// decoded XML bytes. The on-disk artifacts published by upstreams are
+// typically bzip2-compressed (.bz2), but plain .xml is also accepted —
+// callers shouldn't have to special-case the extension. Detection is by
+// the bzip2 magic bytes ("BZh"); on a miss the body is returned verbatim.
+func fetchOVAL(ctx context.Context, url string) ([]byte, error) {
+	body, err := fetch.GetStream(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	head := make([]byte, 3)
+	n, err := io.ReadFull(body, head)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return nil, fmt.Errorf("read OVAL header: %w", err)
+	}
+	head = head[:n]
+	combined := io.MultiReader(bytes.NewReader(head), body)
+
+	var reader io.Reader = combined
+	if n == 3 && string(head) == "BZh" {
+		reader = bzip2.NewReader(combined)
+	}
+
+	out, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("decode OVAL body: %w", err)
+	}
+	return out, nil
 }
