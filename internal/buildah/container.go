@@ -102,11 +102,26 @@ func NewContainer(ctx context.Context, name string, from string, tlsverify bool)
 		},
 	})
 	if err != nil {
+		// Builder construction failed, so there's nothing buildah-side to
+		// release — but the store handle we opened above is ours to close.
+		if _, shutErr := store.Shutdown(false); shutErr != nil {
+			slog.With("component", "container").Warn("store shutdown after builder failure", "error", shutErr)
+		}
 		return nil, fmt.Errorf("new builder: %w", err)
 	}
 
 	mountPath, err := builder.Mount("")
 	if err != nil {
+		// Roll back the partially-initialised container so we don't leak a
+		// buildah-side container row and a held-open store handle on every
+		// failed startup.
+		log := slog.With("component", "container")
+		if delErr := builder.Delete(); delErr != nil {
+			log.Warn("builder delete after mount failure", "error", delErr)
+		}
+		if _, shutErr := store.Shutdown(false); shutErr != nil {
+			log.Warn("store shutdown after mount failure", "error", shutErr)
+		}
 		return nil, fmt.Errorf("mount: %w", err)
 	}
 
@@ -124,8 +139,14 @@ func NewContainer(ctx context.Context, name string, from string, tlsverify bool)
 // The execution mode depends on whether the container was created from scratch
 // and the specified RunMode:
 //
-//   - RunModeHost: Runs the command on the host system (used for --installroot operations)
-//   - RunModeContainer: Runs the command inside the container using buildah run
+//   - RunModeHost: Runs the command on the host system (used for --installroot operations).
+//     Only valid for scratch containers — host execution on a parent-image
+//     container has no defined semantics (there's no mount path to target with
+//     --root/--installroot) and was previously silently treated as
+//     RunModeContainer, which surprised callers that wanted to bail.
+//   - RunModeContainer: Runs the command inside the container using buildah run.
+//   - RunModeAuto: Chooses RunModeContainer (the only mode usable for both
+//     scratch and parent builds). Reserved for callers that don't care.
 //
 // For scratch builds in RunModeContainer, the container must have a shell and basic utilities.
 // The command runs with elevated capabilities needed for package installation.
@@ -135,6 +156,10 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 	var runOpts container.RunOptions
 	for _, opt := range opts {
 		opt(&runOpts)
+	}
+
+	if mode == container.RunModeAuto {
+		mode = container.RunModeContainer
 	}
 
 	if c.fromScratch {
@@ -182,6 +207,13 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 			return nil
 		}
 	} else {
+		if mode == container.RunModeHost {
+			// Parent-image containers aren't mounted on the host, so a
+			// "run on the host" mode has no rootPath to target. Silently
+			// treating it as RunModeContainer (the previous behaviour) hid
+			// caller bugs — surface the mismatch instead.
+			return fmt.Errorf("run %v: RunModeHost is only valid for scratch containers", cmd)
+		}
 		err := c.Builder.Run(cmd, buildah.RunOptions{
 			Isolation:       c.GetIsolation(),
 			Stdout:          out,
@@ -237,16 +269,22 @@ func (c *Container) RunScript(ctx context.Context, script string, out container.
 	// exec relies on the kernel finding a valid shebang or ELF header; a
 	// shebang-less script fails with "exec format error" before any output is
 	// produced. Routing through /bin/sh lets the shell parse the file.
-	if err := c.Run(ctx, []string{"/bin/sh", tmpPath}, container.RunModeContainer, out, opts...); err != nil {
+	runErr := c.Run(ctx, []string{"/bin/sh", tmpPath}, container.RunModeContainer, out, opts...)
+	if runErr != nil {
 		slog.With("component", "container").Error("script failed", "path", tmpPath, "script", script)
-		return fmt.Errorf("exec script: %w", err)
 	}
 
-	// cleanup
-	if err := c.Run(ctx, []string{"rm", tmpPath}, container.RunModeContainer, out); err != nil {
-		return fmt.Errorf("cleanup script: %w", err)
+	// Cleanup always runs so we don't leave script files behind in the layer.
+	// A cleanup failure is logged but does NOT override the script's exit
+	// status — masking the real error here was the previous behaviour and it
+	// hid genuine script failures behind "cleanup script" errors.
+	if rmErr := c.Run(ctx, []string{"rm", tmpPath}, container.RunModeContainer, out); rmErr != nil {
+		slog.With("component", "container").Warn("cleanup script (continuing)", "path", tmpPath, "error", rmErr)
 	}
 
+	if runErr != nil {
+		return fmt.Errorf("exec script: %w", runErr)
+	}
 	return nil
 }
 
@@ -407,12 +445,23 @@ func (c *Container) CommitWithLabelsTags(ctx context.Context, name string, tags 
 // Delete cleans up the container and releases all resources.
 // This unmounts the container filesystem, deletes the container, and shuts down the storage.
 // Should be called when the container is no longer needed.
+//
+// All three operations are best-effort: if one fails (typically Unmount, when
+// something else is holding the mount), the remaining steps still run so we
+// don't compound a partial leak. Failures are logged at WARN — silent failure
+// here was masking storage leaks that only surfaced as disk pressure days later.
 func (c *Container) Delete() {
 	log := slog.With("component", "container")
 	log.Debug("Deleting Container", "ID", c.GetID(), "Name", c.GetName())
-	c.Builder.Unmount()
-	c.Builder.Delete()
-	c.Store.Shutdown(false)
+	if err := c.Builder.Unmount(); err != nil {
+		log.Warn("unmount container", "id", c.GetID(), "error", err)
+	}
+	if err := c.Builder.Delete(); err != nil {
+		log.Warn("delete container", "id", c.GetID(), "error", err)
+	}
+	if _, err := c.Store.Shutdown(false); err != nil {
+		log.Warn("shutdown store", "error", err)
+	}
 }
 
 // MountPath returns the host filesystem path where the container is mounted.

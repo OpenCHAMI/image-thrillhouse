@@ -4,9 +4,13 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
+	"github.com/docker/distribution/registry/api/errcode"
+	v2 "github.com/docker/distribution/registry/api/v2"
 	"go.podman.io/image/v5/docker"
 	"go.podman.io/image/v5/types"
 
@@ -85,6 +89,13 @@ func (r *RegistryPublisher) Exists(ctx context.Context, name string, tags []stri
 // registry. Pulled into a helper because docker.NewReference / NewImageSource
 // / GetManifest is the canonical "does this exist" probe in containers/image
 // and we want one consistent failure-handling spot.
+//
+// A "manifest unknown" / 404 response is treated as (false, nil) so that
+// --skip-if-exists works on the *first* build of a new image — without this,
+// the very first build always failed at the existence probe because the
+// target obviously didn't exist yet. Any other error (auth, DNS, TLS, 5xx)
+// surfaces as (false, err) so the caller can fail loudly instead of silently
+// rebuilding on infra outages.
 func manifestExists(ctx context.Context, sys *types.SystemContext, ref string) (bool, error) {
 	imageRef, err := docker.ParseReference("//" + ref)
 	if err != nil {
@@ -93,18 +104,47 @@ func manifestExists(ctx context.Context, sys *types.SystemContext, ref string) (
 
 	src, err := imageRef.NewImageSource(ctx, sys)
 	if err != nil {
-		// Authoritative "not found" surfaces as a manifest-not-found error
-		// here on most registries. We can't reliably distinguish 404 from
-		// other transport failures without inspecting registry-specific
-		// error types, so surface every failure to the caller — the
-		// skip-if-exists feature must not silently treat an outage as
-		// "build it anyway".
+		if isManifestUnknown(err) {
+			return false, nil
+		}
 		return false, err
 	}
 	defer src.Close()
 
 	if _, _, err := src.GetManifest(ctx, nil); err != nil {
+		if isManifestUnknown(err) {
+			return false, nil
+		}
 		return false, err
 	}
 	return true, nil
+}
+
+// isManifestUnknown reports whether err is the registry telling us "this
+// manifest doesn't exist", as opposed to an auth/network/transport failure.
+// Mirrors the logic in go.podman.io/image's unexported isManifestUnknownError:
+//
+//   - the spec-mandated errcode.ManifestUnknown response,
+//   - the registry.redhat.io / Harbor pattern of errcode.Unknown + "Not Found",
+//   - and a final substring fallback for OCI-distribution-spec registries that
+//     return 404 without an errcode body.
+//
+// The substring check is intentionally loose ("not found" / "404") because we
+// can't import the upstream's unexported unexpectedHTTPResponseError type.
+func isManifestUnknown(err error) bool {
+	var ec errcode.ErrorCoder
+	if errors.As(err, &ec) && ec.ErrorCode() == v2.ErrorCodeManifestUnknown {
+		return true
+	}
+	var e errcode.Error
+	if errors.As(err, &e) && e.ErrorCode() == errcode.ErrorCodeUnknown {
+		msg := strings.ToLower(e.Message)
+		if strings.Contains(msg, "not found") {
+			return true
+		}
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "manifest unknown") ||
+		strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "status 404")
 }
