@@ -357,7 +357,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("publishers: %w", err)
 	}
 
-	bldr := builder.New(ctx, cfg, b, p)
+	bldr := builder.New(ctx, cfg, cfgPath, b, p)
 	bldr.SetSkipIfExists(skipIfExists)
 	return bldr.Build(ctx)
 }
@@ -418,7 +418,7 @@ func buildLayer(
 		return fmt.Errorf("publishers: %w", err)
 	}
 
-	bldr := builder.New(ctx, cfg, b, p)
+	bldr := builder.New(ctx, cfg, configPath, b, p)
 	bldr.SetSkipIfExists(skipIfExists)
 	return bldr.Build(ctx)
 }

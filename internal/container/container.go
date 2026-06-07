@@ -19,14 +19,68 @@ const (
 	RunModeContainer                // Run inside the container using buildah run
 )
 
+// RunOptions holds optional behavior for Run/RunScript. Callers should build
+// it with the With* option functions rather than constructing the struct
+// directly, so future fields don't break existing call sites.
+type RunOptions struct {
+	// Env is a list of "KEY=VALUE" pairs added to the command's environment.
+	// In RunModeContainer the values are passed via buildah.RunOptions.Env;
+	// in RunModeHost they are appended to the host process's environment.
+	Env []string
+
+	// Mounts is a list of host→container bind mounts to set up for the
+	// duration of the command. Only honored in RunModeContainer; ignored on
+	// the host runner.
+	Mounts []BindMount
+}
+
+// BindMount describes a host→container bind mount that lives only for the
+// duration of one Run invocation. Use it when you want to expose host files
+// to the command without committing them into the image layer.
+type BindMount struct {
+	Source      string // absolute host path (file or directory)
+	Destination string // absolute container path
+	Readonly    bool   // if true, mount with the "ro" flag
+}
+
+// RunOption is a functional option for Run/RunScript.
+type RunOption func(*RunOptions)
+
+// WithEnv adds one or more "KEY=VALUE" environment variables to the command.
+// Multiple WithEnv calls are additive. Used by callers that need to set a
+// per-invocation env var (e.g. ANSIBLE_CONFIG) without going through a shell
+// wrapper.
+func WithEnv(kv ...string) RunOption {
+	return func(o *RunOptions) {
+		o.Env = append(o.Env, kv...)
+	}
+}
+
+// WithBindMount adds a host→container bind mount that lives only for this
+// invocation. Both paths should be absolute. Use this to expose payloads (a
+// playbook, a roles directory, a generated config dir) to a single Run
+// without copying them into the image layer.
+func WithBindMount(source, destination string, readonly bool) RunOption {
+	return func(o *RunOptions) {
+		o.Mounts = append(o.Mounts, BindMount{
+			Source:      source,
+			Destination: destination,
+			Readonly:    readonly,
+		})
+	}
+}
+
 // Container provides an abstraction for container operations.
 // It encapsulates buildah functionality for creating, modifying, and committing containers.
 type Container interface {
-	// Run executes a command in the container or on the host
-	Run(ctx context.Context, cmd []string, mode RunMode, out OutputWriter) error
-	
-	// RunScript writes a script to the container and executes it
-	RunScript(ctx context.Context, script string, out OutputWriter) error
+	// Run executes a command in the container or on the host. Optional
+	// RunOptions (e.g. WithEnv) configure per-invocation behavior.
+	Run(ctx context.Context, cmd []string, mode RunMode, out OutputWriter, opts ...RunOption) error
+
+	// RunScript writes a script to the container and executes it. Optional
+	// RunOptions (e.g. WithEnv) are forwarded to the underlying script
+	// execution step.
+	RunScript(ctx context.Context, script string, out OutputWriter, opts ...RunOption) error
 	
 	// WriteFile writes a file into the container filesystem. The context is
 	// used for any network fetches (when File.URL is set) and for cancellation

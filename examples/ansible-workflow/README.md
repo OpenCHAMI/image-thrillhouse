@@ -67,29 +67,26 @@ commands:
 
 When the build runs, the tool:
 
-1. **Verifies Ansible** is installed in the container
-2. **Creates temporary directory structure** in `/tmp/image-build-ansible/`:
+1. **Verifies Ansible** is installed in the container.
+2. **Stages a host-side temp directory** (e.g. `/tmp/image-build-ansible-XXXXXX/`) containing:
+   - the user's playbook (copied)
+   - the generated `ansible.cfg` (with `roles_path` pointing at the container-side mount)
+   - the generated `00-generated-localhost` inventory file
+3. **Bind-mounts host paths into the container** for the duration of the playbook run, all read-only:
+   - host stage dir → `/run/image-build-ansible/etc`
+   - user roles dir (if present) → `/run/image-build-ansible/roles`
+   - user inventory (if specified) → `/run/image-build-ansible/inventory`
+4. **Executes** `ansible-playbook` directly as argv (no shell wrapping):
    ```
-   /tmp/image-build-ansible/
-   ├── ansible.cfg
-   ├── inventory/
-   │   ├── group_vars/
-   │   ├── hosts
-   │   └── 00-generated-localhost  # Auto-generated, sorts first
-   ├── playbooks/
-   │   └── compute.yaml
-   └── roles/
-       └── chrony/
+   ANSIBLE_CONFIG=/run/image-build-ansible/etc/ansible.cfg \
+   ansible-playbook \
+     -i /run/image-build-ansible/etc/00-generated-localhost \
+     -i /run/image-build-ansible/inventory \
+     /run/image-build-ansible/etc/compute.yaml
    ```
-3. **Copies files**:
-   - Playbook from `./playbooks/compute.yaml` → container
-   - Inventory from `./inventory/` → container (if specified)
-   - Roles from `./roles/` → container (defaults to `roles` if not specified)
-4. **Generates files**:
-   - `ansible.cfg` with `roles_path = /tmp/image-build-ansible/roles` (absolute path)
-   - `00-generated-localhost` inventory file with group assignments (prefix ensures it's read first)
-5. **Executes** `ANSIBLE_CONFIG=/tmp/image-build-ansible/ansible.cfg ansible-playbook -i /tmp/image-build-ansible/inventory/00-generated-localhost -i /tmp/image-build-ansible/inventory /tmp/image-build-ansible/playbooks/compute.yaml`
-6. **Cleans up** temporary files after execution
+5. **Removes the host stage dir** after the run.
+
+Because everything lives behind bind mounts, **nothing is written to the container's filesystem** — the playbook, inventory, and roles never end up in the committed image layer.
 
 ### 4. Dynamic Localhost Inventory
 
