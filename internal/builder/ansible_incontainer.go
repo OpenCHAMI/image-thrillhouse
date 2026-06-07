@@ -98,13 +98,17 @@ func classifyAnsibleLine(line string) (slog.Level, []slog.Attr) {
 // until the next Write completes the line or Flush is called.
 //
 // Output routing branches on the active --log-format:
+//
 //   - json: each line becomes one slog record (one JSON object) with
 //     component=ansible and the classifier's structured attrs.
-//   - text/textblock: each line is written as a single atomic line directly
-//     to stderr. We bypass the TextBlockHandler here because its per-record
-//     4-line ┌── output ── boxes are designed for one-shot post-run dumps,
-//     not high-volume streaming — under load they interleave with buildah's
-//     own logrus output and produce visual chaos.
+//   - text: each line becomes one atomic "INF [ansible] <line>" write to
+//     stderr — compact and grep-friendly.
+//   - textblock: the entire playbook run is wrapped in one ┌── ansible
+//     playbook ── box. The box header is emitted lazily on the first kept
+//     line, each kept line is indented with "| ", and the closing rule is
+//     written by Flush. This matches the visual style TextBlockHandler uses
+//     for one-shot records, but for a streaming run it produces a single
+//     readable block instead of one box per line.
 //
 // ANSI escapes are stripped and CR-progress redraws are folded so progress
 // bars don't leave breadcrumbs in the log.
@@ -112,6 +116,7 @@ type ansibleStreamWriter struct {
 	mu      sync.Mutex
 	pending []byte
 	log     *slog.Logger
+	boxOpen bool // textblock mode: true once the ┌── header has been written
 }
 
 func newAnsibleStreamWriter() *ansibleStreamWriter {
@@ -141,6 +146,13 @@ func (w *ansibleStreamWriter) Flush(err error) {
 	if len(w.pending) > 0 {
 		w.emit(w.pending)
 		w.pending = nil
+	}
+	// Close the textblock box if we opened one. Doing this in Flush rather
+	// than per-line means the whole run shows up as a single coherent block
+	// in textblock mode.
+	if w.boxOpen {
+		fmt.Fprintln(os.Stderr, "└────────────────")
+		w.boxOpen = false
 	}
 }
 
@@ -181,18 +193,30 @@ func (w *ansibleStreamWriter) emit(line []byte) {
 		return
 	}
 
-	if container.LogFormat() == "json" {
+	switch container.LogFormat() {
+	case "json":
 		// JSON mode: each line is one slog record. The classifier's attrs
 		// become structured JSON fields downstream tooling can filter on.
 		w.log.LogAttrs(context.Background(), level, cleaned, attrs...)
-		return
-	}
 
-	// text / textblock: write a single atomic line directly to stderr.
-	// Going through slog's TextBlockHandler would wrap each line in a
-	// multi-line ┌── output ── box, which is unreadable when ansible emits
-	// hundreds of lines back-to-back.
-	fmt.Fprintf(os.Stderr, "%s [ansible] %s\n", shortLevelTag(level), cleaned)
+	case "textblock":
+		// Lazily open one box for the whole playbook run on the first kept
+		// line; Flush closes it. The header mirrors TextBlockHandler's
+		// "level=… key=\"value\"" preamble so the streamed block is visually
+		// consistent with the surrounding records.
+		if !w.boxOpen {
+			fmt.Fprintln(os.Stderr, `level=INFO component="ansible"`)
+			fmt.Fprintln(os.Stderr, "┌──── ansible playbook ────")
+			w.boxOpen = true
+		}
+		fmt.Fprintf(os.Stderr, "| %s\n", cleaned)
+
+	default: // text
+		// Compact one-line-per-event format. One atomic Fprintf keeps each
+		// line intact under PIPE_BUF even when buildah's logrus is writing
+		// to the same stderr concurrently.
+		fmt.Fprintf(os.Stderr, "%s [ansible] %s\n", shortLevelTag(level), cleaned)
+	}
 }
 
 // Container-side paths used for the bind-mounted ansible payload. None of
