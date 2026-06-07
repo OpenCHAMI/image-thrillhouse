@@ -30,15 +30,22 @@ import (
 // executing commands, and publishing the result.
 type Builder struct {
 	cfg          *config.Config
+	cfgPath      string // absolute or relative path to the config file; used to resolve relative paths inside the config (e.g. ansible.playbook)
 	backend      backend.Backend
 	newContainer func(context.Context, string, string, bool) (container.Container, error)
 	publishers   []publisher.Publisher
 	skipIfExists bool
 }
 
-func New(ctx context.Context, cfg *config.Config, b backend.Backend, p []publisher.Publisher) *Builder {
+// New constructs a Builder. cfgPath is the path to the config file that
+// produced cfg, and is used to resolve relative paths inside the config (e.g.
+// ansible.playbook, ansible.inventory) against the config's directory rather
+// than the current working directory. Pass "" if there is no source path
+// (e.g. an in-memory config) — relative paths will then resolve against CWD.
+func New(ctx context.Context, cfg *config.Config, cfgPath string, b backend.Backend, p []publisher.Publisher) *Builder {
 	return &Builder{
 		cfg:     cfg,
+		cfgPath: cfgPath,
 		backend: b,
 		newContainer: func(ctx context.Context, name string, from string, tlsverify bool) (container.Container, error) {
 			return ibuildah.NewContainer(ctx, name, from, tlsverify)

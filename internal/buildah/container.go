@@ -13,6 +13,7 @@ import (
 
 	"github.com/containers/buildah"
 	"github.com/containers/buildah/define"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"go.podman.io/image/v5/docker"
 	"go.podman.io/image/v5/types"
 	"go.podman.io/storage"
@@ -21,6 +22,29 @@ import (
 	"github.com/travisbcotton/image-build/internal/container"
 	"github.com/travisbcotton/image-build/internal/fetch"
 )
+
+// toSpecsMounts converts our internal BindMount type to the OCI runtime
+// spec.Mount slice that buildah.RunOptions expects. Always uses "rbind" so
+// nested mounts under the source are visible.
+func toSpecsMounts(in []container.BindMount) []specs.Mount {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]specs.Mount, 0, len(in))
+	for _, m := range in {
+		opts := []string{"rbind"}
+		if m.Readonly {
+			opts = append(opts, "ro")
+		}
+		out = append(out, specs.Mount{
+			Source:      m.Source,
+			Destination: m.Destination,
+			Type:        "bind",
+			Options:     opts,
+		})
+	}
+	return out
+}
 
 // defaultCaps are the Linux capabilities buildah needs to grant a process so
 // that package installation works inside the container. They cover ownership
@@ -107,7 +131,12 @@ func NewContainer(ctx context.Context, name string, from string, tlsverify bool)
 // The command runs with elevated capabilities needed for package installation.
 //
 // Output is written to the provided OutputWriter, which is flushed after execution.
-func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMode, out container.OutputWriter) error {
+func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMode, out container.OutputWriter, opts ...container.RunOption) error {
+	var runOpts container.RunOptions
+	for _, opt := range opts {
+		opt(&runOpts)
+	}
+
 	if c.fromScratch {
 		switch mode {
 		default:
@@ -117,15 +146,16 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 			command := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
 			command.Stdout = out
 			command.Stderr = out
-			// Set environment variables for RPM/DNF to work in containers
+			// Set environment variables for RPM/DNF to work in containers,
+			// then layer any caller-supplied env on top so it can override.
 			command.Env = append(os.Environ(),
 				"LANG=C.UTF-8",
 				"LC_ALL=C.UTF-8",
 				"RPM_INSTALL_PREFIX="+c.MountPath(),
 			)
+			command.Env = append(command.Env, runOpts.Env...)
 			err := command.Run()
 			out.Flush(err)
-			//dnfOut.Flush(err)
 			if err != nil {
 				return fmt.Errorf("run %v: %w", cmd, err)
 			}
@@ -133,10 +163,17 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 		case container.RunModeContainer:
 			// chroot into mountpath, rootfs must have a shell
 			err := c.Builder.Run(cmd, buildah.RunOptions{
-				Isolation: c.GetIsolation(),
-				Stdout:    out,
-				Stderr:    out,
+				Isolation:       c.GetIsolation(),
+				Stdout:          out,
+				Stderr:          out,
 				AddCapabilities: defaultCaps,
+				Env:             runOpts.Env,
+				Mounts:          toSpecsMounts(runOpts.Mounts),
+				// Force pipes (not a pty) so the container's stdout/stderr
+				// reliably reach the writer above. Buildah's default
+				// auto-detects the parent terminal, which can intercept
+				// streaming output (notably ansible-playbook with -v).
+				Terminal: buildah.WithoutTerminal,
 			})
 			out.Flush(err)
 			if err != nil {
@@ -146,10 +183,14 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 		}
 	} else {
 		err := c.Builder.Run(cmd, buildah.RunOptions{
-			Isolation: c.GetIsolation(),
-			Stdout:    out,
-			Stderr:    out,
+			Isolation:       c.GetIsolation(),
+			Stdout:          out,
+			Stderr:          out,
 			AddCapabilities: defaultCaps,
+			Env:             runOpts.Env,
+			Mounts:          toSpecsMounts(runOpts.Mounts),
+			// See comment in the scratch branch above for why we pin this.
+			Terminal: buildah.WithoutTerminal,
 		})
 		out.Flush(err)
 		if err != nil {
@@ -168,7 +209,10 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 //  4. Removed after execution
 //
 // This is useful for running complex multi-line scripts without escaping issues.
-func (c *Container) RunScript(ctx context.Context, script string, out container.OutputWriter) error {
+//
+// Optional RunOptions (e.g. WithEnv) are forwarded only to the actual script
+// execution step — chmod and rm don't need the caller's env.
+func (c *Container) RunScript(ctx context.Context, script string, out container.OutputWriter, opts ...container.RunOption) error {
 	// Validate that script is not empty
 	if strings.TrimSpace(script) == "" {
 		return fmt.Errorf("script content is empty")
@@ -193,7 +237,7 @@ func (c *Container) RunScript(ctx context.Context, script string, out container.
 	// exec relies on the kernel finding a valid shebang or ELF header; a
 	// shebang-less script fails with "exec format error" before any output is
 	// produced. Routing through /bin/sh lets the shell parse the file.
-	if err := c.Run(ctx, []string{"/bin/sh", tmpPath}, container.RunModeContainer, out); err != nil {
+	if err := c.Run(ctx, []string{"/bin/sh", tmpPath}, container.RunModeContainer, out, opts...); err != nil {
 		slog.With("component", "container").Error("script failed", "path", tmpPath, "script", script)
 		return fmt.Errorf("exec script: %w", err)
 	}
