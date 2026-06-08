@@ -298,8 +298,7 @@ func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, 
 
 // verifyAnsibleInstalled checks if Ansible is installed in the container.
 func (b *Builder) verifyAnsibleInstalled(ctx context.Context, c container.Container) error {
-	out := container.NewBufLogWriter("stdout")
-	if err := c.Run(ctx, []string{"ansible-playbook", "--version"}, container.RunModeContainer, out); err != nil {
+	if err := container.RunCmd(ctx, c, []string{"ansible-playbook", "--version"}, container.RunModeContainer); err != nil {
 		return fmt.Errorf("ansible-playbook not found - ensure ansible-core or ansible is installed")
 	}
 	return nil

@@ -43,10 +43,9 @@ func (mmdebstrapClassifier) Line(line string, hadErr bool) {
 	}
 }
 
-// Done logs raw output for consistency with other backends.
-// Note: mmdebstrap already logs most output line-by-line in Line(),
-// but we log the raw output at DEBUG level for consistency and
-// to ensure complete command output is available for debugging.
+// Done logs raw output for consistency with other backends. mmdebstrap
+// already logs line-by-line in Line(), but FlushRawDebug ensures the full
+// buffer is available at DEBUG for post-mortem.
 func (mmdebstrapClassifier) Done(raw string, err error) {
-	container.LogStreamBlock(slog.LevelDebug, "Mmdebstrap raw output", raw, "backend", "mmdebstrap")
+	container.FlushRawDebug("mmdebstrap", raw)
 }

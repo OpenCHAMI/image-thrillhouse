@@ -1,5 +1,31 @@
 package cmdutil
 
+import (
+	"context"
+	"log/slog"
+
+	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-build/internal/container"
+)
+
+// RPMMacrosPath is the canonical destination for the shared image-build RPM
+// macros under /etc/rpm. Both dnf and zypper scratch bootstraps write here.
+const RPMMacrosPath = "/etc/rpm/macros.image-build"
+
+// WriteRPMMacros installs the shared RPMMacros content into the container at
+// RPMMacrosPath. It centralises the boilerplate the dnf and zypper backends
+// both ran in their Bootstrap methods — including the WARN-on-failure
+// posture: scratch installs occasionally race the filesystem-layer rpm and
+// having a clean error message here is more useful than a failed build.
+func WriteRPMMacros(ctx context.Context, c container.Container, log *slog.Logger) {
+	if err := c.WriteFile(ctx, config.File{
+		Path:    RPMMacrosPath,
+		Content: RPMMacros,
+	}); err != nil {
+		log.Warn("Failed to write RPM macros", "error", err)
+	}
+}
+
 // RPMMacros is the macros.image-build file content that both the dnf and
 // zypper scratch builds need under /etc/rpm. It works around a cluster of
 // overlay-filesystem and container-isolation issues that bite RPM during

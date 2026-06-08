@@ -41,6 +41,16 @@ func LogFormat() string {
 // and user scripts occasionally emit even when not on a TTY.
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)
 
+// FlushRawDebug is the per-backend classifier's "log the full raw output at
+// DEBUG, tagged with the backend name" call. Centralised so each backend
+// classifier doesn't need to repeat the same LogStreamBlock incantation —
+// and so the policy of NOT re-logging raw output on the error path lives in
+// one place. (Each classifier already emits parsed warnings/errors on the
+// error path; re-emitting the raw block there would just duplicate them.)
+func FlushRawDebug(backend, raw string) {
+	LogStreamBlock(slog.LevelDebug, backend+" raw output", raw, "backend", backend)
+}
+
 // LogStreamBlock emits a captured command-output buffer in a format-appropriate
 // way, suitable for the bulky multi-KB output produced by package managers.
 //
@@ -104,10 +114,14 @@ func normalizeStreamLines(raw string) []string {
 }
 
 func writeTextBlock(lines []string) {
+	// Line prefix is ASCII "| " (not the box-drawing │) so that streamed
+	// command-output blocks match TextBlockHandler.Handle and
+	// ansibleStreamWriter, both of which already use "| ". The outer ┌─/└─
+	// box rules stay box-drawing — they're visually distinct from content.
 	w := bufio.NewWriter(os.Stderr)
 	fmt.Fprintln(w, "┌──── output ────")
 	for _, l := range lines {
-		fmt.Fprint(w, "│ ")
+		fmt.Fprint(w, "| ")
 		fmt.Fprintln(w, l)
 	}
 	fmt.Fprintln(w, "└────────────────")

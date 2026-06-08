@@ -268,8 +268,7 @@ func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) erro
 			runMode = container.RunModeHost
 		}
 
-		out := container.NewBufLogWriter("stdout")
-		if err := c.Run(ctx, cmd, runMode, out); err != nil {
+		if err := container.RunCmd(ctx, c, cmd, runMode); err != nil {
 			log.Warn("Failed to import GPG key (continuing)", "repo", repo.Path, "error", err)
 		} else {
 			log.Info("Successfully imported GPG key", "repo", repo.Path)
@@ -351,84 +350,81 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	log.Info("Starting install commands:", "install", b.cfg.Layer.Actions.Install)
 
-	// Scratch build: bootstrap a new filesystem from nothing.
-	// Backend.Bootstrap (called earlier in Build) has already created the
-	// directory skeleton, written any RPM macros, and initialized the RPM
-	// database for backends that need it.
+	var (
+		cmds    [][]string
+		mode    container.RunMode
+		errVerb string // "run root" for scratch, "run" for parent — preserves prior error text
+	)
+
 	if b.cfg.Meta.From == "scratch" {
+		// Scratch build: bootstrap a new filesystem from nothing. Backend.Bootstrap
+		// (called earlier in Build) has already created the directory skeleton,
+		// written any RPM macros, and initialised the RPM database for backends
+		// that need it.
 		if !b.backend.SupportsInstallRoot() {
 			return fmt.Errorf("backend %s does not support scratch builds", b.cfg.Layer.Manager.Name)
 		}
-
-		// Get commands to run on the host targeting the container mount
-		cmds := b.backend.InstallRootCommands(b.cfg.Layer.Actions.Install, c.MountPath())
-		for _, cmd := range cmds {
-			log.Debug("Install", "action", cmd)
-			// Wrap the backend's output writer to capture output for exit code checking
-			out := container.NewCapturingWriter(b.backend.OutputWriter())
-			err := c.Run(ctx, cmd, container.RunModeHost, out)
-
-			// Check if the error is an acceptable exit code
-			if err != nil {
-				// Try to extract exit code from error
-				exitCode := extractExitCode(err)
-				log.Debug("install command exited non-zero",
-					"exitCode", exitCode, "backend", b.cfg.Layer.Manager.Name, "cmd", cmd)
-				if exitCode > 0 && b.backend.IsAcceptableExitCode(exitCode, out.String()) {
-					log.Warn("Command returned non-zero exit code but packages were installed successfully",
-						"exitCode", exitCode, "cmd", cmd)
-					// Treat as success
-					continue
-				}
-				if exitCode == -1 {
-					// Diagnostic for the case where the error chain doesn't
-					// contain an *exec.ExitError — the acceptable-exit-code
-					// check can't even run, so a backend that *would* tolerate
-					// this code silently won't get the chance.
-					log.Warn("could not determine exit code from error; acceptable-exit-code checks skipped",
-						"err", err)
-				}
-				return fmt.Errorf("run root %v: %w", cmd, err)
-			}
-		}
+		cmds = b.backend.InstallRootCommands(b.cfg.Layer.Actions.Install, c.MountPath())
+		mode = container.RunModeHost
+		errVerb = "run root"
 	} else {
-		// Parent build: run commands inside the existing container
+		// Parent build: run commands inside the existing container.
 		if !b.backend.SupportsParentInstall() {
 			return fmt.Errorf("backend %s does not support parent image builds, use apt instead", b.cfg.Layer.Manager.Name)
 		}
-		// Get commands to run inside the container
-		cmds := b.backend.InstallCommands(b.cfg.Layer.Actions.Install)
-		for _, cmd := range cmds {
-			log.Debug("Install", "action", cmd)
-			// Wrap the backend's output writer to capture output for exit code checking
-			out := container.NewCapturingWriter(b.backend.OutputWriter())
-			err := c.Run(ctx, cmd, container.RunModeContainer, out)
-
-			// Check if the error is an acceptable exit code
-			if err != nil {
-				// Try to extract exit code from error
-				exitCode := extractExitCode(err)
-				log.Debug("install command exited non-zero",
-					"exitCode", exitCode, "backend", b.cfg.Layer.Manager.Name, "cmd", cmd)
-				if exitCode > 0 && b.backend.IsAcceptableExitCode(exitCode, out.String()) {
-					log.Warn("Command returned non-zero exit code but packages were installed successfully",
-						"exitCode", exitCode, "cmd", cmd)
-					// Treat as success
-					continue
-				}
-				if exitCode == -1 {
-					// Diagnostic for the case where the error chain doesn't
-					// contain an *exec.ExitError — the acceptable-exit-code
-					// check can't even run, so a backend that *would* tolerate
-					// this code silently won't get the chance.
-					log.Warn("could not determine exit code from error; acceptable-exit-code checks skipped",
-						"err", err)
-				}
-				return fmt.Errorf("run %v: %w", cmd, err)
-			}
-		}
+		cmds = b.backend.InstallCommands(b.cfg.Layer.Actions.Install)
+		mode = container.RunModeContainer
+		errVerb = "run"
 	}
+
+	if err := b.runInstallCommands(ctx, c, cmds, mode, errVerb, log); err != nil {
+		return err
+	}
+
 	log.Info("Done installing commands:", "install", b.cfg.Layer.Actions.Install)
+	return nil
+}
+
+// runInstallCommands executes a backend's install command list, applying the
+// acceptable-exit-code dance the scratch and parent branches both used to
+// duplicate. errVerb is folded into error messages ("run root" vs "run") so
+// callers can keep their existing log/grep patterns.
+func (b *Builder) runInstallCommands(
+	ctx context.Context,
+	c container.Container,
+	cmds [][]string,
+	mode container.RunMode,
+	errVerb string,
+	log *slog.Logger,
+) error {
+	for _, cmd := range cmds {
+		log.Debug("Install", "action", cmd)
+		// Capture output so the backend can decide whether to tolerate a
+		// non-zero exit (e.g. zypper post-install scriptlet noise).
+		out := container.NewCapturingWriter(b.backend.OutputWriter())
+		err := c.Run(ctx, cmd, mode, out)
+		if err == nil {
+			continue
+		}
+
+		exitCode := extractExitCode(err)
+		log.Debug("install command exited non-zero",
+			"exitCode", exitCode, "backend", b.cfg.Layer.Manager.Name, "cmd", cmd)
+		if exitCode > 0 && b.backend.IsAcceptableExitCode(exitCode, out.String()) {
+			log.Warn("Command returned non-zero exit code but packages were installed successfully",
+				"exitCode", exitCode, "cmd", cmd)
+			continue
+		}
+		if exitCode == -1 {
+			// Diagnostic for the case where the error chain doesn't contain
+			// an *exec.ExitError — the acceptable-exit-code check can't even
+			// run, so a backend that *would* tolerate this code silently
+			// won't get the chance.
+			log.Warn("could not determine exit code from error; acceptable-exit-code checks skipped",
+				"err", err)
+		}
+		return fmt.Errorf("%s %v: %w", errVerb, cmd, err)
+	}
 	return nil
 }
 
@@ -459,16 +455,14 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 			if err != nil {
 				return fmt.Errorf("parse command %q: %w", cmd.Run, err)
 			}
-			out := container.NewBufLogWriter("stdout")
-			if err := c.Run(ctx, parts, container.RunModeContainer, out); err != nil {
+			if err := container.RunCmd(ctx, c, parts, container.RunModeContainer); err != nil {
 				return fmt.Errorf("run %s: %w", cmd.Run, err)
 			}
 
 		case config.CommandScript:
 			log.Debug("Executing script", "index", i, "script", cmd.Script)
 			// Execute a multi-line script
-			out := container.NewBufLogWriter("stdout")
-			if err := c.RunScript(ctx, cmd.Script, out); err != nil {
+			if err := container.RunScriptCmd(ctx, c, cmd.Script); err != nil {
 				return fmt.Errorf("run script: %w", err)
 			}
 
@@ -531,8 +525,7 @@ func (b *Builder) removePackages(ctx context.Context, c container.Container) err
 		return fmt.Errorf("backend %s does not support package removal", b.cfg.Layer.Manager.Name)
 	}
 
-	out := container.NewBufLogWriter("stdout")
-	if err := c.Run(ctx, cmd, runMode, out); err != nil {
+	if err := container.RunCmd(ctx, c, cmd, runMode); err != nil {
 		return fmt.Errorf("remove packages %v: %w", packages, err)
 	}
 

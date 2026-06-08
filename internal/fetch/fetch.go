@@ -18,22 +18,43 @@ import (
 // and body read combined. Cancel sooner by cancelling the supplied context.
 const DefaultTimeout = 60 * time.Second
 
+// MaxBodyBytes caps Get's in-memory read to a sane upper bound. The artifacts
+// Get is used for today (config files, GPG keys, OVAL definitions) are all
+// well under this; the cap exists so a malicious or misconfigured URL serving
+// gigabytes can't OOM the build process. Callers that legitimately need to
+// stream large payloads should use GetStream and handle truncation themselves.
+//
+// Exposed as a var rather than a const so tests can lower the cap without
+// allocating hundreds of MB on the test client. Production code should treat
+// it as constant.
+var MaxBodyBytes int64 = 256 * 1024 * 1024 // 256 MiB
+
 // Get performs an HTTP GET against url using a client with DefaultTimeout
 // and the supplied context. It returns the response body bytes for any 2xx
 // status, or a descriptive error otherwise.
 //
-// The body is read fully into memory — appropriate for the small artifacts
-// (config files, GPG keys, OVAL definitions) the build pipeline currently
-// uses. For larger payloads use GetStream.
+// The body is read fully into memory and capped at MaxBodyBytes — appropriate
+// for the small artifacts (config files, GPG keys, OVAL definitions) the
+// build pipeline currently uses. Exceeding the cap surfaces as an error
+// rather than a truncated body so callers don't silently process partial
+// data. For larger payloads use GetStream.
 func Get(ctx context.Context, url string) ([]byte, error) {
 	rc, err := GetStream(ctx, url)
 	if err != nil {
 		return nil, err
 	}
 	defer rc.Close()
-	b, err := io.ReadAll(rc)
+	// LimitReader by (cap + 1) so we can distinguish "exactly the cap" from
+	// "too big" — a body of exactly MaxBodyBytes is valid; one byte more isn't.
+	// Snapshot MaxBodyBytes so a concurrent test-side mutation can't change
+	// the comparison mid-call. (Tests swap the var; production never does.)
+	limit := MaxBodyBytes
+	b, err := io.ReadAll(io.LimitReader(rc, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: read body: %w", url, err)
+	}
+	if int64(len(b)) > limit {
+		return nil, fmt.Errorf("fetch %s: body exceeds %d-byte cap", url, limit)
 	}
 	return b, nil
 }

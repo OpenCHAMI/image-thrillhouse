@@ -113,6 +113,47 @@ func TestGetStream_2xxBoundary(t *testing.T) {
 	rc.Close()
 }
 
+func TestGet_BodySizeCap(t *testing.T) {
+	// Shrink the cap so the test allocates kilobytes, not hundreds of MB.
+	prev := MaxBodyBytes
+	MaxBodyBytes = 1024
+	t.Cleanup(func() { MaxBodyBytes = prev })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(make([]byte, MaxBodyBytes+1)) // one byte over
+	}))
+	defer srv.Close()
+
+	_, err := Get(context.Background(), srv.URL)
+	if err == nil {
+		t.Fatal("expected size-cap error, got nil")
+	}
+	if !strings.Contains(err.Error(), "cap") {
+		t.Errorf("expected error to mention the cap, got: %v", err)
+	}
+}
+
+func TestGet_AtCapAccepted(t *testing.T) {
+	// A body of exactly the cap must succeed — boundary test for the
+	// (cap + 1) LimitReader trick.
+	prev := MaxBodyBytes
+	MaxBodyBytes = 1024
+	t.Cleanup(func() { MaxBodyBytes = prev })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(make([]byte, MaxBodyBytes))
+	}))
+	defer srv.Close()
+
+	b, err := Get(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("at-cap body should succeed: %v", err)
+	}
+	if int64(len(b)) != MaxBodyBytes {
+		t.Errorf("body len = %d, want %d", len(b), MaxBodyBytes)
+	}
+}
+
 func TestDefaultTimeout(t *testing.T) {
 	// Sanity-check that the documented default isn't accidentally zero or
 	// negative, which would disable timeouts entirely — the whole point of

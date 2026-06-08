@@ -59,9 +59,10 @@ func (c *aptClassifier) Line(line string, hadErr bool) {
 	}
 }
 
-// Done emits the summary logs.
+// Done emits the summary logs. See FlushRawDebug for the shared raw-output +
+// error-path policy.
 func (c *aptClassifier) Done(raw string, err error) {
-	container.LogStreamBlock(slog.LevelDebug, "APT raw output", raw, "backend", "apt")
+	container.FlushRawDebug("apt", raw)
 
 	if len(c.newPackages) > 0 {
 		slog.Info("packages installed", "packages", c.newPackages)
@@ -76,10 +77,5 @@ func (c *aptClassifier) Done(raw string, err error) {
 		for _, e := range c.errors {
 			slog.Error("apt error", "msg", e)
 		}
-		// Note: We don't log the raw output block here on error because:
-		// 1. The parsed errors above already show the key information
-		// 2. The full raw output is available at DEBUG level (line 64)
-		// 3. This prevents duplicate error messages in the output
-		// 4. Matches the behavior of other backends (dnf, zypper)
 	}
 }
