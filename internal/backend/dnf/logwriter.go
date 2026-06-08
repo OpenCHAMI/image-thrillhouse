@@ -21,6 +21,7 @@ type dnfClassifier struct {
 	warnings    []string
 	errors      []string
 	inInstalled bool
+	inError     bool
 	log         *slog.Logger
 }
 
@@ -34,20 +35,31 @@ func newDnfWriter() *container.LineWriter {
 func (c *dnfClassifier) Line(line string, hadErr bool) {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" {
+		// Blank line ends error section but not installed section
+		c.inError = false
 		return
 	}
 	switch {
 	case trimmed == "Installed:":
 		c.inInstalled = true
+		c.inError = false
 	case trimmed == "Upgraded:", trimmed == "Removed:", trimmed == "Failed:":
 		c.inInstalled = false
+		c.inError = false
 	case c.inInstalled:
 		c.installed = append(c.installed, trimmed)
 	case strings.HasPrefix(trimmed, "Unable to detect release version"):
 		c.warnings = append(c.warnings, trimmed)
+		c.inError = false
 	case strings.HasPrefix(trimmed, "Error:"):
+		// Start of error section - capture this line and subsequent lines
 		c.errors = append(c.errors, trimmed)
 		c.inInstalled = false
+		c.inError = true
+	case c.inError:
+		// Continuation of error section - capture all non-empty lines
+		// DNF error details can be indented or not, so capture everything
+		c.errors = append(c.errors, trimmed)
 	}
 }
 
@@ -63,9 +75,9 @@ func (c *dnfClassifier) Done(raw string, err error) {
 	for _, w := range c.warnings {
 		c.log.Warn("dnf warning", "msg", w)
 	}
-	if err != nil {
-		for _, e := range c.errors {
-			c.log.Error("dnf error", "msg", e)
-		}
+	if err != nil && len(c.errors) > 0 {
+		// Combine all error lines into a single message for better readability
+		errorMsg := strings.Join(c.errors, "\n")
+		c.log.Error("dnf error", "msg", errorMsg)
 	}
 }
