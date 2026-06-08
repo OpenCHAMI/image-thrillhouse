@@ -325,18 +325,22 @@ func (c *Container) WriteFile(ctx context.Context, file config.File) error {
 	}
 	log.Debug("Write file", "path", file.Path)
 
-	// write to temp file
+	// Write to a host-side temp file and hand the path to buildah.Add.
+	// We close explicitly (rather than just defer-close) so the bytes are
+	// flushed before Add reads them; the only deferred work is removal.
 	tmp, err := os.CreateTemp("", "image-build-*")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}
 	defer os.Remove(tmp.Name())
-	defer tmp.Close()
 
 	if _, err := tmp.Write(content); err != nil {
+		tmp.Close()
 		return fmt.Errorf("write temp file: %w", err)
 	}
-	tmp.Close()
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp file: %w", err)
+	}
 
 	// Set up AddAndCopyOptions with chmod if specified
 	addOpts := buildah.AddAndCopyOptions{}

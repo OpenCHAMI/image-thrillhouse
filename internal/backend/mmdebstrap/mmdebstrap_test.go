@@ -63,17 +63,15 @@ func TestNewWithCustomOptions(t *testing.T) {
 }
 
 func TestConfigFilePath(t *testing.T) {
+	// mmdebstrap has no persistent config file; ConfigFilePath returns "" so
+	// the builder can refuse layer.manager.config rather than writing to a
+	// bogus path.
 	backend := New(map[string]string{
 		"suite":  "bookworm",
 		"mirror": "http://deb.debian.org/debian",
 	})
-	
-	// Note: This appears to be a bug - mmdebstrap returns DNF path
-	// Testing current behavior
-	expected := "/etc/dnf/dnf.conf"
-	
-	if got := backend.ConfigFilePath(); got != expected {
-		t.Errorf("ConfigFilePath() = %v, want %v", got, expected)
+	if got := backend.ConfigFilePath(); got != "" {
+		t.Errorf("ConfigFilePath() = %q, want \"\"", got)
 	}
 }
 

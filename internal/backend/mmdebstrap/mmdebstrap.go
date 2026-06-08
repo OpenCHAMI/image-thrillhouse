@@ -50,10 +50,14 @@ func New(options map[string]string) *MmdebstrapBackend {
 	}
 }
 
-// ConfigFilePath returns the path where configuration should be written.
-// mmdebstrap doesn't use a persistent config file like DNF.
-func (d *MmdebstrapBackend) ConfigFilePath() string {
-	return "mmdebstrap doesn't use a persistent config file"
+// ConfigFilePath returns "" because mmdebstrap has no persistent config file
+// to write into. The previous implementation returned a human-readable
+// sentence, which would have been interpreted as a literal path the moment
+// any user actually set layer.manager.config on a mmdebstrap build —
+// applyManagerConfig now treats "" as a hard error rather than writing to
+// nonsense paths.
+func (m *MmdebstrapBackend) ConfigFilePath() string {
+	return ""
 }
 
 // InstallCommands is not supported by mmdebstrap backend and returns nil.

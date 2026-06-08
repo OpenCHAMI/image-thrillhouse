@@ -169,14 +169,24 @@ func (b *Builder) Build(ctx context.Context) error {
 // applyManagerConfig writes the package manager configuration file if specified.
 // For example, this could write /etc/dnf/dnf.conf for DNF or /etc/zypp/zypp.conf for Zypper.
 // If no config is specified in the configuration, this is a no-op.
+//
+// Backends that don't support a persistent config file (today: mmdebstrap)
+// return "" from ConfigFilePath. If the user nevertheless set
+// layer.manager.config for one of those backends, we fail loudly rather than
+// writing the YAML to a bogus path — silent acceptance there used to mean
+// the user's config did nothing without any warning.
 func (b *Builder) applyManagerConfig(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	if b.cfg.Layer.Manager.Config == "" {
 		return nil
 	}
+	path := b.backend.ConfigFilePath()
+	if path == "" {
+		return fmt.Errorf("backend %s does not support layer.manager.config", b.cfg.Layer.Manager.Name)
+	}
 	log.Info("Writing configfile", "config", b.cfg.Layer.Manager.Config)
 	return c.WriteFile(ctx, config.File{
-		Path:    b.backend.ConfigFilePath(),
+		Path:    path,
 		Content: b.cfg.Layer.Manager.Config,
 	})
 }

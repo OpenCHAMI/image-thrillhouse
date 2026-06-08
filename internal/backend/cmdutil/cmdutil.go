@@ -7,8 +7,6 @@
 // inputs may include user-supplied paths and package names.
 package cmdutil
 
-import "fmt"
-
 // RPMRemove returns the `rpm -e --nodeps [--root rootPath] <packages…>`
 // command shared by the dnf and zypper backends. When rootPath is empty
 // the command runs against the live container's RPM database; otherwise
@@ -63,11 +61,19 @@ func DPKGRemove(rootPath string, packages []string) []string {
 	return cmd
 }
 
-// APTImportKey returns a single `sh -c` command that installs a previously
-// fetched key into /etc/apt/trusted.gpg.d/. The key is dearmored when
-// possible and copied verbatim otherwise. Only paths controlled by this
-// codebase are interpolated into the script — never a user-supplied URL —
-// so there is no shell-injection surface even though sh is used.
+// APTImportKey returns a `sh -c` command that installs a previously fetched
+// key into /etc/apt/trusted.gpg.d/. The key is dearmored when possible and
+// copied verbatim otherwise.
+//
+// The destination and key paths are passed as POSITIONAL arguments to sh
+// (referenced inside the script as $1 and $2) rather than interpolated into
+// the script text. That removes any quoting surface — even if a future
+// refactor pipes user-controlled bytes into rootPath or keyPath, the shell
+// only ever sees them as opaque argv strings, never as parseable script
+// fragments. The previous implementation used fmt.Sprintf with Go's %q
+// verb, which is NOT shell-safe (e.g. \xNN sequences mean different things
+// in Go and sh) and was a latent injection vector waiting for the inputs
+// to widen.
 //
 // When rootPath is non-empty (scratch build) the destination lives under
 // that root and the command is meant to run on the host.
@@ -81,7 +87,8 @@ func APTImportKey(rootPath, keyPath string) []string {
 	if rootPath != "" {
 		final = rootPath + "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
 	}
-	script := fmt.Sprintf("gpg --dearmor -o %q %q 2>/dev/null || cp %q %q",
-		final, keyPath, keyPath, final)
-	return []string{"sh", "-c", script}
+	// $0 is the script's "name" slot (we pass "apt-import-key" so error
+	// messages from sh stay readable), $1 is the destination, $2 is the key.
+	const script = `gpg --dearmor -o "$1" "$2" 2>/dev/null || cp "$2" "$1"`
+	return []string{"sh", "-c", script, "apt-import-key", final, keyPath}
 }
