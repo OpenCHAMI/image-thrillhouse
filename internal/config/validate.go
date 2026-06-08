@@ -84,25 +84,7 @@ func (r *Repo) Validate() error {
 	if r.Path == "" {
 		return fmt.Errorf("repo.path is required")
 	}
-
-	set := 0
-	if r.Content != "" {
-		set++
-	}
-	if r.Src != "" {
-		set++
-	}
-	if r.URL != "" {
-		set++
-	}
-
-	if set > 1 {
-		return fmt.Errorf("repo %s: only one of content, src, or url may be set", r.Path)
-	}
-	if set == 0 {
-		return fmt.Errorf("repo %s: one of content, src, or url is required", r.Path)
-	}
-	return nil
+	return requireExactlyOneSource("repo", r.Path, r.Content, r.Src, r.URL)
 }
 
 // Validate checks a File configuration for correctness.
@@ -113,25 +95,28 @@ func (f *File) Validate() error {
 	if f.Path == "" {
 		return fmt.Errorf("file.path is required")
 	}
+	return requireExactlyOneSource("file", f.Path, f.Content, f.Src, f.URL)
+}
 
-	// Count how many sources are specified
+// requireExactlyOneSource is the shared "exactly one of content/src/url"
+// check that File and Repo both need. label distinguishes the error messages
+// ("file foo: ..." vs "repo bar: ...") so callers don't have to wrap.
+func requireExactlyOneSource(label, path, content, src, url string) error {
 	set := 0
-	if f.Content != "" {
+	if content != "" {
 		set++
 	}
-	if f.Src != "" {
+	if src != "" {
 		set++
 	}
-	if f.URL != "" {
+	if url != "" {
 		set++
 	}
-
-	// Must have exactly one source
 	if set > 1 {
-		return fmt.Errorf("file %s: only one of content, src, or url may be set", f.Path)
+		return fmt.Errorf("%s %s: only one of content, src, or url may be set", label, path)
 	}
 	if set == 0 {
-		return fmt.Errorf("file %s: one of content, src, or url is required", f.Path)
+		return fmt.Errorf("%s %s: one of content, src, or url is required", label, path)
 	}
 	return nil
 }

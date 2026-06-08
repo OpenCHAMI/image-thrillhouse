@@ -265,12 +265,7 @@ func (d *DnfBackend) Bootstrap(ctx context.Context, c container.Container, rootP
 	}
 
 	// Write the shared RPM macros into the scratch root.
-	if err := c.WriteFile(ctx, config.File{
-		Path:    "/etc/rpm/macros.image-build",
-		Content: cmdutil.RPMMacros,
-	}); err != nil {
-		log.Warn("Failed to write RPM macros", "error", err)
-	}
+	cmdutil.WriteRPMMacros(ctx, c, log)
 
 	// Initialize the RPM database.
 	log.Debug("Initializing RPM database")

@@ -2,6 +2,7 @@ package tag
 
 import (
 	"crypto/md5"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -80,12 +81,31 @@ func hashLayer(h io.Writer, layer LayerInput) error {
 	return nil
 }
 
+// hashFile streams the file at path into h, length-prefixed.
+//
+// The length prefix prevents a theoretical collision where two layers have
+// different (file, file) splits that concatenate to the same bytes — without
+// a delimiter, hash(A || B) == hash(A' || B') is possible if A+B == A'+B'
+// even when (A, B) ≠ (A', B'). Length-prefixing makes the byte boundary
+// part of the hashed input so the split is unambiguous.
+//
+// MD5 collisions make this concern academic, but the fix is one writer call
+// and removes the smell.
 func hashFile(h io.Writer, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	var lenBuf [8]byte
+	binary.BigEndian.PutUint64(lenBuf[:], uint64(info.Size()))
+	if _, err := h.Write(lenBuf[:]); err != nil {
+		return err
+	}
 	_, err = io.Copy(h, f)
 	return err
 }

@@ -125,19 +125,19 @@ func (m *MmdebstrapBackend) ValidateOptions(options map[string]string) error {
 // Bootstrap is a no-op for mmdebstrap. mmdebstrap itself bootstraps the
 // scratch root in its single InstallRootCommands invocation, so the builder
 // has no pre-creation work to do beforehand.
-func (d *MmdebstrapBackend) Bootstrap(ctx context.Context, c container.Container, rootPath string) error {
+func (m *MmdebstrapBackend) Bootstrap(ctx context.Context, c container.Container, rootPath string) error {
 	return nil
 }
 
 // SupportsInstallRoot returns true because mmdebstrap can bootstrap a scratch filesystem.
-func (d *MmdebstrapBackend) SupportsInstallRoot() bool {
+func (m *MmdebstrapBackend) SupportsInstallRoot() bool {
 	return true
 }
 
 // SupportsParentInstall returns false because mmdebstrap can only bootstrap
 // a new filesystem; it cannot install into an existing image.
 // Use the apt backend for parent image builds.
-func (d *MmdebstrapBackend) SupportsParentInstall() bool {
+func (m *MmdebstrapBackend) SupportsParentInstall() bool {
 	return false
 }
 
@@ -157,12 +157,12 @@ func (m *MmdebstrapBackend) ImportGPGKeyCommand(keyPath string, rootPath string)
 
 // OutputWriter returns a writer that parses and formats mmdebstrap output.
 // The writer filters mmdebstrap's verbose output and logs relevant information.
-func (d *MmdebstrapBackend) OutputWriter() container.OutputWriter {
+func (m *MmdebstrapBackend) OutputWriter() container.OutputWriter {
 	return newMmdebstrapWriter()
 }
 
 // IsAcceptableExitCode checks if an mmdebstrap exit code should be tolerated.
 // mmdebstrap generally has reliable exit codes, so we don't tolerate non-zero exits.
-func (d *MmdebstrapBackend) IsAcceptableExitCode(exitCode int, output string) bool {
+func (m *MmdebstrapBackend) IsAcceptableExitCode(exitCode int, output string) bool {
 	return false
 }

@@ -255,12 +255,7 @@ func (z *ZypperBackend) Bootstrap(ctx context.Context, c container.Container, ro
 		}
 	}
 
-	if err := c.WriteFile(ctx, config.File{
-		Path:    "/etc/rpm/macros.image-build",
-		Content: cmdutil.RPMMacros,
-	}); err != nil {
-		log.Warn("Failed to write RPM macros", "error", err)
-	}
+	cmdutil.WriteRPMMacros(ctx, c, log)
 	return nil
 }
 

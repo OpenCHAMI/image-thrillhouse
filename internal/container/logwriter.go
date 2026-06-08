@@ -3,9 +3,28 @@ package container
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"sync"
 )
+
+// RunCmd wraps c.Run with a default BufLogWriter for callers that just need
+// "run this, log output at DEBUG (or ERROR on failure), surface errors".
+// Eliminates the boilerplate of allocating a writer at every site —
+// previously a 2-line pattern repeated a dozen+ times across builder/oscap/
+// ansible_incontainer.
+//
+// Callers that need to inspect the captured output (e.g. acceptable-exit-code
+// checks) should keep calling c.Run directly with a CapturingWriter.
+func RunCmd(ctx context.Context, c Container, cmd []string, mode RunMode, opts ...RunOption) error {
+	return c.Run(ctx, cmd, mode, NewBufLogWriter("stdout"), opts...)
+}
+
+// RunScriptCmd is the RunScript analogue of RunCmd — same boilerplate-saver
+// for callers that only care about pass/fail and don't need the writer.
+func RunScriptCmd(ctx context.Context, c Container, script string, opts ...RunOption) error {
+	return c.RunScript(ctx, script, NewBufLogWriter("stdout"), opts...)
+}
 
 
 // BufLogWriter is a thread-safe buffered writer that logs output line-by-line.

@@ -50,8 +50,7 @@ func (s *Scanner) InstallSCAP(ctx context.Context, c container.Container, pkgMan
 	case "apt":
 		// Update package list first for APT, matching the builder's style.
 		updateCmd := []string{"apt-get", "update", "-q"}
-		out := container.NewBufLogWriter("stdout")
-		if err := c.Run(ctx, updateCmd, container.RunModeContainer, out); err != nil {
+		if err := container.RunCmd(ctx, c, updateCmd, container.RunModeContainer); err != nil {
 			s.log.Warn("Failed to update apt cache", "error", err)
 		}
 		cmd = []string{"apt-get", "install", "-y", "-q", "--no-install-recommends"}
@@ -59,9 +58,8 @@ func (s *Scanner) InstallSCAP(ctx context.Context, c container.Container, pkgMan
 	default:
 		return fmt.Errorf("unsupported package manager for OpenSCAP: %s", pkgManager)
 	}
-	
-	out := container.NewBufLogWriter("stdout")
-	if err := c.Run(ctx, cmd, container.RunModeContainer, out); err != nil {
+
+	if err := container.RunCmd(ctx, c, cmd, container.RunModeContainer); err != nil {
 		return fmt.Errorf("install OpenSCAP packages: %w", err)
 	}
 	
@@ -77,9 +75,7 @@ func (s *Scanner) CheckInstall(ctx context.Context, c container.Container) error
 	s.log.Info("Checking OpenSCAP installation")
 
 	cmd := []string{"oscap", "--version"}
-	out := container.NewBufLogWriter("stdout")
-
-	if err := c.Run(ctx, cmd, container.RunModeContainer, out); err != nil {
+	if err := container.RunCmd(ctx, c, cmd, container.RunModeContainer); err != nil {
 		if s.cfg != nil && s.cfg.InstallSCAP {
 			return fmt.Errorf("oscap --version failed after install_scap; installation may have failed: %w", err)
 		}
@@ -123,11 +119,10 @@ func (s *Scanner) RunBenchmark(ctx context.Context, c container.Container) error
 	}
 	
 	s.log.Info("Running XCCDF evaluation", "profile", s.cfg.Profile, "benchmark", s.cfg.BenchmarkPath)
-	out := container.NewBufLogWriter("stdout")
-	
+
 	// Note: SCAP scans often return non-zero exit codes even on successful scans
 	// (when findings are discovered), so we continue even if there's an error
-	if err := c.Run(ctx, evalCmd, container.RunModeContainer, out); err != nil {
+	if err := container.RunCmd(ctx, c, evalCmd, container.RunModeContainer); err != nil {
 		s.log.Warn("XCCDF evaluation completed with findings", "error", err)
 	}
 	
@@ -153,9 +148,8 @@ func (s *Scanner) generateRemediation(ctx context.Context, c container.Container
 	}
 	
 	s.log.Info("Generating remediation script", "output", remediatePath)
-	out := container.NewBufLogWriter("stdout")
-	
-	if err := c.Run(ctx, cmd, container.RunModeContainer, out); err != nil {
+
+	if err := container.RunCmd(ctx, c, cmd, container.RunModeContainer); err != nil {
 		s.log.Warn("Failed to generate remediation script", "error", err)
 		return nil // Don't fail the build if remediation generation fails
 	}
@@ -206,10 +200,9 @@ func (s *Scanner) RunOVALEval(ctx context.Context, c container.Container) error 
 	}
 	
 	s.log.Info("Running OVAL evaluation")
-	out := container.NewBufLogWriter("stdout")
 
 	// OVAL evaluations return non-zero when vulnerabilities are found
-	if err := c.Run(ctx, evalCmd, container.RunModeContainer, out); err != nil {
+	if err := container.RunCmd(ctx, c, evalCmd, container.RunModeContainer); err != nil {
 		s.log.Warn("OVAL evaluation completed with vulnerabilities found", "error", err)
 	}
 	

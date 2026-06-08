@@ -269,8 +269,12 @@ func init() {
 	buildCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 	buildCmd.Flags().BoolVar(&skipIfExists, "skip-if-exists", false, "skip the build when all publishers report the image already exists")
 
-	// Validate-specific flags
+	// Validate-specific flags. Mirrors the build/render shape so users can
+	// dry-run a manifest layer's rendered config — picking validate over
+	// render when they only care about pass/fail.
 	validateCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
+	validateCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file (use with --layer)")
+	validateCmd.Flags().StringVar(&layerName, "layer", "", "layer name in the manifest (requires --manifest)")
 	validateCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
 	validateCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 
@@ -470,19 +474,57 @@ func prepareLayerRender(
 //   - Required fields are present
 //   - Package manager backend is supported
 //   - Publisher configuration is valid
+//
+// Supports the same input modes as build/render: standalone --config OR
+// --manifest + --layer. Manifest mode loads the layer-specific var files and
+// injects computed tags before rendering, so "validate" gives the same answer
+// build would for that layer.
 func runValidate(cmd *cobra.Command, args []string) error {
-	// Setup logging
 	if err := setupLogger(logLevel, logFormat); err != nil {
 		return err
 	}
 
-	// Load any provided vars (possibly empty) and render+validate the config.
-	mergedVars, err := config.LoadVars([]string{varFile}, vars)
+	if manifestPath != "" && cfgPath != "" {
+		return fmt.Errorf("--config and --manifest are mutually exclusive")
+	}
+	if manifestPath != "" && layerName == "" {
+		return fmt.Errorf("--layer is required when using --manifest")
+	}
+	if layerName != "" && manifestPath == "" {
+		return fmt.Errorf("--manifest is required when using --layer")
+	}
+	if manifestPath == "" && cfgPath == "" {
+		return fmt.Errorf("either --config or --manifest is required")
+	}
+
+	cliVars, err := config.LoadVars([]string{varFile}, vars)
 	if err != nil {
 		return fmt.Errorf("load vars: %w", err)
 	}
 
-	cfg, err := config.LoadConfigWithVars(cfgPath, mergedVars)
+	// Resolve the config path + merged vars exactly the same way build does
+	// for the chosen mode, so validate's answer matches what build would see.
+	var (
+		validateConfigPath string
+		mergedVars         map[string]interface{}
+	)
+	if manifestPath != "" {
+		dag, err := loadDAG(manifestPath)
+		if err != nil {
+			return err
+		}
+		validateConfigPath, mergedVars, err = prepareLayerRender(
+			dag, layerName, cliVars, cliGlobalVarFiles(),
+		)
+		if err != nil {
+			return err
+		}
+	} else {
+		validateConfigPath = cfgPath
+		mergedVars = cliVars
+	}
+
+	cfg, err := config.LoadConfigWithVars(validateConfigPath, mergedVars)
 	if err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
@@ -492,8 +534,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid backend: %w", err)
 	}
 
-	// Log success message
-	slog.Info("config is valid", "path", cfgPath)
+	slog.Info("config is valid", "path", validateConfigPath)
 	return nil
 }
 
