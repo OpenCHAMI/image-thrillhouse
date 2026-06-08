@@ -25,11 +25,18 @@ type Config struct {
 
 // Meta contains metadata about the image being built.
 // This includes the image name, tag, and the base image to build from.
+//
+// Labels is an optional map of OCI image labels merged on top of the labels
+// the labels package generates automatically. Keys provided here override the
+// auto-generated values for the same key, which is the documented contract in
+// labels.Generate — useful for stamping ownership, version, or git-sha into
+// images without changing the build pipeline.
 type Meta struct {
-	Name          string   `yaml:"name"`
-	From          string   `yaml:"from"`
-	FromTLSVerify *bool    `yaml:"from-tls-verify"`
-	Tags          []string `yaml:"tags"`
+	Name          string            `yaml:"name"`
+	From          string            `yaml:"from"`
+	FromTLSVerify *bool             `yaml:"from-tls-verify"`
+	Tags          []string          `yaml:"tags"`
+	Labels        map[string]string `yaml:"labels"`
 }
 
 // Layer defines how to build the image layer.
@@ -117,6 +124,11 @@ type AnsibleCommand struct {
 
 // Publish defines where to publish the built image.
 // Multiple publishers can be specified to publish to multiple destinations.
+//
+// Only fields consumed by at least one publisher (see internal/publisher/*)
+// are listed here. Adding a field that no publisher reads creates the same
+// silent-no-op trap the previously-dropped "endpoint" and "format" keys had:
+// users would set them in YAML and watch nothing happen.
 type Publish struct {
 	Type      string `yaml:"type"`
 	URL       string `yaml:"url"`
@@ -124,8 +136,6 @@ type Publish struct {
 	Prefix    string `yaml:"prefix"`
 	Path      string `yaml:"path"`
 	TLSVerify *bool  `yaml:"tls-verify"`
-	Endpoint  string `yaml:"endpoint"`
-	Format    string `yaml:"format"`
 }
 
 // Used for switch-case so I can make things easier add in the future

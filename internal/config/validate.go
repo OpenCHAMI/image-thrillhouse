@@ -18,10 +18,11 @@ func (c *Config) Validate() error {
 // Validate checks the Meta section for required fields.
 // Required fields:
 //   - name: Image name
-//   - tag: Image tag/version
+//   - tags: At least one image tag (slice; the first tag is the "primary")
 //
 // Optional:
 //   - from: Base image (defaults to scratch if not specified)
+//   - labels: Custom OCI labels merged into the generated label set
 func (m *Meta) Validate() error {
 	if m.Name == "" {
 		return fmt.Errorf("meta.name is required")

@@ -168,6 +168,52 @@ func TestAPTImportKey(t *testing.T) {
 	}
 }
 
+// TestAPTImportKey_PositionalArgs locks in the post-fix shape: paths must be
+// passed as argv to sh (not interpolated into the script body) so that any
+// future widening of input sources can't introduce a shell-injection vector.
+func TestAPTImportKey_PositionalArgs(t *testing.T) {
+	got := APTImportKey("/mnt/root", "/host/tmp/key.bin")
+	if len(got) != 6 {
+		t.Fatalf("expected 6 argv elements (sh -c <script> $0 $1 $2), got %d: %v", len(got), got)
+	}
+	if got[0] != "sh" || got[1] != "-c" {
+		t.Fatalf("expected sh -c prefix, got %v", got[:2])
+	}
+	// The script must reference positional params, NOT contain the actual paths.
+	script := got[2]
+	if !strings.Contains(script, `"$1"`) || !strings.Contains(script, `"$2"`) {
+		t.Errorf("script does not use $1/$2 positional params: %q", script)
+	}
+	// And the paths themselves must NOT appear in the script text.
+	if strings.Contains(script, "/mnt/root") || strings.Contains(script, "/host/tmp/key.bin") {
+		t.Errorf("paths leaked into script body (injection surface): %q", script)
+	}
+	// Argv positions: $0 first, then $1 (dest), then $2 (key).
+	if got[4] != "/mnt/root/etc/apt/trusted.gpg.d/image-build-repo.gpg" {
+		t.Errorf("argv[4] (destination) = %q, want scratch-rooted path", got[4])
+	}
+	if got[5] != "/host/tmp/key.bin" {
+		t.Errorf("argv[5] (key path) = %q, want /host/tmp/key.bin", got[5])
+	}
+}
+
+// TestAPTImportKey_NoShellInjection feeds a malicious-looking path with shell
+// metacharacters; the script must remain a fixed string and the dangerous
+// bytes must only appear as argv values.
+func TestAPTImportKey_NoShellInjection(t *testing.T) {
+	malicious := `/tmp/key.bin"; rm -rf / #`
+	got := APTImportKey("", malicious)
+	script := got[2]
+	if strings.Contains(script, "rm -rf") {
+		t.Errorf("malicious bytes interpolated into script: %q", script)
+	}
+	// The malicious string still has to round-trip as the keyPath argv slot
+	// so the dearmor/cp can find the file.
+	if got[5] != malicious {
+		t.Errorf("argv[5] = %q, want verbatim malicious path %q", got[5], malicious)
+	}
+}
+
 func TestValidateOptionSchema_Unknown(t *testing.T) {
 	schema := map[string]OptionKind{"foo": OptionBool}
 	err := ValidateOptionSchema("test", map[string]string{"bar": "true"}, schema)

@@ -87,8 +87,13 @@ func (g *Generator) Generate() map[string]string {
 		labels["org.openchami.image.modules"] = strings.Join(moduleStrings, ",")
 	}
 
-	// Note: Custom labels from config would be added here if Meta.Labels field existed
-	// TODO: Add Labels map[string]string field to config.Meta if custom labels are needed
+	// Custom labels from meta.labels are applied last so they override any
+	// auto-generated label with the same key. This is the contract the
+	// docstring promises and the one consumers expect — an operator setting
+	// org.openchami.image.name in YAML wants that value, not the auto one.
+	for k, v := range g.cfg.Meta.Labels {
+		labels[k] = v
+	}
 
 	return labels
 }

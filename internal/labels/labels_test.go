@@ -162,10 +162,8 @@ func TestGenerateWithRepos(t *testing.T) {
 	}
 }
 
-// TestGenerateWithCustomLabels tests custom labels override
-// NOTE: This test is currently disabled because Meta.Labels field is not yet implemented
-// See TODO in labels.go line 91
-/*
+// TestGenerateWithCustomLabels verifies that Meta.Labels values are applied
+// on top of auto-generated labels and override colliding keys.
 func TestGenerateWithCustomLabels(t *testing.T) {
 	cfg := &config.Config{
 		Meta: config.Meta{
@@ -173,9 +171,9 @@ func TestGenerateWithCustomLabels(t *testing.T) {
 			Tags: []string{"1.0"},
 			From: "scratch",
 			Labels: map[string]string{
-				"maintainer":                  "ops@example.com",
-				"version":                     "2.0",
-				"org.openchami.image.name":    "custom-override", // Override auto-generated
+				"maintainer":               "ops@example.com",
+				"version":                  "2.0",
+				"org.openchami.image.name": "custom-override", // collides with auto
 			},
 		},
 		Layer: config.Layer{
@@ -188,21 +186,37 @@ func TestGenerateWithCustomLabels(t *testing.T) {
 	gen := New(cfg)
 	labels := gen.Generate()
 
-	// Check custom labels are present
 	if labels["maintainer"] != "ops@example.com" {
-		t.Errorf("Expected custom maintainer label")
+		t.Errorf("Expected custom maintainer label, got %q", labels["maintainer"])
 	}
-
 	if labels["version"] != "2.0" {
-		t.Errorf("Expected custom version label")
+		t.Errorf("Expected custom version label, got %q", labels["version"])
 	}
-
-	// Check override worked
 	if labels["org.openchami.image.name"] != "custom-override" {
-		t.Errorf("Expected custom label to override auto-generated label")
+		t.Errorf("Expected custom label to override auto-generated label, got %q",
+			labels["org.openchami.image.name"])
 	}
 }
-*/
+
+// TestGenerateCustomLabelsEmpty confirms an absent Meta.Labels map leaves
+// the auto-generated labels untouched (i.e. no nil-map panic on iteration).
+func TestGenerateCustomLabelsEmpty(t *testing.T) {
+	cfg := &config.Config{
+		Meta: config.Meta{
+			Name: "test-image",
+			Tags: []string{"1.0"},
+			From: "scratch",
+		},
+		Layer: config.Layer{
+			Manager: config.Manager{Name: "dnf"},
+		},
+	}
+	gen := New(cfg)
+	labels := gen.Generate()
+	if labels["org.openchami.image.name"] != "test-image" {
+		t.Errorf("auto label clobbered: name = %q", labels["org.openchami.image.name"])
+	}
+}
 
 // TestGenerateBuildDate tests build-date label format
 func TestGenerateBuildDate(t *testing.T) {
