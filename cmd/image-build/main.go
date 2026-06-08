@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/containers/buildah"
+	"go.podman.io/buildah"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"go.podman.io/storage/pkg/reexec"

@@ -6,7 +6,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/containers/buildah/define"
+	"go.podman.io/buildah/define"
 	"github.com/travisbcotton/image-build/internal/config"
 )
 

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/buildah"
-	"github.com/containers/buildah/define"
+	"go.podman.io/buildah"
+	"go.podman.io/buildah/define"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"go.podman.io/image/v5/docker"
 	"go.podman.io/image/v5/types"
