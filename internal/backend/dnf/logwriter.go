@@ -12,15 +12,22 @@ import (
 // "Installed:" section state, and collects warnings and errors. Summary
 // logging happens in Done. The buffering/Flush plumbing is provided by
 // container.LineWriter.
+//
+// The classifier carries its own *slog.Logger so summary logs go out with
+// component=backend.dnf — matches the canonical component scheme documented
+// in container/streamlog.go.
 type dnfClassifier struct {
 	installed   []string
 	warnings    []string
 	errors      []string
 	inInstalled bool
+	log         *slog.Logger
 }
 
 func newDnfWriter() *container.LineWriter {
-	return container.NewLineWriter(&dnfClassifier{})
+	return container.NewLineWriter(&dnfClassifier{
+		log: slog.With("component", "backend.dnf"),
+	})
 }
 
 // Line classifies one line of DNF output.
@@ -51,14 +58,14 @@ func (c *dnfClassifier) Done(raw string, err error) {
 	container.FlushRawDebug("dnf", raw)
 
 	if len(c.installed) > 0 {
-		slog.Info("packages installed", "packages", c.installed)
+		c.log.Info("packages installed", "packages", c.installed)
 	}
 	for _, w := range c.warnings {
-		slog.Warn("dnf warning", "msg", w)
+		c.log.Warn("dnf warning", "msg", w)
 	}
 	if err != nil {
 		for _, e := range c.errors {
-			slog.Error("dnf error", "msg", e)
+			c.log.Error("dnf error", "msg", e)
 		}
 	}
 }

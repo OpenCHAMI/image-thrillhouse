@@ -49,7 +49,7 @@ func New(path string) *SquashfsPublisher {
 //   - mksquashfs command must be available (install squashfs-tools)
 //   - Output directory must be writable
 func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
-	log := slog.With("component", "publisher")
+	log := slog.With("component", "publisher.squashfs")
 
 	// Create output directory if it doesn't exist
 	if err := os.MkdirAll(s.path, 0755); err != nil {

@@ -109,11 +109,12 @@ func (a *AptBackend) InstallCommands(install config.Install) [][]string {
 	// always update first
 	cmds = append(cmds, []string{"apt-get", "update", "-q"})
 
+	log := slog.With("component", "backend.apt")
 	if len(install.Groups) > 0 {
-		slog.Warn("apt backend does not support package groups, ignoring", "groups", install.Groups)
+		log.Warn("apt backend does not support package groups, ignoring", "groups", install.Groups)
 	}
 	if len(install.Modules) > 0 {
-		slog.Warn("apt backend does not support modules, ignoring", "modules", install.Modules)
+		log.Warn("apt backend does not support modules, ignoring", "modules", install.Modules)
 	}
 
 	if len(install.Packages) > 0 {

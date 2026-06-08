@@ -64,7 +64,7 @@ func (m *MmdebstrapBackend) ConfigFilePath() string {
 // mmdebstrap is only for scratch builds, not for installing into existing containers.
 // For parent image builds on Debian/Ubuntu, use the apt backend instead.
 func (m *MmdebstrapBackend) InstallCommands(install config.Install) [][]string {
-	slog.Warn("mmdebstrap does not support parent image installs, use apt backend instead")
+	slog.With("component", "backend.mmdebstrap").Warn("mmdebstrap does not support parent image installs, use apt backend instead")
 	return nil
 }
 

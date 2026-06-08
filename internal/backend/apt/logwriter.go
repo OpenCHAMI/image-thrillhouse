@@ -19,10 +19,13 @@ type aptClassifier struct {
 	errors             []string
 	inNewPackages      bool
 	inAdditional       bool
+	log                *slog.Logger
 }
 
 func newAptWriter() *container.LineWriter {
-	return container.NewLineWriter(&aptClassifier{})
+	return container.NewLineWriter(&aptClassifier{
+		log: slog.With("component", "backend.apt"),
+	})
 }
 
 // Line classifies a single line of apt-get output.
@@ -65,17 +68,17 @@ func (c *aptClassifier) Done(raw string, err error) {
 	container.FlushRawDebug("apt", raw)
 
 	if len(c.newPackages) > 0 {
-		slog.Info("packages installed", "packages", c.newPackages)
+		c.log.Info("packages installed", "packages", c.newPackages)
 	}
 	if len(c.additionalPackages) > 0 {
-		slog.Info("additional packages installed", "packages", c.additionalPackages)
+		c.log.Info("additional packages installed", "packages", c.additionalPackages)
 	}
 	for _, w := range c.warnings {
-		slog.Warn("apt warning", "msg", w)
+		c.log.Warn("apt warning", "msg", w)
 	}
 	if err != nil {
 		for _, e := range c.errors {
-			slog.Error("apt error", "msg", e)
+			c.log.Error("apt error", "msg", e)
 		}
 	}
 }

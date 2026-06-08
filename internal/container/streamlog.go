@@ -14,6 +14,35 @@ import (
 
 var logFormat atomic.Value // string: "json", "text", or "textblock"
 
+// Canonical component names for the "component" slog attribute.
+//
+// Every package that produces log records SHOULD attach a component value
+// from this list (typically via slog.With("component", "<name>") at the top
+// of each function). Downstream log consumers filter on it; drift across
+// packages used to mean "grep for everything related to package X" silently
+// missed records. The naming follows the Go package layout so the mapping
+// stays mechanical:
+//
+//	builder            — internal/builder/builder.go
+//	builder.ansible    — ansible sub-flow in internal/builder/ansible_incontainer.go
+//	buildah            — internal/buildah/*
+//	backend.dnf        — internal/backend/dnf/*
+//	backend.zypper     — internal/backend/zypper/*
+//	backend.apt        — internal/backend/apt/*
+//	backend.mmdebstrap — internal/backend/mmdebstrap/*
+//	publisher.local    — internal/publisher/local/*
+//	publisher.registry — internal/publisher/registry/*
+//	publisher.s3       — internal/publisher/s3/*
+//	publisher.squashfs — internal/publisher/squashfs/*
+//	oscap              — internal/oscap/*
+//	manifest           — internal/manifest/*
+//	cli                — cmd/image-build/* (user-facing CLI feedback)
+//
+// Adding a new package? Pick "<parent>.<child>" if the package is a child of
+// an existing group (e.g. publisher.foo), else use the bare package name.
+// Do NOT add a redundant secondary attribute (e.g. "backend": "dnf" alongside
+// component=backend.dnf) — the prefix already disambiguates.
+
 // SetLogFormat records the active --log-format value so stream helpers can
 // render captured command output in a way that matches the user's choice.
 // Called once from main.setupLogger after the default slog logger is set.
@@ -42,13 +71,18 @@ func LogFormat() string {
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)
 
 // FlushRawDebug is the per-backend classifier's "log the full raw output at
-// DEBUG, tagged with the backend name" call. Centralised so each backend
-// classifier doesn't need to repeat the same LogStreamBlock incantation —
-// and so the policy of NOT re-logging raw output on the error path lives in
-// one place. (Each classifier already emits parsed warnings/errors on the
-// error path; re-emitting the raw block there would just duplicate them.)
+// DEBUG, tagged with component=backend.<name>" call. Centralised so each
+// backend classifier doesn't need to repeat the same LogStreamBlock
+// incantation — and so the policy of NOT re-logging raw output on the error
+// path lives in one place. (Each classifier already emits parsed warnings/
+// errors on the error path; re-emitting the raw block there would just
+// duplicate them.)
+//
+// Emits the canonical component=backend.<name> attribute (see the
+// component-name doc-block above) so these records group with the rest of
+// each backend's logs.
 func FlushRawDebug(backend, raw string) {
-	LogStreamBlock(slog.LevelDebug, backend+" raw output", raw, "backend", backend)
+	LogStreamBlock(slog.LevelDebug, backend+" raw output", raw, "component", "backend."+backend)
 }
 
 // LogStreamBlock emits a captured command-output buffer in a format-appropriate

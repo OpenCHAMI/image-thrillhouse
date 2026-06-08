@@ -8,16 +8,22 @@ import (
 	"github.com/travisbcotton/image-build/internal/container"
 )
 
-// mmdebstrapClassifier is stateless — mmdebstrap output is line-oriented
-// with `I:`, `W:`, `E:` prefixes, so each line is classified independently.
-type mmdebstrapClassifier struct{}
+// mmdebstrapClassifier holds the per-instance slog logger so every line ends
+// up tagged with component=backend.mmdebstrap. Logic is otherwise stateless —
+// mmdebstrap output is line-oriented with `I:`, `W:`, `E:` prefixes, so each
+// line is classified independently.
+type mmdebstrapClassifier struct {
+	log *slog.Logger
+}
 
 func newMmdebstrapWriter() *container.LineWriter {
-	return container.NewLineWriter(&mmdebstrapClassifier{})
+	return container.NewLineWriter(&mmdebstrapClassifier{
+		log: slog.With("component", "backend.mmdebstrap"),
+	})
 }
 
 // Line classifies a single line of mmdebstrap output.
-func (mmdebstrapClassifier) Line(line string, hadErr bool) {
+func (c *mmdebstrapClassifier) Line(line string, hadErr bool) {
 	line = strings.TrimSpace(line)
 	if line == "" || line == "done" {
 		return
@@ -26,19 +32,19 @@ func (mmdebstrapClassifier) Line(line string, hadErr bool) {
 	case strings.HasPrefix(line, "I: "):
 		msg := strings.TrimPrefix(line, "I: ")
 		if strings.HasPrefix(msg, "success") {
-			slog.Info("mmdebstrap", "msg", msg)
+			c.log.Info("mmdebstrap", "msg", msg)
 		} else {
-			slog.Debug("mmdebstrap", "msg", msg)
+			c.log.Debug("mmdebstrap", "msg", msg)
 		}
 	case strings.HasPrefix(line, "W: "):
-		slog.Warn("mmdebstrap", "msg", strings.TrimPrefix(line, "W: "))
+		c.log.Warn("mmdebstrap", "msg", strings.TrimPrefix(line, "W: "))
 	case strings.HasPrefix(line, "E: "):
-		slog.Error("mmdebstrap", "msg", strings.TrimPrefix(line, "E: "))
+		c.log.Error("mmdebstrap", "msg", strings.TrimPrefix(line, "E: "))
 	default:
 		if hadErr {
-			slog.Error("mmdebstrap", "msg", line)
+			c.log.Error("mmdebstrap", "msg", line)
 		} else {
-			slog.Debug("mmdebstrap", "msg", line)
+			c.log.Debug("mmdebstrap", "msg", line)
 		}
 	}
 }
@@ -46,6 +52,6 @@ func (mmdebstrapClassifier) Line(line string, hadErr bool) {
 // Done logs raw output for consistency with other backends. mmdebstrap
 // already logs line-by-line in Line(), but FlushRawDebug ensures the full
 // buffer is available at DEBUG for post-mortem.
-func (mmdebstrapClassifier) Done(raw string, err error) {
+func (c *mmdebstrapClassifier) Done(raw string, err error) {
 	container.FlushRawDebug("mmdebstrap", raw)
 }

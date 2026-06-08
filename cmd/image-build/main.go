@@ -534,7 +534,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid backend: %w", err)
 	}
 
-	slog.Info("config is valid", "path", validateConfigPath)
+	slog.With("component", "cli").Info("config is valid", "path", validateConfigPath)
 	return nil
 }
 
@@ -609,7 +609,7 @@ func runRender(cmd *cobra.Command, args []string) error {
 		if err := os.WriteFile(renderOutput, []byte(rendered), 0644); err != nil {
 			return fmt.Errorf("write output: %w", err)
 		}
-		slog.Info("rendered config written", "path", renderOutput)
+		slog.With("component", "cli").Info("rendered config written", "path", renderOutput)
 	} else {
 		fmt.Print(rendered)
 	}

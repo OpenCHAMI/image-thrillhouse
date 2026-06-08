@@ -77,6 +77,7 @@ func (b *Builder) SetSkipIfExists(v bool) {
 // Returns an error if any step fails. The container is automatically
 // cleaned up via defer, even if the build fails.
 func (b *Builder) Build(ctx context.Context) error {
+	log := slog.With("component", "builder")
 
 	if b.skipIfExists {
 		exists, err := b.allExist(ctx, b.cfg.Meta.Name, b.cfg.Meta.Tags)
@@ -84,7 +85,7 @@ func (b *Builder) Build(ctx context.Context) error {
 			return fmt.Errorf("check exists: %w", err)
 		}
 		if exists {
-			slog.Info("skipping build, image already exists",
+			log.Info("skipping build, image already exists",
 				"name", b.cfg.Meta.Name,
 				"tags", b.cfg.Meta.Tags)
 			return nil
@@ -97,7 +98,6 @@ func (b *Builder) Build(ctx context.Context) error {
 	}
 	defer c.Delete() // Always clean up the container when done
 
-	log := slog.With("component", "builder")
 	log.Debug("Created container", "id", c.GetID(), "name", c.GetName(), "from", c.GetParent())
 
 	// Apply package manager configuration (e.g., dnf.conf)

@@ -49,13 +49,14 @@ func New(url string, tlsVerify bool) *RegistryPublisher {
 // Labels should be applied to the container before calling this method.
 // This publisher doesn't apply labels itself; it pushes what's already in the container.
 func (r *RegistryPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
+	log := slog.With("component", "publisher.registry")
 	for _, t := range tags {
 		ref := fmt.Sprintf("%s/%s:%s", r.url, name, t)
-		slog.Info("pushing to registry", "ref", ref)
+		log.Info("pushing to registry", "ref", ref)
 		if err := c.CommitToRegistry(ctx, ref, r.tlsVerify); err != nil {
 			return fmt.Errorf("push %s: %w", ref, err)
 		}
-		slog.Info("pushed to registry", "ref", ref)
+		log.Info("pushed to registry", "ref", ref)
 	}
 	return nil
 }

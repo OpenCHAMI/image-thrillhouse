@@ -105,7 +105,7 @@ func NewContainer(ctx context.Context, name string, from string, tlsverify bool)
 		// Builder construction failed, so there's nothing buildah-side to
 		// release — but the store handle we opened above is ours to close.
 		if _, shutErr := store.Shutdown(false); shutErr != nil {
-			slog.With("component", "container").Warn("store shutdown after builder failure", "error", shutErr)
+			slog.With("component", "buildah").Warn("store shutdown after builder failure", "error", shutErr)
 		}
 		return nil, fmt.Errorf("new builder: %w", err)
 	}
@@ -115,7 +115,7 @@ func NewContainer(ctx context.Context, name string, from string, tlsverify bool)
 		// Roll back the partially-initialised container so we don't leak a
 		// buildah-side container row and a held-open store handle on every
 		// failed startup.
-		log := slog.With("component", "container")
+		log := slog.With("component", "buildah")
 		if delErr := builder.Delete(); delErr != nil {
 			log.Warn("builder delete after mount failure", "error", delErr)
 		}
@@ -271,7 +271,7 @@ func (c *Container) RunScript(ctx context.Context, script string, out container.
 	// produced. Routing through /bin/sh lets the shell parse the file.
 	runErr := c.Run(ctx, []string{"/bin/sh", tmpPath}, container.RunModeContainer, out, opts...)
 	if runErr != nil {
-		slog.With("component", "container").Error("script failed", "path", tmpPath, "script", script)
+		slog.With("component", "buildah").Error("script failed", "path", tmpPath, "script", script)
 	}
 
 	// Cleanup always runs so we don't leave script files behind in the layer.
@@ -279,7 +279,7 @@ func (c *Container) RunScript(ctx context.Context, script string, out container.
 	// status — masking the real error here was the previous behaviour and it
 	// hid genuine script failures behind "cleanup script" errors.
 	if rmErr := c.Run(ctx, []string{"rm", tmpPath}, container.RunModeContainer, out); rmErr != nil {
-		slog.With("component", "container").Warn("cleanup script (continuing)", "path", tmpPath, "error", rmErr)
+		slog.With("component", "buildah").Warn("cleanup script (continuing)", "path", tmpPath, "error", rmErr)
 	}
 
 	if runErr != nil {
@@ -303,7 +303,7 @@ func (c *Container) WriteFile(ctx context.Context, file config.File) error {
 	}
 	var content []byte
 	var err error
-	log := slog.With("component", "container")
+	log := slog.With("component", "buildah")
 	switch {
 	case file.Content != "":
 		// yaml scalar block or string
@@ -364,7 +364,7 @@ func (c *Container) WriteFile(ctx context.Context, file config.File) error {
 //
 // The directory contents are copied recursively, preserving the directory structure.
 func (c *Container) CopyDirectory(ctx context.Context, srcDir, destDir string) error {
-	log := slog.With("component", "container")
+	log := slog.With("component", "buildah")
 	
 	// Validate source directory exists
 	info, err := os.Stat(srcDir)
@@ -419,7 +419,7 @@ func (c *Container) CommitWithLabels(ctx context.Context, name, tag string, labe
 //
 // Returns the container ID on success.
 func (c *Container) CommitWithLabelsTags(ctx context.Context, name string, tags []string, labels map[string]string) (string, error) {
-	log := slog.With("component", "container")
+	log := slog.With("component", "buildah")
 	log.Debug("Commit Container", "ID", c.GetID(), "Name", c.GetName(), "name", name, "tags", tags, "labels", len(labels))
 
 	if len(tags) == 0 {
@@ -455,7 +455,7 @@ func (c *Container) CommitWithLabelsTags(ctx context.Context, name string, tags 
 // don't compound a partial leak. Failures are logged at WARN — silent failure
 // here was masking storage leaks that only surfaced as disk pressure days later.
 func (c *Container) Delete() {
-	log := slog.With("component", "container")
+	log := slog.With("component", "buildah")
 	log.Debug("Deleting Container", "ID", c.GetID(), "Name", c.GetName())
 	if err := c.Builder.Unmount(); err != nil {
 		log.Warn("unmount container", "id", c.GetID(), "error", err)

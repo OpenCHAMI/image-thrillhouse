@@ -121,7 +121,7 @@ type ansibleStreamWriter struct {
 
 func newAnsibleStreamWriter() *ansibleStreamWriter {
 	return &ansibleStreamWriter{
-		log: slog.With("component", "ansible"),
+		log: slog.With("component", "builder.ansible"),
 	}
 }
 
@@ -238,7 +238,7 @@ const (
 // for the duration of the run. Everything is cleaned up via defer on the
 // host, so no temporary state is committed into the image layer.
 func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, ansible *config.AnsibleCommand) error {
-	log := slog.With("component", "builder", "subsystem", "ansible")
+	log := slog.With("component", "builder.ansible")
 
 	// Step 1: Verify Ansible is installed in the container.
 	log.Debug("Verifying Ansible installation")
@@ -401,7 +401,7 @@ func (b *Builder) executeAnsiblePlaybook(
 	hasRoles bool,
 	inventoryHost string,
 ) error {
-	log := slog.With("component", "builder", "subsystem", "ansible")
+	log := slog.With("component", "builder.ansible")
 
 	// Container-side paths. localhostInv is read before any user inventory.
 	localhostInv := stageEtcPath + "/00-generated-localhost"
