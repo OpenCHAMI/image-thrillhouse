@@ -20,10 +20,13 @@ type zypperClassifier struct {
 	errors        []string
 	inNewPackages bool
 	inOther       bool
+	log           *slog.Logger
 }
 
 func newZypperWriter() *container.LineWriter {
-	return container.NewLineWriter(&zypperClassifier{})
+	return container.NewLineWriter(&zypperClassifier{
+		log: slog.With("component", "backend.zypper"),
+	})
 }
 
 // Line classifies one line of Zypper output.
@@ -52,7 +55,7 @@ func (c *zypperClassifier) Line(line string, hadErr bool) {
 	case strings.HasPrefix(trimmed, "No provider of"):
 		c.errors = append(c.errors, trimmed)
 	case strings.HasPrefix(trimmed, "Overall download size:"):
-		slog.Info("zypper", "msg", trimmed)
+		c.log.Info("zypper", "msg", trimmed)
 	case strings.HasPrefix(trimmed, "Continue?"):
 		// suppress
 	}
@@ -64,11 +67,11 @@ func (c *zypperClassifier) Done(raw string, err error) {
 	container.FlushRawDebug("zypper", raw)
 
 	if len(c.newPackages) > 0 {
-		slog.Info("packages installed", "packages", c.newPackages)
+		c.log.Info("packages installed", "packages", c.newPackages)
 	}
 	if err != nil {
 		for _, e := range c.errors {
-			slog.Error("zypper error", "msg", e)
+			c.log.Error("zypper error", "msg", e)
 		}
 	}
 }

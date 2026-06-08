@@ -26,7 +26,7 @@ func New() *LocalPublisher {
 //
 // The image is tagged as "localhost/<name>:<tag>" in the local container storage.
 func (l *LocalPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
-	log := slog.With("component", "publisher")
+	log := slog.With("component", "publisher.local")
 	if len(tags) == 0 {
 		return fmt.Errorf("local publisher requires at least one tag")
 	}

@@ -249,7 +249,7 @@ func (d *DnfBackend) ImportGPGKeyCommand(keyPath string, rootPath string) []stri
 // but not fatal — the install step will fail with a clearer error if any
 // of these are truly required.
 func (d *DnfBackend) Bootstrap(ctx context.Context, c container.Container, rootPath string) error {
-	log := slog.With("component", "backend", "backend", "dnf")
+	log := slog.With("component", "backend.dnf")
 
 	// Pre-create the base directory skeleton — DNF's filesystem package
 	// will otherwise stumble trying to unpack on top of nothing.

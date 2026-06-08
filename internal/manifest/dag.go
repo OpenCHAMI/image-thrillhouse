@@ -183,6 +183,7 @@ func combineVarFiles(globals, layerSpecific []string) []string {
 // globalVarFiles must be only the CLI-level globals; layer var files are
 // applied inside ComputeTag.
 func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string) (map[string]interface{}, error) {
+	log := slog.With("component", "manifest")
 	layer, err := dag.Get(layerName)
 	if err != nil {
 		return nil, fmt.Errorf("get layer: %w", err)
@@ -195,7 +196,7 @@ func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string) (map[
 		return nil, fmt.Errorf("compute tag for %s: %w", layerName, err)
 	}
 	vars["tag"] = layerTag
-	slog.Info("computed tag", "layer", layerName, "tag", layerTag)
+	log.Info("computed tag", "layer", layerName, "tag", layerTag)
 
 	for _, depName := range layer.DependsOn {
 		depTag, err := dag.ComputeTag(depName, globalVarFiles)
@@ -204,7 +205,7 @@ func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string) (map[
 		}
 		varName := strings.ReplaceAll(depName, "-", "_") + "_tag"
 		vars[varName] = depTag
-		slog.Debug("computed parent tag", "layer", depName, "var", varName, "tag", depTag)
+		log.Debug("computed parent tag", "layer", depName, "var", varName, "tag", depTag)
 	}
 
 	// Singular parent_tag alias when the layer has exactly one direct

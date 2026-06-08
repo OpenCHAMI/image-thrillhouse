@@ -67,7 +67,7 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	// Use the first tag for the image name
 	tag := tags[0]
 
-	log := slog.With("component", "publisher", "type", "s3")
+	log := slog.With("component", "publisher.s3")
 	log.Info("Publishing to S3", "bucket", s.bucket, "prefix", s.prefix)
 
 	mountPath := c.MountPath()
