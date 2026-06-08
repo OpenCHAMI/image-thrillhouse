@@ -115,6 +115,53 @@ func TestFetchOVAL_Bzip2Corrupt(t *testing.T) {
 	}
 }
 
+func TestFetchOVAL_CompressedCap(t *testing.T) {
+	// Shrink the cap so the test moves kilobytes, not hundreds of MB.
+	prev := maxOVALCompressed
+	maxOVALCompressed = 1024
+	t.Cleanup(func() { maxOVALCompressed = prev })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Serve plain (non-bz2) bytes one over the compressed cap.
+		w.Write(make([]byte, maxOVALCompressed+1))
+	}))
+	defer srv.Close()
+
+	_, err := fetchOVAL(context.Background(), srv.URL)
+	if err == nil {
+		t.Fatal("expected size-cap error, got nil")
+	}
+	if !strings.Contains(err.Error(), "cap") {
+		t.Errorf("expected error to mention the cap, got: %v", err)
+	}
+}
+
+func TestFetchOVAL_DecompressedCap(t *testing.T) {
+	// The embedded bzip2 fixture decompresses to 11 bytes ("hello oval\n").
+	// Shrink the decompressed cap below that so the cap kicks in even on
+	// a tiny payload.
+	prev := maxOVALDecompressed
+	maxOVALDecompressed = 5
+	t.Cleanup(func() { maxOVALDecompressed = prev })
+
+	body, err := hex.DecodeString(helloOVALBz2Hex)
+	if err != nil {
+		t.Fatalf("hex decode fixture: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(body)
+	}))
+	defer srv.Close()
+
+	_, err = fetchOVAL(context.Background(), srv.URL)
+	if err == nil {
+		t.Fatal("expected decompressed-cap error, got nil")
+	}
+	if !strings.Contains(err.Error(), "decompressed") {
+		t.Errorf("expected error to mention 'decompressed', got: %v", err)
+	}
+}
+
 func TestFetchOVAL_ContextCancelled(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Block until the test cancels.

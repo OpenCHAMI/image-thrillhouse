@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
+	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"go.podman.io/buildah"
 	"go.podman.io/buildah/define"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"go.podman.io/image/v5/docker"
 	"go.podman.io/image/v5/types"
 	"go.podman.io/storage"
@@ -365,7 +365,7 @@ func (c *Container) WriteFile(ctx context.Context, file config.File) error {
 // The directory contents are copied recursively, preserving the directory structure.
 func (c *Container) CopyDirectory(ctx context.Context, srcDir, destDir string) error {
 	log := slog.With("component", "buildah")
-	
+
 	// Validate source directory exists
 	info, err := os.Stat(srcDir)
 	if err != nil {

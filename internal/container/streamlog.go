@@ -113,7 +113,7 @@ func LogStreamBlock(level slog.Level, msg, raw string, attrs ...any) {
 	}
 	format := currentLogFormat()
 	if format == "text" || format == "textblock" {
-		slog.Log(nil, level, msg, attrs...)
+		slog.Log(context.Background(), level, msg, attrs...)
 		writeTextBlock(lines)
 		return
 	}
@@ -164,11 +164,23 @@ func writeTextBlock(lines []string) {
 
 // TextBlockHandler is a custom slog.Handler that formats logs in a clean,
 // human-readable format without timestamps, suitable for textblock mode.
+//
+// Groups are tracked as a stack so that interleaved With/WithGroup calls
+// produce the dotted keys that slog's interface contract requires:
+//
+//	logger.WithGroup("a").With("k", 1)               // → a.k=1
+//	logger.With("k", 1).WithGroup("a").With("j", 2)  // → k=1, a.j=2
+//	logger.WithGroup("a").WithGroup("b").With("k",1) // → a.b.k=1
+//
+// Handler-level attrs are stored already-prefixed (the prefix is baked in at
+// WithAttrs time); record-level attrs get the current prefix applied in
+// Handle. slog.Group(...) record attributes are NOT recursively flattened —
+// the only consumer in this codebase emits flat key/value pairs.
 type TextBlockHandler struct {
-	opts  slog.HandlerOptions
-	w     io.Writer
-	attrs []slog.Attr
-	group string
+	opts   slog.HandlerOptions
+	w      io.Writer
+	attrs  []slog.Attr
+	groups []string // active group stack; "" prefix when empty
 }
 
 // NewTextBlockHandler creates a new TextBlockHandler.
@@ -211,7 +223,7 @@ func (h *TextBlockHandler) Handle(_ context.Context, r slog.Record) error {
 
 	// Now emit the textblock with message and attributes
 	fmt.Fprintln(buf, "┌──── output ────")
-	
+
 	// Start with the message
 	if r.Message != "" {
 		msgLines := strings.Split(r.Message, "\n")
@@ -219,15 +231,22 @@ func (h *TextBlockHandler) Handle(_ context.Context, r slog.Record) error {
 			fmt.Fprintf(buf, "| %s\n", line)
 		}
 	}
-	
-	// Add record attributes in the textblock
+
+	// Add record attributes in the textblock. Record-level attrs get the
+	// active group prefix applied here (handler-level attrs in h.attrs were
+	// already prefixed at WithAttrs time).
+	prefix := h.groupPrefix()
 	r.Attrs(func(a slog.Attr) bool {
-		if a.Key != "" {
-			h.appendAttrInBlock(buf, a)
+		if a.Key == "" {
+			return true
 		}
+		if prefix != "" {
+			a = slog.Attr{Key: prefix + a.Key, Value: a.Value}
+		}
+		h.appendAttrInBlock(buf, a)
 		return true
 	})
-	
+
 	fmt.Fprintln(buf, "└────────────────")
 
 	return buf.Flush()
@@ -265,7 +284,7 @@ func (h *TextBlockHandler) appendAttrInBlock(buf *bufio.Writer, a slog.Attr) {
 		// For structs and other types, format them inline with reflection
 		// Check if it's a struct with fields we can extract
 		valStr := fmt.Sprintf("%v", val)
-		
+
 		// Check if this looks like a struct (starts with {)
 		if strings.HasPrefix(valStr, "{") {
 			// Parse struct fields and pretty-print them
@@ -283,16 +302,16 @@ func (h *TextBlockHandler) appendAttrInBlock(buf *bufio.Writer, a slog.Attr) {
 func (h *TextBlockHandler) formatStructInBlock(buf *bufio.Writer, key, valStr string) {
 	// For a struct like {[bash systemd kernel] [] [] []}, extract the arrays
 	fmt.Fprintf(buf, "| %s=\n", key)
-	
+
 	// Simple parser for struct format: {[item1 item2] [item3]}
 	// Remove outer braces
 	valStr = strings.TrimPrefix(valStr, "{")
 	valStr = strings.TrimSuffix(valStr, "}")
-	
+
 	// Split by brackets to find arrays
 	inBracket := false
 	currentArray := strings.Builder{}
-	
+
 	for _, ch := range valStr {
 		switch ch {
 		case '[':
@@ -324,13 +343,13 @@ func (h *TextBlockHandler) formatMultilineString(buf *bufio.Writer, key, val str
 	// Write the key with an indented sub-block
 	fmt.Fprintf(buf, "| %s=\n", key)
 	fmt.Fprintln(buf, "| ┌─────")
-	
+
 	// Split the string by newlines and write each line with extra indentation
 	lines := strings.Split(val, "\n")
 	for _, line := range lines {
 		fmt.Fprintf(buf, "| │ %s\n", line)
 	}
-	
+
 	fmt.Fprintln(buf, "| └─────")
 }
 
@@ -358,32 +377,54 @@ func (h *TextBlockHandler) appendValue(buf *bufio.Writer, v slog.Value) {
 	}
 }
 
-// WithAttrs returns a new handler with additional attributes.
+// groupPrefix returns the dotted prefix to apply to attribute keys given
+// the currently-open group stack. Empty string means no active group.
+func (h *TextBlockHandler) groupPrefix() string {
+	if len(h.groups) == 0 {
+		return ""
+	}
+	return strings.Join(h.groups, ".") + "."
+}
+
+// WithAttrs returns a new handler with additional attributes. The current
+// group prefix is baked into each attr's key at this point — that way the
+// caller's ordering of With/WithGroup determines whether an attr is "inside"
+// the group, which is what slog's interface contract requires.
 func (h *TextBlockHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	newAttrs := make([]slog.Attr, len(h.attrs)+len(attrs))
+	prefix := h.groupPrefix()
+	newAttrs := make([]slog.Attr, len(h.attrs), len(h.attrs)+len(attrs))
 	copy(newAttrs, h.attrs)
-	copy(newAttrs[len(h.attrs):], attrs)
+	for _, a := range attrs {
+		if a.Key == "" {
+			continue
+		}
+		newAttrs = append(newAttrs, slog.Attr{
+			Key:   prefix + a.Key,
+			Value: a.Value,
+		})
+	}
 	return &TextBlockHandler{
-		opts:  h.opts,
-		w:     h.w,
-		attrs: newAttrs,
-		group: h.group,
+		opts:   h.opts,
+		w:      h.w,
+		attrs:  newAttrs,
+		groups: h.groups,
 	}
 }
 
-// WithGroup returns a new handler with the given group name.
+// WithGroup pushes a name onto the group stack. The new prefix applies to
+// every subsequent WithAttrs call and to record-level attrs emitted through
+// the returned handler. An empty name is a no-op per the slog contract.
 func (h *TextBlockHandler) WithGroup(name string) slog.Handler {
 	if name == "" {
 		return h
 	}
-	newGroup := name
-	if h.group != "" {
-		newGroup = h.group + "." + name
-	}
+	newGroups := make([]string, len(h.groups), len(h.groups)+1)
+	copy(newGroups, h.groups)
+	newGroups = append(newGroups, name)
 	return &TextBlockHandler{
-		opts:  h.opts,
-		w:     h.w,
-		attrs: h.attrs,
-		group: newGroup,
+		opts:   h.opts,
+		w:      h.w,
+		attrs:  h.attrs,
+		groups: newGroups,
 	}
 }

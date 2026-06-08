@@ -200,3 +200,78 @@ func TestTextBlockHandler_MixedAttributes(t *testing.T) {
 		t.Errorf("Expected script line 3")
 	}
 }
+
+// TestTextBlockHandler_WithGroup_PrefixesRecordAttrs verifies that
+// WithGroup("g") makes subsequent record-level attrs render as g.<key>.
+func TestTextBlockHandler_WithGroup_PrefixesRecordAttrs(t *testing.T) {
+	var buf bytes.Buffer
+	handler := NewTextBlockHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	logger := slog.New(handler).WithGroup("svc")
+
+	logger.Info("hello", "name", "alice", "count", 3)
+
+	output := buf.String()
+	if !strings.Contains(output, `| svc.name="alice"`) {
+		t.Errorf("expected 'svc.name=\"alice\"' in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "| svc.count=3") {
+		t.Errorf("expected 'svc.count=3' in output, got:\n%s", output)
+	}
+}
+
+// TestTextBlockHandler_WithGroup_PrefixesHandlerAttrs verifies that attrs
+// added AFTER WithGroup are baked-in with the group prefix.
+func TestTextBlockHandler_WithGroup_PrefixesHandlerAttrs(t *testing.T) {
+	var buf bytes.Buffer
+	handler := NewTextBlockHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	// component is added FIRST (no group), then WithGroup, then svc-level
+	// attrs. The component attribute must remain bare; svc-level attrs must
+	// be prefixed.
+	logger := slog.New(handler).
+		With("component", "test").
+		WithGroup("svc").
+		With("region", "us-east-1")
+
+	logger.Info("hello")
+
+	output := buf.String()
+	if !strings.Contains(output, `component="test"`) {
+		t.Errorf("pre-group component attr must NOT be prefixed, got:\n%s", output)
+	}
+	if !strings.Contains(output, `svc.region="us-east-1"`) {
+		t.Errorf("post-group attr must be prefixed, got:\n%s", output)
+	}
+}
+
+// TestTextBlockHandler_NestedGroups verifies that chained WithGroup calls
+// produce dotted nested prefixes (a.b.key).
+func TestTextBlockHandler_NestedGroups(t *testing.T) {
+	var buf bytes.Buffer
+	handler := NewTextBlockHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	logger := slog.New(handler).WithGroup("a").WithGroup("b")
+
+	logger.Info("hello", "k", 1)
+
+	output := buf.String()
+	if !strings.Contains(output, "| a.b.k=1") {
+		t.Errorf("expected nested prefix 'a.b.k=1', got:\n%s", output)
+	}
+}
+
+// TestTextBlockHandler_EmptyGroupNoop verifies WithGroup("") returns the
+// receiver unchanged (per slog interface contract).
+func TestTextBlockHandler_EmptyGroupNoop(t *testing.T) {
+	var buf bytes.Buffer
+	handler := NewTextBlockHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	logger := slog.New(handler).WithGroup("")
+
+	logger.Info("hello", "k", 1)
+
+	output := buf.String()
+	if !strings.Contains(output, "| k=1") {
+		t.Errorf("empty WithGroup should not prefix, got:\n%s", output)
+	}
+	if strings.Contains(output, ".k=") {
+		t.Errorf("empty WithGroup should not produce a prefix, got:\n%s", output)
+	}
+}

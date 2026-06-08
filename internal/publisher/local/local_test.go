@@ -15,7 +15,7 @@ func TestNew(t *testing.T) {
 // We'll test the structure here, integration tests would test actual commits
 func TestLocalPublisher_Type(t *testing.T) {
 	pub := New()
-	
+
 	// Verify it's the correct type
 	if _, ok := interface{}(pub).(*LocalPublisher); !ok {
 		t.Error("New() did not return *LocalPublisher")

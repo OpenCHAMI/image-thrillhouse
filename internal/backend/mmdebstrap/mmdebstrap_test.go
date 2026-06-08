@@ -107,7 +107,7 @@ func TestInstallCommands(t *testing.T) {
 	}
 
 	cmds := backend.InstallCommands(install)
-	
+
 	// mmdebstrap does not support parent installs, should return nil
 	if cmds != nil {
 		t.Error("mmdebstrap should not support InstallCommands (use apt for parent builds)")
@@ -187,13 +187,13 @@ func TestInstallRootCommandsStructure(t *testing.T) {
 	}
 
 	cmds := backend.InstallRootCommands(install, rootPath)
-	
+
 	if len(cmds) != 1 {
 		t.Fatalf("Expected 1 command, got %d", len(cmds))
 	}
 
 	cmd := cmds[0]
-	
+
 	// Check command starts with mmdebstrap
 	if cmd[0] != "mmdebstrap" {
 		t.Errorf("Expected command to start with 'mmdebstrap', got '%s'", cmd[0])
@@ -354,7 +354,7 @@ func TestOutputWriter(t *testing.T) {
 		"suite":  "bookworm",
 		"mirror": "http://deb.debian.org/debian",
 	})
-	
+
 	writer := backend.OutputWriter()
 	if writer == nil {
 		t.Error("OutputWriter() returned nil")
@@ -372,13 +372,13 @@ func TestPackageListFormatting(t *testing.T) {
 	}
 
 	cmds := backend.InstallRootCommands(install, "/mnt")
-	
+
 	if len(cmds) != 1 {
 		t.Fatalf("Expected 1 command, got %d", len(cmds))
 	}
 
 	cmd := cmds[0]
-	
+
 	// Find the --include flag
 	var includeArg string
 	for _, arg := range cmd {

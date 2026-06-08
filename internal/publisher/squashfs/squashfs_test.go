@@ -38,7 +38,7 @@ func TestNew(t *testing.T) {
 
 func TestSquashfsPublisher_Type(t *testing.T) {
 	pub := New("/output")
-	
+
 	if _, ok := interface{}(pub).(*SquashfsPublisher); !ok {
 		t.Error("New() did not return *SquashfsPublisher")
 	}

@@ -6,8 +6,8 @@ import (
 	"context"
 	"io"
 
-	"go.podman.io/buildah/define"
 	"github.com/travisbcotton/image-build/internal/config"
+	"go.podman.io/buildah/define"
 )
 
 // RunMode specifies how a command should be executed.
@@ -81,18 +81,18 @@ type Container interface {
 	// RunOptions (e.g. WithEnv) are forwarded to the underlying script
 	// execution step.
 	RunScript(ctx context.Context, script string, out OutputWriter, opts ...RunOption) error
-	
+
 	// WriteFile writes a file into the container filesystem. The context is
 	// used for any network fetches (when File.URL is set) and for cancellation
 	// of the underlying buildah Add operation.
 	WriteFile(ctx context.Context, file config.File) error
-	
+
 	// CopyDirectory copies an entire directory from the host to the container.
 	// This is much faster than walking and copying individual files.
 	// srcDir is the source directory path on the host.
 	// destDir is the destination directory path in the container.
 	CopyDirectory(ctx context.Context, srcDir, destDir string) error
-	
+
 	// Commit commits the container to local storage with the given name and tag
 	Commit(ctx context.Context, name, tag string) (string, error)
 
@@ -103,7 +103,7 @@ type Container interface {
 	// at the same time. This is significantly cheaper than calling
 	// CommitWithLabels in a loop, which writes the layer to storage per tag.
 	CommitWithLabelsTags(ctx context.Context, name string, tags []string, labels map[string]string) (string, error)
-	
+
 	// GetID returns the container ID
 	GetID() string
 
@@ -112,16 +112,16 @@ type Container interface {
 
 	// GetName returns the container name
 	GetName() string
-	
+
 	// Delete removes the container and frees resources
 	Delete()
-	
+
 	// MountPath returns the filesystem path where the container is mounted
 	MountPath() string
-	
+
 	// GetIsolation returns the isolation mode for running commands
 	GetIsolation() define.Isolation
-	
+
 	// CommitToRegistry commits the container directly to a remote registry
 	CommitToRegistry(ctx context.Context, ref string, tlsVerify bool) error
 }
