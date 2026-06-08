@@ -136,21 +136,21 @@ func TestResolveConfigPath_AbsoluteUnchanged(t *testing.T) {
 	}
 }
 
-func TestResolveConfigPath_RelativeJoinedToConfigDir(t *testing.T) {
+func TestResolveConfigPath_RelativeUnchanged(t *testing.T) {
+	// Relative paths are now returned as-is and resolve relative to CWD
 	b := &Builder{cfgPath: "/configs/sub/foo.yaml"}
 	got := b.resolveConfigPath("roles")
-	want := "/configs/sub/roles"
+	want := "roles"
 	if got != want {
 		t.Errorf("resolveConfigPath = %q, want %q", got, want)
 	}
 }
 
-func TestResolveConfigPath_NoCfgPathFallsBackToCWD(t *testing.T) {
-	// When cfgPath is empty (in-memory config), we return the path as-is so
-	// it resolves relative to CWD — matches the documented behaviour.
+func TestResolveConfigPath_AlwaysUsesCWD(t *testing.T) {
+	// All relative paths resolve relative to CWD, regardless of cfgPath
 	b := &Builder{cfgPath: ""}
 	got := b.resolveConfigPath("playbook.yaml")
 	if got != "playbook.yaml" {
-		t.Errorf("empty cfgPath should not rewrite path, got %q", got)
+		t.Errorf("relative path should be unchanged, got %q", got)
 	}
 }
