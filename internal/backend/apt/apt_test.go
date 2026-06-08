@@ -82,7 +82,7 @@ func TestNewWithOptions(t *testing.T) {
 func TestConfigFilePath(t *testing.T) {
 	backend := New(nil)
 	expected := "/etc/apt/apt.conf.d/99-image-build.conf"
-	
+
 	if got := backend.ConfigFilePath(); got != expected {
 		t.Errorf("ConfigFilePath() = %v, want %v", got, expected)
 	}
@@ -163,7 +163,7 @@ func TestInstallCommandsStructure(t *testing.T) {
 	}
 
 	cmds := backend.InstallCommands(install)
-	
+
 	if len(cmds) < 2 {
 		t.Fatalf("Expected at least 2 commands (update + install), got %d", len(cmds))
 	}
@@ -176,7 +176,7 @@ func TestInstallCommandsStructure(t *testing.T) {
 
 	// Check install command
 	installCmd := cmds[1]
-	
+
 	// Check command starts with apt-get
 	if installCmd[0] != "apt-get" {
 		t.Errorf("Expected command to start with 'apt-get', got '%s'", installCmd[0])
@@ -224,27 +224,27 @@ func TestInstallCommandsStructure(t *testing.T) {
 
 func TestInstallCommandsWithOptions(t *testing.T) {
 	tests := []struct {
-		name             string
-		options          map[string]string
-		wantRecommends   bool
-		wantSuggests     bool
-		wantUnauth       bool
+		name           string
+		options        map[string]string
+		wantRecommends bool
+		wantSuggests   bool
+		wantUnauth     bool
 	}{
 		{
-			name:             "default options",
-			options:          nil,
-			wantRecommends:   false,
-			wantSuggests:     false,
-			wantUnauth:       false,
+			name:           "default options",
+			options:        nil,
+			wantRecommends: false,
+			wantSuggests:   false,
+			wantUnauth:     false,
 		},
 		{
 			name: "install-recommends true",
 			options: map[string]string{
 				"install-recommends": "true",
 			},
-			wantRecommends:   true,
-			wantSuggests:     false,
-			wantUnauth:       false,
+			wantRecommends: true,
+			wantSuggests:   false,
+			wantUnauth:     false,
 		},
 		{
 			name: "all options enabled",
@@ -253,9 +253,9 @@ func TestInstallCommandsWithOptions(t *testing.T) {
 				"install-suggests":      "true",
 				"allow-unauthenticated": "true",
 			},
-			wantRecommends:   true,
-			wantSuggests:     true,
-			wantUnauth:       true,
+			wantRecommends: true,
+			wantSuggests:   true,
+			wantUnauth:     true,
 		},
 	}
 
@@ -327,7 +327,7 @@ func TestInstallRootCommands(t *testing.T) {
 	}
 
 	cmds := backend.InstallRootCommands(install, rootPath)
-	
+
 	// APT does not support installroot, should return nil
 	if cmds != nil {
 		t.Error("APT should not support InstallRootCommands (use mmdebstrap for scratch builds)")
@@ -395,7 +395,7 @@ func TestValidateOptions(t *testing.T) {
 
 func TestOutputWriter(t *testing.T) {
 	backend := New(nil)
-	
+
 	writer := backend.OutputWriter()
 	if writer == nil {
 		t.Error("OutputWriter() returned nil")
@@ -414,7 +414,7 @@ func TestInstallCommandsIgnoresGroupsAndModules(t *testing.T) {
 	}
 
 	cmds := backend.InstallCommands(install)
-	
+
 	// Should only have update + install commands (groups and modules ignored)
 	if len(cmds) != 2 {
 		t.Errorf("Expected 2 commands (update + install), got %d", len(cmds))

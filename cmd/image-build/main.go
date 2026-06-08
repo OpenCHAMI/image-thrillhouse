@@ -9,9 +9,9 @@ import (
 	"log/slog"
 	"os"
 
-	"go.podman.io/buildah"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"go.podman.io/buildah"
 	"go.podman.io/storage/pkg/reexec"
 	"go.podman.io/storage/pkg/unshare"
 

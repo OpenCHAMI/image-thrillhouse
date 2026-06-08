@@ -26,7 +26,6 @@ func RunScriptCmd(ctx context.Context, c Container, script string, opts ...RunOp
 	return c.RunScript(ctx, script, NewBufLogWriter("stdout"), opts...)
 }
 
-
 // BufLogWriter is a thread-safe buffered writer that logs output line-by-line.
 // It buffers all writes and logs them when Flush is called.
 // Used for capturing and logging command output from containers.
