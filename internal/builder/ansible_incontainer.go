@@ -280,7 +280,7 @@ func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, 
 		}
 		if _, err := os.Stat(inventoryHost); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("inventory path not found: %s (paths are resolved relative to the config file)", inventoryHost)
+				return fmt.Errorf("inventory path not found: %s (paths are resolved relative to the current working directory)", inventoryHost)
 			}
 			return fmt.Errorf("stat inventory %s: %w", inventoryHost, err)
 		}
@@ -305,15 +305,14 @@ func (b *Builder) verifyAnsibleInstalled(ctx context.Context, c container.Contai
 }
 
 // resolveConfigPath resolves a path from the config file (e.g.
-// ansible.playbook, ansible.inventory, ansible.roles) against the directory
-// of the config file. Absolute paths are returned unchanged. If the Builder
-// has no config path (cfgPath == ""), the path is returned unchanged so it
-// resolves relative to CWD — matching the prior behavior.
+// ansible.playbook, ansible.inventory, ansible.roles) relative to the current
+// working directory. Absolute paths are returned unchanged. Relative paths
+// always resolve relative to CWD, regardless of where the config file is located.
 func (b *Builder) resolveConfigPath(path string) string {
-	if filepath.IsAbs(path) || b.cfgPath == "" {
+	if filepath.IsAbs(path) {
 		return path
 	}
-	return filepath.Join(filepath.Dir(b.cfgPath), path)
+	return path
 }
 
 // stageAnsiblePayload creates a host-side temp directory and populates it with
@@ -329,7 +328,7 @@ func (b *Builder) stageAnsiblePayload(ansible *config.AnsibleCommand) (string, s
 	info, err := os.Stat(playbookHost)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", "", fmt.Errorf("playbook file not found: %s (paths are resolved relative to the config file)", playbookHost)
+			return "", "", fmt.Errorf("playbook file not found: %s (paths are resolved relative to the current working directory)", playbookHost)
 		}
 		return "", "", fmt.Errorf("stat playbook %s: %w", playbookHost, err)
 	}
@@ -468,8 +467,8 @@ func firstNonEmpty(a, b string) string {
 }
 
 // absPath returns the absolute form of path. OCI bind mounts require absolute
-// source paths; resolveConfigPath can return a relative path if the config
-// file was itself supplied relatively (e.g. via `image-build build foo.yaml`).
+// source paths; resolveConfigPath returns relative paths as-is (they resolve
+// relative to CWD), so this function converts them to absolute paths.
 func absPath(path string) (string, error) {
 	if filepath.IsAbs(path) {
 		return path, nil
