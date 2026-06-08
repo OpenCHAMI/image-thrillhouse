@@ -273,3 +273,172 @@ func TestValidateOptionSchema_EmptyOptions(t *testing.T) {
 		t.Errorf("empty options map should be accepted, got: %v", err)
 	}
 }
+
+func TestExtractMacroOptions(t *testing.T) {
+	tests := []struct {
+		name    string
+		options map[string]string
+		want    map[string]string
+	}{
+		{
+			name:    "no macro options",
+			options: map[string]string{"releasever": "8", "install-weak-deps": "false"},
+			want:    map[string]string{},
+		},
+		{
+			name:    "empty options",
+			options: map[string]string{},
+			want:    map[string]string{},
+		},
+		{
+			name:    "nil options",
+			options: nil,
+			want:    map[string]string{},
+		},
+		{
+			name: "single macro option",
+			options: map[string]string{
+				"macro._dbpath": "/var/lib/rpm",
+				"releasever":    "8",
+			},
+			want: map[string]string{
+				"_dbpath": "/var/lib/rpm",
+			},
+		},
+		{
+			name: "multiple macro options",
+			options: map[string]string{
+				"macro._dbpath":         "/var/lib/rpm",
+				"macro._dbpath_trans":   "/var/lib/rpm",
+				"macro._netsharedpath":  "/sys:/proc",
+				"install-weak-deps":     "false",
+				"releasever":            "8",
+			},
+			want: map[string]string{
+				"_dbpath":        "/var/lib/rpm",
+				"_dbpath_trans":  "/var/lib/rpm",
+				"_netsharedpath": "/sys:/proc",
+			},
+		},
+		{
+			name: "macro option with empty value",
+			options: map[string]string{
+				"macro._test": "",
+			},
+			want: map[string]string{
+				"_test": "",
+			},
+		},
+		{
+			name: "ignore malformed macro prefix",
+			options: map[string]string{
+				"macro.": "ignored",
+				"macro":  "not-a-macro",
+			},
+			want: map[string]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractMacroOptions(tt.options)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ExtractMacroOptions() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildRPMMacros(t *testing.T) {
+	tests := []struct {
+		name         string
+		customMacros map[string]string
+		mustContain  []string
+		mustNotContain []string
+	}{
+		{
+			name:         "no custom macros uses defaults",
+			customMacros: nil,
+			mustContain: []string{
+				"%_netsharedpath /sys:/proc:/dev",
+				"%_install_langs C:en:en_US:en_US.UTF-8",
+				"%__brp_mangle_shebangs %{nil}",
+				"%_missing_build_ids_terminate_build 0",
+				"%_file_context_file %{nil}",
+				"%__brp_ldconfig %{nil}",
+			},
+		},
+		{
+			name:         "empty custom macros",
+			customMacros: map[string]string{},
+			mustContain: []string{
+				"%_netsharedpath /sys:/proc:/dev",
+				"%_install_langs",
+			},
+		},
+		{
+			name: "custom macros are added",
+			customMacros: map[string]string{
+				"_dbpath":       "/var/lib/rpm",
+				"_dbpath_trans": "/var/lib/rpm",
+			},
+			mustContain: []string{
+				"%_dbpath /var/lib/rpm",
+				"%_dbpath_trans /var/lib/rpm",
+				"%_netsharedpath /sys:/proc:/dev",
+			},
+		},
+		{
+			name: "custom macros override defaults",
+			customMacros: map[string]string{
+				"_netsharedpath": "/sys:/proc",
+			},
+			mustContain: []string{
+				"%_netsharedpath /sys:/proc",
+			},
+			mustNotContain: []string{
+				"%_netsharedpath /sys:/proc:/dev",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := BuildRPMMacros(tt.customMacros)
+			for _, want := range tt.mustContain {
+				if !strings.Contains(got, want) {
+					t.Errorf("BuildRPMMacros() missing %q\nGot:\n%s", want, got)
+				}
+			}
+			for _, dontWant := range tt.mustNotContain {
+				if strings.Contains(got, dontWant) {
+					t.Errorf("BuildRPMMacros() should not contain %q\nGot:\n%s", dontWant, got)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateOptionSchema_MacroPrefix(t *testing.T) {
+	schema := map[string]OptionKind{"releasever": OptionAny}
+	
+	// Test that dnf backend accepts macro.* options
+	options := map[string]string{
+		"releasever":      "8",
+		"macro._dbpath":   "/var/lib/rpm",
+		"macro._custom":   "value",
+	}
+	if err := ValidateOptionSchema("dnf", options, schema); err != nil {
+		t.Errorf("dnf backend should accept macro.* options, got: %v", err)
+	}
+
+	// Test that zypper backend accepts macro.* options
+	if err := ValidateOptionSchema("zypper", options, schema); err != nil {
+		t.Errorf("zypper backend should accept macro.* options, got: %v", err)
+	}
+
+	// Test that non-RPM backends reject macro.* options
+	if err := ValidateOptionSchema("apt", options, schema); err == nil {
+		t.Error("apt backend should reject macro.* options")
+	}
+}

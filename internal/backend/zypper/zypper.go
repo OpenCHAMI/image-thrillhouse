@@ -22,11 +22,13 @@ import (
 //   - no-recommends: "true" or "false" (default: "false") - Do not install recommended packages
 //   - no-gpg-checks: "true" or "false" (default: "false") - Skip GPG signature checks
 //   - force-resolution: "true" or "false" (default: "false") - Force automatic resolution of conflicts
+//   - macro.*: string (optional) - Custom RPM macros (e.g., macro._dbpath: "/var/lib/rpm")
 type ZypperBackend struct {
 	repoPath        string // Path to the repository directory (default: /etc/zypp/repos.d)
 	noRecommends    bool   // Do not install recommended packages
 	noGpgChecks     bool   // Skip GPG signature checks
 	forceResolution bool   // Force automatic resolution of conflicts
+	customMacros    map[string]string
 }
 
 // New creates a new Zypper backend instance with the provided options.
@@ -36,6 +38,7 @@ type ZypperBackend struct {
 //   - no-recommends: Do not install recommended packages (default: false)
 //   - no-gpg-checks: Skip GPG signature checks (default: false)
 //   - force-resolution: Force automatic resolution of conflicts (default: false)
+//   - macro.*: Custom RPM macros (e.g., macro._dbpath: "/var/lib/rpm")
 func New(options map[string]string) *ZypperBackend {
 	repoPath := options["repopath"]
 	if repoPath == "" {
@@ -47,6 +50,7 @@ func New(options map[string]string) *ZypperBackend {
 		noRecommends:    false,
 		noGpgChecks:     false,
 		forceResolution: false,
+		customMacros:    cmdutil.ExtractMacroOptions(options),
 	}
 
 	// Parse options
@@ -198,6 +202,7 @@ func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath str
 //   - no-recommends: "true" or "false"
 //   - no-gpg-checks: "true" or "false"
 //   - force-resolution: "true" or "false"
+//   - macro.*: string (any RPM macro definition)
 //
 // Returns an error if an unknown option is provided or if a value is invalid.
 func (z *ZypperBackend) ValidateOptions(options map[string]string) error {
@@ -255,7 +260,7 @@ func (z *ZypperBackend) Bootstrap(ctx context.Context, c container.Container, ro
 		}
 	}
 
-	cmdutil.WriteRPMMacros(ctx, c, log)
+	cmdutil.WriteRPMMacros(ctx, c, log, z.customMacros)
 	return nil
 }
 
