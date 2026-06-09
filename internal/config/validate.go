@@ -62,6 +62,13 @@ func (l *Layer) Validate() error {
 		}
 	}
 
+	// Validate all directories
+	for _, d := range l.Directories {
+		if err := d.Validate(); err != nil {
+			return err
+		}
+	}
+
 	// Validate all repos (same source rules as files)
 	for _, r := range l.Repos {
 		if err := r.Validate(); err != nil {
@@ -96,6 +103,29 @@ func (f *File) Validate() error {
 		return fmt.Errorf("file.path is required")
 	}
 	return requireExactlyOneSource("file", f.Path, f.Content, f.Src, f.URL)
+}
+
+// Validate checks a Directory configuration for correctness.
+// Requirements:
+//   - path must be specified
+//   - src must be specified
+//   - owner and preserve_ownership are mutually exclusive
+//
+// Src is intentionally NOT stat'd here. Validation runs anywhere a config is
+// loaded (including dry-runs and tag computation on hosts that don't have the
+// source tree), so the existence check is deferred to the builder where a
+// missing src produces a clear runtime error.
+func (d *Directory) Validate() error {
+	if d.Path == "" {
+		return fmt.Errorf("directory.path is required")
+	}
+	if d.Src == "" {
+		return fmt.Errorf("directory %s: src is required", d.Path)
+	}
+	if d.Owner != "" && d.PreserveOwnership {
+		return fmt.Errorf("directory %s: owner and preserve_ownership are mutually exclusive", d.Path)
+	}
+	return nil
 }
 
 // requireExactlyOneSource is the shared "exactly one of content/src/url"

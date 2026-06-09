@@ -42,11 +42,12 @@ type Meta struct {
 // Layer defines how to build the image layer.
 // It specifies the package manager, repositories, files, and actions to perform.
 type Layer struct {
-	Manager  Manager   `yaml:"manager"`  // Package manager configuration
-	Repos    []Repo    `yaml:"repos"`    // Repository configurations
-	Files    []File    `yaml:"files"`    // Files to add to the image
-	Actions  Actions   `yaml:"actions"`  // Installation and command actions
-	OpenSCAP *OpenSCAP `yaml:"openscap"` // Optional: OpenSCAP security scanning configuration
+	Manager     Manager     `yaml:"manager"`     // Package manager configuration
+	Repos       []Repo      `yaml:"repos"`       // Repository configurations
+	Files       []File      `yaml:"files"`       // Files to add to the image
+	Directories []Directory `yaml:"directories"` // Host directories to recursively copy into the image
+	Actions     Actions     `yaml:"actions"`     // Installation and command actions
+	OpenSCAP    *OpenSCAP   `yaml:"openscap"`    // Optional: OpenSCAP security scanning configuration
 }
 
 // Manager specifies the package manager to use and its configuration.
@@ -64,6 +65,30 @@ type File struct {
 	Src     string `yaml:"src"`     // Source file path on host
 	URL     string `yaml:"url"`     // URL to download file from
 	Mode    string `yaml:"mode"`    // Optional: File permissions mode (e.g., "0755", "0644")
+}
+
+// Directory represents a host directory to recursively copy into the image
+// in a single buildah operation. Only host sources are supported; URL/tarball
+// extraction may be added later.
+//
+// Mode and Owner are applied uniformly to every copied entry (they map onto
+// buildah's Chmod and Chown). PreserveOwnership keeps the host ownership
+// instead of resetting to 0:0 — it is mutually exclusive with Owner. Excludes
+// uses .containerignore-style patterns, evaluated by the same matcher buildah
+// uses, so the tag hasher and the copy step see the same file set.
+//
+// ContentsOnly is a pointer so an unset value can default to true at the
+// builder boundary (matching cp -a src/. dest/). Setting it to false copies
+// Src as a subdirectory under Path, matching Dockerfile COPY-of-directory
+// semantics.
+type Directory struct {
+	Path              string   `yaml:"path"`               // Destination path in the image (required)
+	Src               string   `yaml:"src"`                // Source directory on host (required)
+	Mode              string   `yaml:"mode"`               // Optional: file mode (e.g., "0755") applied to all copied content
+	Owner             string   `yaml:"owner"`              // Optional: "uid:gid" or "user:group"
+	PreserveOwnership bool     `yaml:"preserve_ownership"` // Optional: keep host ownership; mutually exclusive with Owner
+	Excludes          []string `yaml:"excludes"`           // Optional: .containerignore-style exclude patterns
+	ContentsOnly      *bool    `yaml:"contents_only"`      // Optional: default true. Copy src/. into path; false copies src as a subdir
 }
 
 // Repo represents a package repository configuration.

@@ -456,6 +456,137 @@ func TestValidateFile(t *testing.T) {
 	}
 }
 
+// TestValidateDirectory exercises Directory.Validate's required-fields and
+// mutual-exclusion contracts.
+func TestValidateDirectory(t *testing.T) {
+	tru := true
+	tests := []struct {
+		name    string
+		dir     Directory
+		wantErr bool
+	}{
+		{
+			name:    "valid minimal",
+			dir:     Directory{Path: "/opt/app", Src: "./build"},
+			wantErr: false,
+		},
+		{
+			name: "valid with all options",
+			dir: Directory{
+				Path:         "/opt/app",
+				Src:          "./build",
+				Mode:         "0755",
+				Owner:        "1000:1000",
+				Excludes:     []string{"*.tmp"},
+				ContentsOnly: &tru,
+			},
+			wantErr: false,
+		},
+		{
+			name:    "missing path",
+			dir:     Directory{Src: "./build"},
+			wantErr: true,
+		},
+		{
+			name:    "missing src",
+			dir:     Directory{Path: "/opt/app"},
+			wantErr: true,
+		},
+		{
+			name: "owner + preserve_ownership conflict",
+			dir: Directory{
+				Path:              "/opt/app",
+				Src:               "./build",
+				Owner:             "1000:1000",
+				PreserveOwnership: true,
+			},
+			wantErr: true,
+		},
+		{
+			name: "preserve_ownership alone is fine",
+			dir: Directory{
+				Path:              "/opt/app",
+				Src:               "./build",
+				PreserveOwnership: true,
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.dir.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Directory.Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestLoadConfigWithDirectories ensures the new layer.directories block round-trips
+// through LoadConfigWithVars, including the contents_only pointer default
+// (unset → nil, the builder applies the true default).
+func TestLoadConfigWithDirectories(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	body := `meta:
+  name: dir-test
+  tags: ["1"]
+  from: scratch
+layer:
+  manager:
+    name: dnf
+  directories:
+    - path: /opt/app
+      src: ./build/app
+      mode: "0755"
+      owner: "1000:1000"
+      excludes:
+        - "*.tmp"
+        - "cache/"
+    - path: /opt/other
+      src: ./other
+      preserve_ownership: true
+      contents_only: false
+`
+	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfigWithVars(configPath, nil)
+	if err != nil {
+		t.Fatalf("LoadConfigWithVars: %v", err)
+	}
+
+	if got := len(cfg.Layer.Directories); got != 2 {
+		t.Fatalf("expected 2 directories, got %d", got)
+	}
+
+	first := cfg.Layer.Directories[0]
+	if first.Path != "/opt/app" || first.Src != "./build/app" {
+		t.Errorf("first directory path/src wrong: %+v", first)
+	}
+	if first.Mode != "0755" || first.Owner != "1000:1000" {
+		t.Errorf("first directory mode/owner wrong: %+v", first)
+	}
+	if len(first.Excludes) != 2 || first.Excludes[0] != "*.tmp" {
+		t.Errorf("first directory excludes wrong: %+v", first.Excludes)
+	}
+	// Pointer left nil when key absent — builder applies the true default.
+	if first.ContentsOnly != nil {
+		t.Errorf("expected ContentsOnly nil when unset, got %v", *first.ContentsOnly)
+	}
+
+	second := cfg.Layer.Directories[1]
+	if !second.PreserveOwnership {
+		t.Errorf("preserve_ownership not parsed: %+v", second)
+	}
+	if second.ContentsOnly == nil || *second.ContentsOnly {
+		t.Errorf("expected ContentsOnly to be a pointer to false, got %v", second.ContentsOnly)
+	}
+}
+
 // TestValidateModule tests Module validation
 func TestValidateModule(t *testing.T) {
 	tests := []struct {

@@ -155,6 +155,86 @@ func TestWriteFiles_OneCallPerFile(t *testing.T) {
 	}
 }
 
+func TestWriteDirectories_EmptyLayerIsNoop(t *testing.T) {
+	b := builderWithLayer(config.Layer{}) // no directories
+	c := &fakeContainer{}
+	if err := b.writeDirectories(context.Background(), c); err != nil {
+		t.Fatalf("writeDirectories: %v", err)
+	}
+	if len(c.CopyDirectoryCalls) != 0 {
+		t.Errorf("expected no CopyDirectory calls, got %d", len(c.CopyDirectoryCalls))
+	}
+}
+
+func TestWriteDirectories_OneCallPerDirectory(t *testing.T) {
+	// Each config.Directory translates 1:1 into a CopyDirectory call, with
+	// every option forwarded onto CopyDirectoryOptions.
+	fals := false
+	b := builderWithLayer(config.Layer{
+		Directories: []config.Directory{
+			{
+				Path:     "/opt/app",
+				Src:      "./build/app",
+				Mode:     "0755",
+				Owner:    "1000:1000",
+				Excludes: []string{"*.tmp"},
+				// ContentsOnly left nil — builder must default it to true.
+			},
+			{
+				Path:              "/opt/other",
+				Src:               "./other",
+				PreserveOwnership: true,
+				ContentsOnly:      &fals,
+			},
+		},
+	})
+	c := &fakeContainer{}
+	if err := b.writeDirectories(context.Background(), c); err != nil {
+		t.Fatalf("writeDirectories: %v", err)
+	}
+	if len(c.CopyDirectoryCalls) != 2 {
+		t.Fatalf("expected 2 CopyDirectory calls, got %d", len(c.CopyDirectoryCalls))
+	}
+
+	first := c.CopyDirectoryCalls[0]
+	if first.Src != "./build/app" || first.Dest != "/opt/app" {
+		t.Errorf("first call src/dest wrong: %+v", first)
+	}
+	if first.Opts.Chmod != "0755" || first.Opts.Chown != "1000:1000" {
+		t.Errorf("first call chmod/chown not forwarded: %+v", first.Opts)
+	}
+	if len(first.Opts.Excludes) != 1 || first.Opts.Excludes[0] != "*.tmp" {
+		t.Errorf("first call excludes not forwarded: %+v", first.Opts.Excludes)
+	}
+	if !first.Opts.ContentsOnly {
+		t.Errorf("unset ContentsOnly must default to true, got false")
+	}
+
+	second := c.CopyDirectoryCalls[1]
+	if !second.Opts.PreserveOwnership {
+		t.Errorf("preserve_ownership not forwarded: %+v", second.Opts)
+	}
+	if second.Opts.ContentsOnly {
+		t.Errorf("explicit contents_only=false must be honored, got true")
+	}
+}
+
+func TestWriteDirectories_PropagatesCopyError(t *testing.T) {
+	// Like writeFiles/writeRepos, a single CopyDirectory failure must abort
+	// the build, not log-and-continue.
+	b := builderWithLayer(config.Layer{
+		Directories: []config.Directory{{Path: "/opt/app", Src: "./build"}},
+	})
+	c := &fakeContainer{CopyDirectoryErr: errors.New("buildah add failed")}
+	err := b.writeDirectories(context.Background(), c)
+	if err == nil {
+		t.Fatal("expected error to propagate")
+	}
+	if !strings.Contains(err.Error(), "copy directory") {
+		t.Errorf("error should be wrapped with 'copy directory': %v", err)
+	}
+}
+
 func TestAllExist_AllReturnTrue(t *testing.T) {
 	p1 := &fakePublisher{ExistsReturn: true}
 	p2 := &fakePublisher{ExistsReturn: true}

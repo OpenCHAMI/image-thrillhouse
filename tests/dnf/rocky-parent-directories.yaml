@@ -1,0 +1,38 @@
+# Exercises layer.directories: copy a host directory tree into the image in
+# one buildah operation. The fixture tree lives at tests/dnf/fixtures/sample-tree/
+# and is referenced by absolute path because the integration runner sets the
+# container WORKDIR to /home/builder, while the tests directory is bind-mounted
+# at /tests.
+#
+# Coverage:
+#   - contents_only defaults to true, so sample-tree/. lands directly under /opt/sample
+#   - mode is forced uniformly (0644 for both files and dirs)
+#   - the `cache` subdirectory is excluded; should-not-copy.bin must not appear
+#   - a second entry uses contents_only: false to land sample-tree as a subdir
+meta:
+  name: rocky-parent-directories
+  tags:
+    - "9-directories"
+  from: docker://rockylinux:9
+
+layer:
+  manager:
+    name: dnf
+  directories:
+    - path: /opt/sample
+      src: /tests/dnf/fixtures/sample-tree
+      mode: "0644"
+      excludes:
+        - cache
+    - path: /opt/staged
+      src: /tests/dnf/fixtures/sample-tree
+      contents_only: false
+      excludes:
+        - cache
+  actions:
+    install:
+      packages:
+        - bash
+
+publish:
+  - type: local

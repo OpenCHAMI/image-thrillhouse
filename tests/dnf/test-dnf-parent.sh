@@ -117,6 +117,10 @@ run_test "rocky-parent-modules" "dnf/rocky-parent-modules.yaml"
 # Test 4: Parent build with commands only (no packages)
 run_test "rocky-parent-commands" "dnf/rocky-parent-commands.yaml"
 
+# Test 5: Parent build with layer.directories (recursive host->image copy
+# with excludes; fixture tree lives under tests/dnf/fixtures/sample-tree/)
+run_test "rocky-parent-directories" "dnf/rocky-parent-directories.yaml"
+
 echo ""
 echo "════════════════════════════════════════════════════════════════"
 echo "Test Results Summary"

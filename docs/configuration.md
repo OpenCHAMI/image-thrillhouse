@@ -123,6 +123,37 @@ If `gpg` is omitted you must either set `gpgcheck=0` in the repo config or insta
 - `content` | `src` | `url` (required, pick one): file source
 - `mode` (optional): file permissions in octal (e.g. `"0755"`, `"0644"`)
 
+### `layer.directories`
+
+Recursively copy a host directory tree into the image in a single buildah operation. Use this instead of declaring every file under `layer.files` when you have a stage directory, a roles tree, or any payload with more than a handful of files.
+
+```yaml
+  directories:
+    - path: /opt/myapp                # destination dir in the image (required)
+      src: ./build/myapp              # host directory (required)
+      mode: "0755"                    # optional, uniform mode (see notes)
+      owner: "1000:1000"              # optional, "uid:gid" or "user:group"
+      preserve_ownership: false       # optional, mutually exclusive with owner
+      contents_only: true             # optional, default true (see notes)
+      excludes:                       # optional, .containerignore-style patterns
+        - "*.tmp"
+        - cache
+```
+
+Fields:
+
+- `path` (required): destination directory in the image
+- `src` (required): host directory; relative paths resolve against the current working directory (same as `ansible.playbook`), not the config file's location
+- `mode` (optional): octal permission string. **Applied uniformly to files and directories** — buildah doesn't expose separate file/dir modes through its public `Add` API. Omit `mode` to preserve host permissions as-is; if you need different modes for files vs directories, set them on the host before referencing the tree
+- `owner` (optional): `"uid:gid"` or `"user:group"`. Applied to every copied entry
+- `preserve_ownership` (optional, default `false`): when `true`, keep the host's UID/GID instead of buildah's default of resetting to `0:0`. Has no effect when `owner` is set, and validation rejects setting both
+- `contents_only` (optional, default `true`): true copies `src/.` into `path` (matches `cp -a src/. dest/`); false copies `src` itself as a subdirectory under `path` (matches Dockerfile `COPY src dest/` semantics)
+- `excludes` (optional): list of `.containerignore`-style patterns. Evaluated by the same matcher buildah uses internally, so the cache hash and the actual copy see the same file set. Common patterns: `"*.tmp"`, `cache`, `build/`
+
+**Caching:** the layer tag hash includes the contents and structure of `src` (filtered by `excludes`), plus host modes when `mode` is unset and host ownership when `preserve_ownership` is true and `owner` is empty. Editing a file under `src` invalidates the cache and triggers a rebuild; editing an excluded file does not. Mtimes are deliberately ignored so a fresh `git clone` doesn't invalidate every cache.
+
+**URL/tarball sources are not supported** — use `layer.files` with a `url:` if you need to drop a downloaded archive, then extract it via a `command:` step.
+
 ### `layer.actions`
 
 ```yaml
