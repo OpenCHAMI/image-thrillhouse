@@ -61,19 +61,10 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
 
-      - name: Update debian/changelog
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          TIMESTAMP=$(date -R)
-          cat > debian/changelog << EOF
-          image-thrillhouse (${VERSION}-1) unstable; urgency=medium
-
-            * Release version ${VERSION}
-
-           -- Travis Cotton <travis@example.com>  ${TIMESTAMP}
-
-          EOF
-          cat debian/changelog
+      - name: Regenerate debian/changelog from git tags
+        run: bash scripts/gen-changelog.sh
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
 
       - name: Build Debian package
         env:
@@ -145,6 +136,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -162,7 +156,12 @@ jobs:
       - name: Create RPM build structure
         run: |
           mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-          
+
+      - name: Regenerate %changelog from git tags
+        run: bash scripts/gen-changelog.sh
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+
       - name: Update spec file version
         run: |
           VERSION="${{ steps.version.outputs.version }}"
