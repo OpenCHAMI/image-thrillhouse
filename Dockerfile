@@ -34,8 +34,9 @@ RUN apt-get update && apt-get install -y \
 # rpm database at <rootPath>/home/builder/.rpmdb during scratch bootstraps and
 # breaks dependency tracking across runs. Pin it to /var/lib/rpm here so every
 # host-side rpm/dnf invocation lands the DB in the canonical location.
-RUN printf '%%_dbpath /var/lib/rpm\n%%_dbpath_rebuild /var/lib/rpm\n%%_dbpath_trans /var/lib/rpm\n' \
-      > /etc/rpm/macros.dbpath
+RUN mkdir -p /etc/rpm && \
+    printf '%%_dbpath /var/lib/rpm\n%%_dbpath_rebuild /var/lib/rpm\n%%_dbpath_trans /var/lib/rpm\n' \
+    > /etc/rpm/macros.dbpath
 
 COPY --from=builder /src/image-thrillhouse /usr/local/bin/image-thrillhouse
 
