@@ -1,5 +1,5 @@
 #!/bin/bash
-# Integration test: `image-build build --manifest --layer`
+# Integration test: `image-thrillhouse build --manifest --layer`
 #
 # Drives a manifest layer through buildah and asserts:
 #   1. building the base layer with the manifest-mode flags produces an
@@ -15,7 +15,7 @@
 # script does it explicitly (base first, then compute) rather than asking
 # the tool to walk the DAG.
 #
-# image-build doesn't cross-compile, so we only ever build for the host
+# image-thrillhouse doesn't cross-compile, so we only ever build for the host
 # arch. Maps `uname -m` to one of {x86_64, aarch64}; anything else is a
 # hard fail with a clear message.
 #
@@ -25,7 +25,7 @@
 #   as the build finishes. Two things working together fix this:
 #
 #     1. A named podman volume ($STORAGE_VOLUME, default
-#        image-build-test-storage) mounted on /var/lib/containers/storage
+#        image-thrillhouse-test-storage) mounted on /var/lib/containers/storage
 #        carries the store across --rm boundaries.
 #
 #     2. CONTAINERS_STORAGE_CONF=/etc/containers/storage.conf passed to
@@ -62,7 +62,7 @@ case "$HOST_ARCH_RAW" in
     aarch64|arm64) HOST_ARCH=aarch64 ;;
     *)
         echo "✗ Unsupported host architecture: $HOST_ARCH_RAW"
-        echo "  image-build doesn't cross-compile; this suite only runs on x86_64 or aarch64."
+        echo "  image-thrillhouse doesn't cross-compile; this suite only runs on x86_64 or aarch64."
         exit 1
         ;;
 esac
@@ -77,7 +77,7 @@ echo "  host arch:      $HOST_ARCH_RAW ($HOST_ARCH)"
 echo "  manifest:       $MANIFEST"
 echo "  base layer:     $BASE_LAYER"
 echo "  compute layer:  $COMPUTE_LAYER"
-echo "  storage volume: ${STORAGE_VOLUME:-image-build-test-storage} (RESET_STORAGE=1 to clear)"
+echo "  storage volume: ${STORAGE_VOLUME:-image-thrillhouse-test-storage} (RESET_STORAGE=1 to clear)"
 echo "  squashfs dir:   $SQUASHFS_DIR"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
@@ -117,7 +117,7 @@ dump_log() {
 # between test runs too, which incidentally gives Phase 3
 # (--skip-if-exists) cached state to work against. Set RESET_STORAGE=1
 # to clear it before the run.
-STORAGE_VOLUME="${STORAGE_VOLUME:-image-build-test-storage}"
+STORAGE_VOLUME="${STORAGE_VOLUME:-image-thrillhouse-test-storage}"
 
 if [ "${RESET_STORAGE:-0}" = "1" ]; then
     if podman volume exists "$STORAGE_VOLUME" 2>/dev/null; then
@@ -128,7 +128,7 @@ fi
 # `podman volume create` is idempotent if the volume already exists.
 podman volume create "$STORAGE_VOLUME" >/dev/null
 
-# Run image-build inside the test container with the full privileged set
+# Run image-thrillhouse inside the test container with the full privileged set
 # (build needs buildah, which needs user namespaces / fuse). Two mounts
 # carry state across --rm boundaries:
 #
@@ -161,19 +161,19 @@ run_image_build() {
         -v "${STORAGE_VOLUME}:/var/lib/containers/storage" \
         -e BUILDAH_ISOLATION=chroot \
         -e CONTAINERS_STORAGE_CONF=/etc/containers/storage.conf \
-        image-build:test \
-        image-build --log-level info "$@"
+        image-thrillhouse:test \
+        image-thrillhouse --log-level info "$@"
 }
 
-echo "Preparing image-build container (if needed)..."
+echo "Preparing image-thrillhouse container (if needed)..."
 NEEDS_BUILD=0
 if [ "${REBUILD_IMAGE:-0}" = "1" ]; then
     NEEDS_BUILD=1
-elif ! podman image exists image-build:test && ! podman image exists localhost/image-build:test; then
+elif ! podman image exists image-thrillhouse:test && ! podman image exists localhost/image-thrillhouse:test; then
     NEEDS_BUILD=1
 fi
 if [ "$NEEDS_BUILD" = "1" ]; then
-    if ! (cd "${SCRIPT_DIR}" && podman build -t image-build:test -f Dockerfile . \
+    if ! (cd "${SCRIPT_DIR}" && podman build -t image-thrillhouse:test -f Dockerfile . \
             > "${OUTPUT_DIR}/container-build.log" 2>&1); then
         echo "✗ Container build FAILED. See ${OUTPUT_DIR}/container-build.log"
         tail -30 "${OUTPUT_DIR}/container-build.log" | sed 's/^/    /'

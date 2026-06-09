@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
 )
 
 func TestStageAnsiblePayload_MissingPlaybook(t *testing.T) {

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Integration test: `image-build render`
+# Integration test: `image-thrillhouse render`
 #
 # Exercises templating end-to-end without invoking buildah:
 #   - var-file substitution
@@ -9,7 +9,7 @@
 #
 # Render is a pure read/parse/template/write op so it doesn't need the
 # privileged container the build tests use; we still run it through the
-# same image-build:test image to keep the runner uniform.
+# same image-thrillhouse:test image to keep the runner uniform.
 #
 # This script deliberately does NOT use `set -e`. We want every test to
 # run and report independently — `set -e` would silently abort the whole
@@ -55,7 +55,7 @@ report_failure() {
     FAILED_TESTS=$((FAILED_TESTS + 1))
 }
 
-# run_render invokes image-build inside the test container with --log-level
+# run_render invokes image-thrillhouse inside the test container with --log-level
 # error so that even on the rare path where logs end up on stdout, the
 # rendered output stays clean. Returns the podman exit code so callers
 # can branch on it.
@@ -67,8 +67,8 @@ run_render() {
 
     podman run --rm \
         -v "${SCRIPT_DIR}/tests:/tests:Z" \
-        image-build:test \
-        image-build --log-level error render "$@" \
+        image-thrillhouse:test \
+        image-thrillhouse --log-level error render "$@" \
         > "$out_file" 2> "$log_file"
 }
 
@@ -94,7 +94,7 @@ assert_render_contains() {
 
     if ! run_render "$test_name" "${render_args[@]}"; then
         report_failure "$test_name" "$out_file" "$log_file" \
-            "image-build render exited non-zero"
+            "image-thrillhouse render exited non-zero"
         return 1
     fi
 
@@ -135,15 +135,15 @@ assert_render_errors() {
     fi
 }
 
-echo "Preparing image-build container (if needed)..."
+echo "Preparing image-thrillhouse container (if needed)..."
 NEEDS_BUILD=0
 if [ "${REBUILD_IMAGE:-0}" = "1" ]; then
     NEEDS_BUILD=1
-elif ! podman image exists image-build:test && ! podman image exists localhost/image-build:test; then
+elif ! podman image exists image-thrillhouse:test && ! podman image exists localhost/image-thrillhouse:test; then
     NEEDS_BUILD=1
 fi
 if [ "$NEEDS_BUILD" = "1" ]; then
-    if ! (cd "${SCRIPT_DIR}" && podman build -t image-build:test -f Dockerfile . \
+    if ! (cd "${SCRIPT_DIR}" && podman build -t image-thrillhouse:test -f Dockerfile . \
             > "${OUTPUT_DIR}/container-build.log" 2>&1); then
         echo "✗ Container build FAILED. See ${OUTPUT_DIR}/container-build.log"
         tail -30 "${OUTPUT_DIR}/container-build.log" | sed 's/^/    /'
@@ -171,7 +171,7 @@ assert_render_contains "rocky-base-x86_64" \
     -- \
     "BaseOS/x86_64/os" \
     "https://dl.rockylinux.org/pub/rocky/9/BaseOS" \
-    "/etc/image-build/yum.repos.d/rocky-baseos.repo"
+    "/etc/image-thrillhouse/yum.repos.d/rocky-baseos.repo"
 
 assert_render_contains "rocky-base-aarch64" \
     --manifest /tests/manifests/rocky-multiarch.yaml \

@@ -95,7 +95,7 @@ layer:
   manager:
     name: dnf
   repos:
-  - path: /etc/image-build/yum.repos.d/rock_baseos.repo
+  - path: /etc/image-thrillhouse/yum.repos.d/rock_baseos.repo
     content: |-
       [rock_baseos]
       name=Rock_BaseOS
@@ -213,7 +213,7 @@ After conversion, validate the new config with image-thrillhouse:
 
 ```bash
 # Test build with converted config
-image-build build new-config.yaml
+image-thrillhouse build new-config.yaml
 
 # Or validate the YAML structure
 python3 -c "import yaml; yaml.safe_load(open('new-config.yaml'))"

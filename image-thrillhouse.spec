@@ -1,18 +1,15 @@
 %global debug_package %{nil}
 
-Name:           image-build
+Name:           image-thrillhouse
 Version:        0.1.0
 Release:        1%{?dist}
 Summary:        Go-based image builder wrapping buildah
 License:        MIT
-URL:            https://github.com/travisbcotton/image-build
+URL:            https://github.com/travisbcotton/image-thrillhouse
 Source0:        %{name}-%{version}.tar.gz
 
 # BuildRequires intentionally left empty - Go is installed via GitHub Actions
 Requires:       buildah
-Requires:       gpgme-devel
-Requires:       device-mapper-devel
-Requires:       btrfs-progs-devel
 Recommends:     squashfs-tools
 Suggests:       podman
 
@@ -33,7 +30,7 @@ Features:
 %setup -q -n %{name}-%{version}
 
 %build
-go build -v -o %{name} ./cmd/image-build
+go build -v -tags "exclude_graphdriver_btrfs exclude_graphdriver_devicemapper" -o %{name} ./cmd/image-thrillhouse
 
 %install
 install -D -m 0755 %{name} %{buildroot}%{_bindir}/%{name}

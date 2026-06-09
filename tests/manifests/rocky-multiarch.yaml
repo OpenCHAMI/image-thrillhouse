@@ -6,11 +6,11 @@
 # name ("rocky-base", "rocky-compute") is reused across arches; the
 # computed hash tag and the arch-specific repo URLs vary per layer.
 #
-# image-build builds a single named layer per invocation. Build the host
+# image-thrillhouse builds a single named layer per invocation. Build the host
 # arch's chain by invoking explicitly in dependency order:
 #
-#   image-build build --manifest tests/manifests/rocky-multiarch.yaml --layer rocky-base-aarch64
-#   image-build build --manifest tests/manifests/rocky-multiarch.yaml --layer rocky-compute-aarch64
+#   image-thrillhouse build --manifest tests/manifests/rocky-multiarch.yaml --layer rocky-base-aarch64
+#   image-thrillhouse build --manifest tests/manifests/rocky-multiarch.yaml --layer rocky-compute-aarch64
 #
 # Combine with --skip-if-exists to skip layers whose images are already
 # in local storage.

@@ -38,8 +38,8 @@ run_test() {
         -v "${SCRIPT_DIR}/tests:/tests:Z" \
         -v "${OUTPUT_DIR}:/output:Z" \
         -e BUILDAH_ISOLATION=chroot \
-        image-build:test \
-        image-build build --config "/tests/$config_file" --log-level info > "${OUTPUT_DIR}/${test_name}.log" 2>&1; then
+        image-thrillhouse:test \
+        image-thrillhouse build --config "/tests/$config_file" --log-level info > "${OUTPUT_DIR}/${test_name}.log" 2>&1; then
         echo "  ✓ PASSED"
         PASSED_TESTS=$((PASSED_TESTS + 1))
         return 0
@@ -60,8 +60,8 @@ validate_config() {
     
     if podman run --rm \
         -v "${SCRIPT_DIR}/tests:/tests:Z" \
-        image-build:test \
-        image-build validate --config "/tests/$config_file" > "${OUTPUT_DIR}/${test_name}-validate.log" 2>&1; then
+        image-thrillhouse:test \
+        image-thrillhouse validate --config "/tests/$config_file" > "${OUTPUT_DIR}/${test_name}-validate.log" 2>&1; then
         echo "  ✓ PASSED"
         PASSED_TESTS=$((PASSED_TESTS + 1))
         return 0
@@ -72,16 +72,16 @@ validate_config() {
     fi
 }
 
-echo "Preparing image-build container (if needed)..."
+echo "Preparing image-thrillhouse container (if needed)..."
 NEEDS_BUILD=0
 if [ "${REBUILD_IMAGE:-0}" = "1" ]; then
     echo "REBUILD_IMAGE=1 set, forcing rebuild"
     NEEDS_BUILD=1
-elif ! podman image exists image-build:test && ! podman image exists localhost/image-build:test; then
+elif ! podman image exists image-thrillhouse:test && ! podman image exists localhost/image-thrillhouse:test; then
     NEEDS_BUILD=1
 fi
 if [ "$NEEDS_BUILD" = "1" ]; then
-    cd "${SCRIPT_DIR}" && podman build -t image-build:test -f Dockerfile . > "${OUTPUT_DIR}/container-build.log" 2>&1
+    cd "${SCRIPT_DIR}" && podman build -t image-thrillhouse:test -f Dockerfile . > "${OUTPUT_DIR}/container-build.log" 2>&1
     echo "✓ Container built"
 else
     echo "✓ Container already exists (set REBUILD_IMAGE=1 to force rebuild)"
@@ -125,8 +125,8 @@ TOTAL_TESTS=$((TOTAL_TESTS + 1))
 echo "[$TOTAL_TESTS] Testing: missing-suite-option"
 if podman run --rm \
     -v "${SCRIPT_DIR}/tests:/tests:Z" \
-    image-build:test \
-    image-build validate --config "/tests/apt/invalid-no-suite.yaml" > "${OUTPUT_DIR}/invalid-no-suite.log" 2>&1; then
+    image-thrillhouse:test \
+    image-thrillhouse validate --config "/tests/apt/invalid-no-suite.yaml" > "${OUTPUT_DIR}/invalid-no-suite.log" 2>&1; then
     echo "  ✗ FAILED (should have rejected config without suite)"
     FAILED_TESTS=$((FAILED_TESTS + 1))
 else
@@ -139,8 +139,8 @@ TOTAL_TESTS=$((TOTAL_TESTS + 1))
 echo "[$TOTAL_TESTS] Testing: invalid-mmdebstrap-option"
 if podman run --rm \
     -v "${SCRIPT_DIR}/tests:/tests:Z" \
-    image-build:test \
-    image-build validate --config "/tests/apt/invalid-option.yaml" > "${OUTPUT_DIR}/invalid-option.log" 2>&1; then
+    image-thrillhouse:test \
+    image-thrillhouse validate --config "/tests/apt/invalid-option.yaml" > "${OUTPUT_DIR}/invalid-option.log" 2>&1; then
     echo "  ✗ FAILED (should have rejected invalid option)"
     FAILED_TESTS=$((FAILED_TESTS + 1))
 else

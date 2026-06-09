@@ -5,7 +5,7 @@ package publisher
 import (
 	"context"
 
-	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
 )
 
 // Publisher is the interface that all image publishers must implement.

@@ -11,8 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/travisbcotton/image-build/internal/container"
-	"github.com/travisbcotton/image-build/internal/fsutil"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/fsutil"
 )
 
 // SquashfsPublisher creates SquashFS images from container filesystems.

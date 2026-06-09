@@ -1,5 +1,5 @@
 // Package config provides structures and functions for parsing and validating
-// image-build YAML configuration files.
+// image-thrillhouse YAML configuration files.
 package config
 
 import (
@@ -12,7 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config is the top-level structure for an image-build configuration file.
+// Config is the top-level structure for an image-thrillhouse configuration file.
 // It contains three main sections:
 //   - Meta: Image metadata (name, tag, base image)
 //   - Layer: Build instructions (package manager, repos, files, actions)

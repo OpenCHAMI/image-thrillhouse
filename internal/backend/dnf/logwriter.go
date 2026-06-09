@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
 )
 
 // dnfClassifier parses DNF command output. It walks lines, tracks an

@@ -3,7 +3,7 @@ package apt
 import (
 	"testing"
 
-	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
 )
 
 func TestNew(t *testing.T) {
@@ -81,7 +81,7 @@ func TestNewWithOptions(t *testing.T) {
 
 func TestConfigFilePath(t *testing.T) {
 	backend := New(nil)
-	expected := "/etc/apt/apt.conf.d/99-image-build.conf"
+	expected := "/etc/apt/apt.conf.d/99-image-thrillhouse.conf"
 
 	if got := backend.ConfigFilePath(); got != expected {
 		t.Errorf("ConfigFilePath() = %v, want %v", got, expected)

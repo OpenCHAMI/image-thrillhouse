@@ -10,8 +10,8 @@ import (
 
 	"go.podman.io/buildah/define"
 
-	"github.com/travisbcotton/image-build/internal/config"
-	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
 )
 
 // fakeContainer records WriteFile / Run / RunScript calls and stubs out

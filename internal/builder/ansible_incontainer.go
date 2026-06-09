@@ -12,8 +12,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/travisbcotton/image-build/internal/config"
-	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
 )
 
 // ansibleANSIRe matches CSI ANSI escape sequences that ansible emits when it
@@ -224,7 +224,7 @@ func (w *ansibleStreamWriter) emit(line []byte) {
 // of the playbook run via host bind mounts, so nothing under stageRoot ends
 // up in the committed image layer.
 const (
-	stageRoot    = "/run/image-build-ansible"
+	stageRoot    = "/run/image-thrillhouse-ansible"
 	stageEtcPath = stageRoot + "/etc"       // generated cfg + localhost inventory + playbook copy
 	stageRoles   = stageRoot + "/roles"     // user roles directory (bind mount)
 	stageInv     = stageRoot + "/inventory" // user inventory (bind mount)
@@ -336,7 +336,7 @@ func (b *Builder) stageAnsiblePayload(ansible *config.AnsibleCommand) (string, s
 		return "", "", fmt.Errorf("playbook must be a file, not a directory: %s", playbookHost)
 	}
 
-	stageDir, err := os.MkdirTemp("", "image-build-ansible-*")
+	stageDir, err := os.MkdirTemp("", "image-thrillhouse-ansible-*")
 	if err != nil {
 		return "", "", fmt.Errorf("create stage dir: %w", err)
 	}

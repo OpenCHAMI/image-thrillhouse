@@ -14,7 +14,7 @@ import (
 	"go.podman.io/image/v5/docker"
 	"go.podman.io/image/v5/types"
 
-	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
 )
 
 // RegistryPublisher pushes container images to OCI-compatible registries.

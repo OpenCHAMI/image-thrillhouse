@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
 )
 
 func TestDnfClassifier_ErrorCapture(t *testing.T) {

@@ -14,4 +14,4 @@ podman run --rm \
 	--network host \
 	-it \
 	-v ./tests/:/data:Z \
-	image-build:test bash
+	image-thrillhouse:test bash

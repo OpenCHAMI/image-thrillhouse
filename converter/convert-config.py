@@ -181,7 +181,7 @@ class ConfigConverter:
             
             # Generate repo file path based on package manager
             if pkg_manager in ['dnf', 'yum']:
-                repo_path = f"/etc/image-build/yum.repos.d/{alias.lower()}.repo"
+                repo_path = f"/etc/image-thrillhouse/yum.repos.d/{alias.lower()}.repo"
                 content = self._generate_yum_repo_content(alias, url, gpg)
             elif pkg_manager == 'zypper':
                 repo_path = f"/etc/zypp/repos.d/{alias.lower()}.repo"
@@ -192,7 +192,7 @@ class ConfigConverter:
                 self.warn("APT repo conversion is basic - may need manual adjustment", f"repos[{i}]")
             else:
                 self.warn(f"Unknown package manager '{pkg_manager}' - using dnf format", f"repos[{i}]")
-                repo_path = f"/etc/image-build/yum.repos.d/{alias.lower()}.repo"
+                repo_path = f"/etc/image-thrillhouse/yum.repos.d/{alias.lower()}.repo"
                 content = self._generate_yum_repo_content(alias, url, gpg)
             
             new_repos.append({

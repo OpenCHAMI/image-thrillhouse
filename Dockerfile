@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
     gcc
 WORKDIR /src
 COPY . .
-RUN go mod tidy && go build -o image-build ./cmd/image-build/
+RUN go mod tidy && go build -o image-thrillhouse ./cmd/image-thrillhouse/
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y \
@@ -30,9 +30,9 @@ RUN apt-get update && apt-get install -y \
     libdevmapper1.02.1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /src/image-build /usr/local/bin/image-build
+COPY --from=builder /src/image-thrillhouse /usr/local/bin/image-thrillhouse
 
-RUN chcon -t container_runtime_exec_t /usr/local/bin/image-build 2>/dev/null || true
+RUN chcon -t container_runtime_exec_t /usr/local/bin/image-thrillhouse 2>/dev/null || true
 
 # Create builder user first
 RUN useradd -m --uid 1001 builder

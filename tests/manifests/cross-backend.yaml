@@ -5,8 +5,8 @@
 # dnf, zypper), each with its own compute layer on top. Build each layer
 # explicitly in dependency order:
 #
-#   image-build build --manifest tests/manifests/cross-backend.yaml --layer bookworm-base
-#   image-build build --manifest tests/manifests/cross-backend.yaml --layer bookworm-compute
+#   image-thrillhouse build --manifest tests/manifests/cross-backend.yaml --layer bookworm-base
+#   image-thrillhouse build --manifest tests/manifests/cross-backend.yaml --layer bookworm-compute
 #   # …and similarly for the rocky and suse pairs.
 #
 # Combine with --skip-if-exists to make re-runs cheap.

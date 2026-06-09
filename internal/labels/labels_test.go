@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
 )
 
 // TestGenerate tests basic label generation

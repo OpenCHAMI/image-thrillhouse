@@ -5,13 +5,13 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/travisbcotton/image-build/internal/config"
-	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
 )
 
-// RPMMacrosPath is the canonical destination for the shared image-build RPM
+// RPMMacrosPath is the canonical destination for the shared image-thrillhouse RPM
 // macros under /etc/rpm. Both dnf and zypper scratch bootstraps write here.
-const RPMMacrosPath = "/etc/rpm/macros.image-build"
+const RPMMacrosPath = "/etc/rpm/macros.image-thrillhouse"
 
 // WriteRPMMacros installs the shared RPMMacros content into the container at
 // RPMMacrosPath. It centralises the boilerplate the dnf and zypper backends
@@ -69,7 +69,7 @@ func BuildRPMMacros(customMacros map[string]string) string {
 	return content
 }
 
-// RPMMacros is the macros.image-build file content that both the dnf and
+// RPMMacros is the macros.image-thrillhouse file content that both the dnf and
 // zypper scratch builds need under /etc/rpm. It works around a cluster of
 // overlay-filesystem and container-isolation issues that bite RPM during
 // scriptlet execution:

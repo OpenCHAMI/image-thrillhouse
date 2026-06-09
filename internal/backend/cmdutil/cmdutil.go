@@ -83,9 +83,9 @@ func APTImportKey(rootPath, keyPath string) []string {
 	if keyPath == "" {
 		return nil
 	}
-	final := "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
+	final := "/etc/apt/trusted.gpg.d/image-thrillhouse-repo.gpg"
 	if rootPath != "" {
-		final = rootPath + "/etc/apt/trusted.gpg.d/image-build-repo.gpg"
+		final = rootPath + "/etc/apt/trusted.gpg.d/image-thrillhouse-repo.gpg"
 	}
 	// $0 is the script's "name" slot (we pass "apt-import-key" so error
 	// messages from sh stay readable), $1 is the destination, $2 is the key.

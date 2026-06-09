@@ -14,12 +14,12 @@ layer:
       clean_requirements_on_remove=True
       best=True
       skip_if_unavailable=False
-      reposdir=/etc/image-build/yum.repos.d
+      reposdir=/etc/image-thrillhouse/yum.repos.d
     options:
       releasever: "9"
       install-weak-deps: "false"
   repos: 
-    - path: /etc/image-build/yum.repos.d/rocky-baseos.repo
+    - path: /etc/image-thrillhouse/yum.repos.d/rocky-baseos.repo
       content: |
         [rocky-baseos]
         name=rocky-baseos
@@ -27,7 +27,7 @@ layer:
         enabled=1
         gpgcheck=1
         gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9
-    - path: /etc/image-build/yum.repos.d/rocky-appstream.repo
+    - path: /etc/image-thrillhouse/yum.repos.d/rocky-appstream.repo
       content: |
         [rocky-appstream]
         name=rocky-appstream

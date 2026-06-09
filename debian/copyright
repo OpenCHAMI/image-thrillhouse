@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: image-build
+Upstream-Name: image-thrillhouse
 Upstream-Contact: Travis Cotton <travis@example.com>
-Source: https://github.com/travisbcotton/image-build
+Source: https://github.com/travisbcotton/image-thrillhouse
 
 Files: *
 Copyright: 2026 Travis Cotton <travis@example.com>

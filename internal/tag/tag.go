@@ -8,7 +8,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
 )
 
 type LayerInput struct {

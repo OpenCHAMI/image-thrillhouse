@@ -1,22 +1,21 @@
-Source: image-build
+Source: image-thrillhouse
 Section: admin
 Priority: optional
 Maintainer: Travis Cotton <travis@example.com>
-Build-Depends: debhelper-compat (= 13)
+Build-Depends: debhelper-compat (= 13),
+               pkg-config,
+               libgpgme-dev
 Standards-Version: 4.6.2
-Homepage: https://github.com/travisbcotton/image-build
-Vcs-Browser: https://github.com/travisbcotton/image-build
-Vcs-Git: https://github.com/travisbcotton/image-build.git
+Homepage: https://github.com/travisbcotton/image-thrillhouse
+Vcs-Browser: https://github.com/travisbcotton/image-thrillhouse
+Vcs-Git: https://github.com/travisbcotton/image-thrillhouse.git
 Rules-Requires-Root: no
 
-Package: image-build
+Package: image-thrillhouse
 Architecture: any
 Depends: ${shlibs:Depends},
          ${misc:Depends},
-         buildah,
-         libgpgme-dev,
-         libbtrfs-dev,
-         libdevmapper-dev
+         buildah
 Recommends: squashfs-tools
 Suggests: podman
 Description: Go-based image builder wrapping buildah

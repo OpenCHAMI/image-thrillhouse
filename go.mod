@@ -1,4 +1,4 @@
-module github.com/travisbcotton/image-build
+module github.com/travisbcotton/image-thrillhouse
 
 go 1.26.2
 

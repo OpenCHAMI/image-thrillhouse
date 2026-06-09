@@ -18,9 +18,9 @@ import (
 	"go.podman.io/image/v5/types"
 	"go.podman.io/storage"
 
-	"github.com/travisbcotton/image-build/internal/config"
-	"github.com/travisbcotton/image-build/internal/container"
-	"github.com/travisbcotton/image-build/internal/fetch"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/fetch"
 )
 
 // toSpecsMounts converts our internal BindMount type to the OCI runtime
@@ -251,7 +251,7 @@ func (c *Container) RunScript(ctx context.Context, script string, out container.
 	}
 
 	// write script to temp file in container
-	tmpPath := fmt.Sprintf("/tmp/image-build-script-%d.sh", time.Now().UnixNano())
+	tmpPath := fmt.Sprintf("/tmp/image-thrillhouse-script-%d.sh", time.Now().UnixNano())
 
 	if err := c.WriteFile(ctx, config.File{
 		Path:    tmpPath,
@@ -328,7 +328,7 @@ func (c *Container) WriteFile(ctx context.Context, file config.File) error {
 	// Write to a host-side temp file and hand the path to buildah.Add.
 	// We close explicitly (rather than just defer-close) so the bytes are
 	// flushed before Add reads them; the only deferred work is removal.
-	tmp, err := os.CreateTemp("", "image-build-*")
+	tmp, err := os.CreateTemp("", "image-thrillhouse-*")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}

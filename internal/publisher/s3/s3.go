@@ -16,8 +16,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/travisbcotton/image-build/internal/container"
-	"github.com/travisbcotton/image-build/internal/fsutil"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/fsutil"
 )
 
 // S3Publisher uploads boot images to S3-compatible storage.
@@ -188,7 +188,7 @@ func (s *S3Publisher) findInitramfs(mountPath, kernelVersion string) (string, st
 
 // createSquashFS creates a SquashFS image in a temporary location
 func (s *S3Publisher) createSquashFS(ctx context.Context, mountPath, name, tag string) (string, error) {
-	tmpFile, err := os.CreateTemp("", fmt.Sprintf("image-build-%s-%s-*.squashfs", name, tag))
+	tmpFile, err := os.CreateTemp("", fmt.Sprintf("image-thrillhouse-%s-%s-*.squashfs", name, tag))
 	if err != nil {
 		return "", fmt.Errorf("create temp file: %w", err)
 	}

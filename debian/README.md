@@ -1,6 +1,6 @@
-# Building Debian Package for image-build
+# Building Debian Package for image-thrillhouse
 
-This directory contains the necessary configuration files to build a Debian package (.deb) for the image-build tool.
+This directory contains the necessary configuration files to build a Debian package (.deb) for the image-thrillhouse tool.
 
 ## Prerequisites
 
@@ -60,16 +60,16 @@ sudo make install
 
 The following files are created during the build:
 
-- `../image-build_0.1.0-1_amd64.deb` - The binary package
-- `../image-build_0.1.0-1_amd64.buildinfo` - Build information
-- `../image-build_0.1.0-1_amd64.changes` - Changes file
+- `../image-thrillhouse_0.1.0-1_amd64.deb` - The binary package
+- `../image-thrillhouse_0.1.0-1_amd64.buildinfo` - Build information
+- `../image-thrillhouse_0.1.0-1_amd64.changes` - Changes file
 
 ## Installing the Package
 
 Once built, install the package with:
 
 ```bash
-sudo dpkg -i ../image-build_0.1.0-1_amd64.deb
+sudo dpkg -i ../image-thrillhouse_0.1.0-1_amd64.deb
 
 # If there are dependency issues, run:
 sudo apt-get install -f
@@ -77,7 +77,7 @@ sudo apt-get install -f
 
 ## Package Information
 
-- **Package name**: image-build
+- **Package name**: image-thrillhouse
 - **Version**: 0.1.0-1
 - **Architecture**: amd64 (or your system architecture)
 - **Dependencies**: buildah, libgpgme-dev, libbtrfs-dev, libdevmapper-dev
@@ -87,7 +87,7 @@ sudo apt-get install -f
 ## Files Installed
 
 The package installs:
-- `/usr/bin/image-build` - The main binary
+- `/usr/bin/image-thrillhouse` - The main binary
 
 ## Testing on macOS
 
@@ -139,11 +139,11 @@ Copy the repository to a Linux server and build there:
 
 ```bash
 # On your Mac
-rsync -av . user@linux-server:/path/to/image-build/
+rsync -av . user@linux-server:/path/to/image-thrillhouse/
 
 # On the Linux server
 ssh user@linux-server
-cd /path/to/image-build
+cd /path/to/image-thrillhouse
 sudo apt-get install -y debhelper dh-golang golang-go devscripts build-essential
 dpkg-buildpackage -us -uc -b
 ```
@@ -155,7 +155,7 @@ dpkg-buildpackage -us -uc -b
 Edit `debian/changelog` and update the version number. Follow the Debian changelog format:
 
 ```
-image-build (0.2.0-1) unstable; urgency=medium
+image-thrillhouse (0.2.0-1) unstable; urgency=medium
 
   * New upstream release
   * Add new features...

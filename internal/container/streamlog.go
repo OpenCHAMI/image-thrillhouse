@@ -36,7 +36,7 @@ var logFormat atomic.Value // string: "json", "text", or "textblock"
 //	publisher.squashfs — internal/publisher/squashfs/*
 //	oscap              — internal/oscap/*
 //	manifest           — internal/manifest/*
-//	cli                — cmd/image-build/* (user-facing CLI feedback)
+//	cli                — cmd/image-thrillhouse/* (user-facing CLI feedback)
 //
 // Adding a new package? Pick "<parent>.<child>" if the package is a child of
 // an existing group (e.g. publisher.foo), else use the bare package name.

@@ -9,9 +9,9 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/travisbcotton/image-build/internal/backend/cmdutil"
-	"github.com/travisbcotton/image-build/internal/config"
-	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/backend/cmdutil"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
 )
 
 // DnfBackend implements the Backend interface for DNF package manager.
