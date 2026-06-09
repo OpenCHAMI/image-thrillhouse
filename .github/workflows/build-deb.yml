@@ -11,17 +11,16 @@ permissions:
 jobs:
   build-deb:
     name: Build Debian Package (${{ matrix.arch }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        arch: [amd64, arm64]
         include:
           - arch: amd64
             goarch: amd64
-            runner_arch: X64
+            runner: ubuntu-latest
           - arch: arm64
             goarch: arm64
-            runner_arch: ARM64
+            runner: ubuntu-24.04-arm
     
     steps:
       - name: Checkout code
@@ -70,27 +69,12 @@ jobs:
             libbtrfs-dev \
             libdevmapper-dev
 
-      - name: Install cross-compilation tools for arm64
-        if: matrix.arch == 'arm64'
-        run: |
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            libgpgme-dev:arm64 \
-            libbtrfs-dev:arm64 \
-            libdevmapper-dev:arm64
-
       - name: Build Debian package
         env:
           DEB_BUILD_OPTIONS: nocheck
-          GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
-          CC: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
-          PKG_CONFIG_PATH: ${{ matrix.arch == 'arm64' && '/usr/lib/aarch64-linux-gnu/pkgconfig' || '' }}
         run: |
-          dpkg-buildpackage -us -uc -b -a${{ matrix.arch }}
+          dpkg-buildpackage -us -uc -b
 
       - name: List generated packages
         run: |
@@ -119,15 +103,16 @@ jobs:
 
   build-rpm:
     name: Build RPM Package (${{ matrix.arch }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        arch: [x86_64, aarch64]
         include:
           - arch: x86_64
             goarch: amd64
+            runner: ubuntu-latest
           - arch: aarch64
             goarch: arm64
+            runner: ubuntu-24.04-arm
     
     steps:
       - name: Checkout code
@@ -158,18 +143,6 @@ jobs:
             libgpgme-dev \
             libbtrfs-dev \
             libdevmapper-dev
-
-      - name: Install cross-compilation tools for aarch64
-        if: matrix.arch == 'aarch64'
-        run: |
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            libgpgme-dev:arm64 \
-            libbtrfs-dev:arm64 \
-            libdevmapper-dev:arm64
 
       - name: Create RPM build structure
         run: |
@@ -203,16 +176,11 @@ jobs:
 
       - name: Build RPM package
         env:
-          PATH: ${{ env.PATH }}:${{ env.GOROOT }}/bin
-          GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
-          CC: ${{ matrix.arch == 'aarch64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
-          PKG_CONFIG_PATH: ${{ matrix.arch == 'aarch64' && '/usr/lib/aarch64-linux-gnu/pkgconfig' || '' }}
         run: |
           which go
           go version
           echo "Building for architecture: ${{ matrix.arch }}"
-          echo "GOARCH: ${GOARCH}"
           rpmbuild -bb --nodeps --target=${{ matrix.arch }} ~/rpmbuild/SPECS/image-build.spec
 
       - name: List generated packages
