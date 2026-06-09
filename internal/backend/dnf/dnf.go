@@ -23,6 +23,7 @@ import (
 //   - allowerasing: "true" or "false" (default: "false") - Allow erasing of installed packages to resolve dependencies
 //   - nobest: "true" or "false" (default: "false") - Do not limit packages to best candidates
 //   - releasever: string (optional) - Override the RHEL/distro release version (e.g., "9", "10")
+//   - macro.*: string (optional) - Custom RPM macros (e.g., macro._dbpath: "/var/lib/rpm")
 type DnfBackend struct {
 	installWeakDeps bool
 	best            bool
@@ -30,6 +31,7 @@ type DnfBackend struct {
 	allowErasing    bool
 	noBest          bool
 	releaseVer      string
+	customMacros    map[string]string
 }
 
 // New creates a new DNF backend instance.
@@ -40,6 +42,7 @@ type DnfBackend struct {
 //   - allowerasing: Allow erasing packages to resolve dependencies (default: false)
 //   - nobest: Do not limit to best candidates (default: false)
 //   - releasever: Override the distro release version (e.g., "9", "10")
+//   - macro.*: Custom RPM macros (e.g., macro._dbpath: "/var/lib/rpm")
 func New(options map[string]string) *DnfBackend {
 	backend := &DnfBackend{
 		installWeakDeps: true, // DNF default
@@ -48,6 +51,7 @@ func New(options map[string]string) *DnfBackend {
 		allowErasing:    false,
 		noBest:          false,
 		releaseVer:      "", // Empty = use system default
+		customMacros:    cmdutil.ExtractMacroOptions(options),
 	}
 
 	// Parse options
@@ -184,6 +188,7 @@ func (d *DnfBackend) InstallRootCommands(install config.Install, rootPath string
 //   - allowerasing: "true" or "false"
 //   - nobest: "true" or "false"
 //   - releasever: string (any value, e.g., "9", "10", "40")
+//   - macro.*: string (any RPM macro definition)
 //
 // Returns an error if an unknown option is provided or if a value is invalid.
 func (d *DnfBackend) ValidateOptions(options map[string]string) error {
@@ -265,7 +270,7 @@ func (d *DnfBackend) Bootstrap(ctx context.Context, c container.Container, rootP
 	}
 
 	// Write the shared RPM macros into the scratch root.
-	cmdutil.WriteRPMMacros(ctx, c, log)
+	cmdutil.WriteRPMMacros(ctx, c, log, d.customMacros)
 
 	// Initialize the RPM database.
 	log.Debug("Initializing RPM database")
