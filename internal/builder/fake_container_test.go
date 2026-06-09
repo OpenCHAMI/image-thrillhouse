@@ -18,14 +18,25 @@ import (
 // every other interface method with safe defaults. Only the methods the
 // builder unit tests exercise have meaningful behaviour.
 type fakeContainer struct {
-	WriteFileCalls  []config.File
-	RunCalls        [][]string
-	RunModes        []container.RunMode
-	RunScriptCalls  []string
-	WriteFileErr    error
-	RunErr          error
-	RunScriptErr    error
-	MountPathReturn string
+	WriteFileCalls     []config.File
+	RunCalls           [][]string
+	RunModes           []container.RunMode
+	RunScriptCalls     []string
+	CopyDirectoryCalls []copyDirectoryCall
+	WriteFileErr       error
+	RunErr             error
+	RunScriptErr       error
+	CopyDirectoryErr   error
+	MountPathReturn    string
+}
+
+// copyDirectoryCall records a single CopyDirectory invocation so builder
+// tests can assert how config.Directory entries get mapped onto
+// container.CopyDirectoryOptions.
+type copyDirectoryCall struct {
+	Src  string
+	Dest string
+	Opts container.CopyDirectoryOptions
 }
 
 func (f *fakeContainer) Run(ctx context.Context, cmd []string, mode container.RunMode, out container.OutputWriter, opts ...container.RunOption) error {
@@ -44,8 +55,13 @@ func (f *fakeContainer) WriteFile(ctx context.Context, file config.File) error {
 	return f.WriteFileErr
 }
 
-func (f *fakeContainer) CopyDirectory(ctx context.Context, srcDir, destDir string) error {
-	return nil
+func (f *fakeContainer) CopyDirectory(ctx context.Context, srcDir, destDir string, opts container.CopyDirectoryOptions) error {
+	f.CopyDirectoryCalls = append(f.CopyDirectoryCalls, copyDirectoryCall{
+		Src:  srcDir,
+		Dest: destDir,
+		Opts: opts,
+	})
+	return f.CopyDirectoryErr
 }
 
 func (f *fakeContainer) Commit(ctx context.Context, name, tag string) (string, error) {

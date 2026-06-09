@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -355,18 +356,21 @@ func (c *Container) WriteFile(ctx context.Context, file config.File) error {
 	return nil
 }
 
-// CopyDirectory copies an entire directory from the host to the container.
-// This is much faster than walking through individual files because it uses
-// buildah's native directory copy functionality in a single operation.
+// CopyDirectory copies an entire directory from the host to the container in
+// a single buildah.Builder.Add call. See container.CopyDirectoryOptions for
+// the per-call knobs.
 //
-// srcDir: source directory path on the host (must exist)
+// srcDir: source directory path on the host (must exist and be a directory)
 // destDir: destination directory path in the container
 //
-// The directory contents are copied recursively, preserving the directory structure.
-func (c *Container) CopyDirectory(ctx context.Context, srcDir, destDir string) error {
+// When opts.ContentsOnly is true (typical), srcDir/. is copied into destDir
+// (cp -a semantics). When false, srcDir itself is copied as a subdirectory
+// under destDir (Dockerfile COPY semantics). The two modes use different
+// (ContextDir, source) arg pairs into buildah.Add so we don't have to rely
+// on its directory-vs-contents heuristics.
+func (c *Container) CopyDirectory(ctx context.Context, srcDir, destDir string, opts container.CopyDirectoryOptions) error {
 	log := slog.With("component", "buildah")
 
-	// Validate source directory exists
 	info, err := os.Stat(srcDir)
 	if err != nil {
 		return fmt.Errorf("stat source directory %s: %w", srcDir, err)
@@ -375,20 +379,34 @@ func (c *Container) CopyDirectory(ctx context.Context, srcDir, destDir string) e
 		return fmt.Errorf("source path %s is not a directory", srcDir)
 	}
 
-	log.Debug("Copying directory to container", "src", srcDir, "dest", destDir)
+	log.Debug("Copying directory to container",
+		"src", srcDir, "dest", destDir,
+		"chmod", opts.Chmod, "chown", opts.Chown,
+		"preserveOwnership", opts.PreserveOwnership,
+		"contentsOnly", opts.ContentsOnly,
+		"excludes", len(opts.Excludes))
 
-	// Use buildah's Add method which can handle entire directories efficiently.
-	// The trailing slash ensures we copy the contents, not the directory itself.
-	// For example: srcDir="/path/to/roles" with destDir="/tmp/ansible/roles"
-	// will copy all contents of roles/ into /tmp/ansible/roles/
 	addOpts := buildah.AddAndCopyOptions{
-		// ContextDir tells buildah where to find the source
-		ContextDir: srcDir,
+		Chmod:             opts.Chmod,
+		Chown:             opts.Chown,
+		PreserveOwnership: opts.PreserveOwnership,
+		Excludes:          opts.Excludes,
 	}
 
-	// Add "." as source (relative to ContextDir) to copy all contents
-	// destDir is where the contents will be placed in the container
-	if err := c.Builder.Add(destDir, false, addOpts, "."); err != nil {
+	// ContentsOnly chooses between cp -a src/. dest/ and cp -a src dest/.
+	// We frame the call as (ContextDir, source-relative-to-ContextDir) so
+	// buildah's own DirCopyContents heuristic isn't in the loop.
+	var contextDir, source string
+	if opts.ContentsOnly {
+		contextDir = srcDir
+		source = "."
+	} else {
+		contextDir = filepath.Dir(srcDir)
+		source = filepath.Base(srcDir)
+	}
+	addOpts.ContextDir = contextDir
+
+	if err := c.Builder.Add(destDir, false, addOpts, source); err != nil {
 		return fmt.Errorf("copy directory %s to %s: %w", srcDir, destDir, err)
 	}
 

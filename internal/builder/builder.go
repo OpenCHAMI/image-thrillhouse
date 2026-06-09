@@ -130,6 +130,11 @@ func (b *Builder) Build(ctx context.Context) error {
 		return fmt.Errorf("write files: %w", err)
 	}
 
+	// Recursively copy host directories into the container
+	if err := b.writeDirectories(ctx, c); err != nil {
+		return fmt.Errorf("write directories: %w", err)
+	}
+
 	// Install packages, groups, and modules
 	if err := b.runInstall(ctx, c); err != nil {
 		return fmt.Errorf("install: %w", err)
@@ -327,6 +332,35 @@ func (b *Builder) writeFiles(ctx context.Context, c container.Container) error {
 		log.Info("Writing Files:", "file", file.Path)
 		if err := c.WriteFile(ctx, file); err != nil {
 			return fmt.Errorf("write file %s: %w", file.Path, err)
+		}
+	}
+	return nil
+}
+
+// writeDirectories recursively copies each configured host directory into the
+// container in a single buildah operation per entry.
+//
+// ContentsOnly defaults to true when unset in the config (cp -a src/. dest/),
+// matching the documented schema default. Any other unset option keeps
+// buildah's own defaults: empty Mode preserves host modes, empty Owner +
+// PreserveOwnership=false resets ownership to 0:0.
+func (b *Builder) writeDirectories(ctx context.Context, c container.Container) error {
+	log := slog.With("component", "builder")
+	for _, dir := range b.cfg.Layer.Directories {
+		contentsOnly := true
+		if dir.ContentsOnly != nil {
+			contentsOnly = *dir.ContentsOnly
+		}
+		opts := container.CopyDirectoryOptions{
+			Chmod:             dir.Mode,
+			Chown:             dir.Owner,
+			PreserveOwnership: dir.PreserveOwnership,
+			Excludes:          dir.Excludes,
+			ContentsOnly:      contentsOnly,
+		}
+		log.Info("Copying directory", "src", dir.Src, "dest", dir.Path)
+		if err := c.CopyDirectory(ctx, dir.Src, dir.Path, opts); err != nil {
+			return fmt.Errorf("copy directory %s -> %s: %w", dir.Src, dir.Path, err)
 		}
 	}
 	return nil

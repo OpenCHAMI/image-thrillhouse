@@ -70,6 +70,29 @@ func WithBindMount(source, destination string, readonly bool) RunOption {
 	}
 }
 
+// CopyDirectoryOptions configures a CopyDirectory call. All fields are
+// optional and map onto buildah.AddAndCopyOptions:
+//
+//   - Chmod: applied uniformly to files and directories. Empty preserves
+//     host modes (buildah's natural default).
+//   - Chown: "uid:gid" or "user:group". Empty resets to 0:0 unless
+//     PreserveOwnership is set.
+//   - PreserveOwnership: keep host ownership instead of buildah's 0:0
+//     default. Ignored when Chown is non-empty.
+//   - Excludes: .containerignore-style patterns evaluated by the same
+//     matcher buildah uses, so the tag hasher and the copy step see the
+//     same file set.
+//   - ContentsOnly: true copies srcDir/. into destDir (cp -a semantics).
+//     false copies srcDir as a subdirectory under destDir (Dockerfile
+//     COPY-of-directory semantics).
+type CopyDirectoryOptions struct {
+	Chmod             string
+	Chown             string
+	PreserveOwnership bool
+	Excludes          []string
+	ContentsOnly      bool
+}
+
 // Container provides an abstraction for container operations.
 // It encapsulates buildah functionality for creating, modifying, and committing containers.
 type Container interface {
@@ -87,11 +110,13 @@ type Container interface {
 	// of the underlying buildah Add operation.
 	WriteFile(ctx context.Context, file config.File) error
 
-	// CopyDirectory copies an entire directory from the host to the container.
-	// This is much faster than walking and copying individual files.
-	// srcDir is the source directory path on the host.
-	// destDir is the destination directory path in the container.
-	CopyDirectory(ctx context.Context, srcDir, destDir string) error
+	// CopyDirectory copies an entire directory from the host to the container
+	// in one buildah operation. srcDir is the source directory path on the
+	// host; destDir is the destination directory path in the container.
+	//
+	// See CopyDirectoryOptions for the per-call knobs (mode, ownership,
+	// excludes, contents-only vs subdir).
+	CopyDirectory(ctx context.Context, srcDir, destDir string, opts CopyDirectoryOptions) error
 
 	// Commit commits the container to local storage with the given name and tag
 	Commit(ctx context.Context, name, tag string) (string, error)

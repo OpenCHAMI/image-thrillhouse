@@ -6,6 +6,25 @@ import (
 	"testing"
 )
 
+// dirCfg writes a config file that references a layer.directories entry
+// pointing at root, optionally with excludes and option fields.
+func dirCfg(t *testing.T, cfgPath, srcRoot, optionLines string) {
+	t.Helper()
+	body := `meta:
+  name: test
+  tags: ["1"]
+layer:
+  manager:
+    name: dnf
+  directories:
+    - path: /opt/app
+      src: ` + srcRoot + `
+` + optionLines
+	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
+}
+
 // minimalConfig is the smallest yaml that LoadConfigRaw will parse without
 // complaint. We don't care about its contents — only that the file exists
 // and parses — because hashing reads the bytes raw and then walks the
@@ -114,6 +133,196 @@ func TestCompute_MissingConfigFile(t *testing.T) {
 	_, err := Compute(LayerInput{ConfigPath: "/nonexistent/path.yaml"}, nil)
 	if err == nil {
 		t.Fatal("expected error for missing config file")
+	}
+}
+
+// TestCompute_DirectoryContentChange: editing a file under a layer.directories
+// src must change the layer hash. This is the core cache-correctness contract
+// — without it, a stale image would happily be reused after a host-side edit.
+func TestCompute_DirectoryContentChange(t *testing.T) {
+	dir := t.TempDir()
+	srcRoot := filepath.Join(dir, "tree")
+	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	payload := filepath.Join(srcRoot, "config.txt")
+	if err := os.WriteFile(payload, []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := filepath.Join(dir, "layer.yaml")
+	dirCfg(t, cfg, srcRoot, "")
+
+	h1, err := Compute(LayerInput{ConfigPath: cfg}, nil)
+	if err != nil {
+		t.Fatalf("Compute 1: %v", err)
+	}
+
+	if err := os.WriteFile(payload, []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h2, err := Compute(LayerInput{ConfigPath: cfg}, nil)
+	if err != nil {
+		t.Fatalf("Compute 2: %v", err)
+	}
+	if h1 == h2 {
+		t.Error("edit to a file under directories.src must change the hash")
+	}
+}
+
+// TestCompute_DirectoryAddRemoveFile: adding or removing a file under src must
+// change the hash. Two configs that differ only by the presence of an extra
+// file should not share a layer tag.
+func TestCompute_DirectoryAddRemoveFile(t *testing.T) {
+	dir := t.TempDir()
+	srcRoot := filepath.Join(dir, "tree")
+	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcRoot, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "layer.yaml")
+	dirCfg(t, cfg, srcRoot, "")
+
+	h1, _ := Compute(LayerInput{ConfigPath: cfg}, nil)
+
+	if err := os.WriteFile(filepath.Join(srcRoot, "b.txt"), []byte("b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h2, _ := Compute(LayerInput{ConfigPath: cfg}, nil)
+	if h1 == h2 {
+		t.Error("adding a file under directories.src must change the hash")
+	}
+
+	if err := os.Remove(filepath.Join(srcRoot, "b.txt")); err != nil {
+		t.Fatal(err)
+	}
+	h3, _ := Compute(LayerInput{ConfigPath: cfg}, nil)
+	if h1 != h3 {
+		t.Errorf("removing a previously-added file should restore the hash: %s vs %s", h1, h3)
+	}
+}
+
+// TestCompute_DirectoryExcludesDropContent: an excluded file must NOT
+// contribute to the hash. Verify by writing junk under an excluded subdir
+// and confirming the hash matches an otherwise-identical tree without that
+// file.
+func TestCompute_DirectoryExcludesDropContent(t *testing.T) {
+	dir := t.TempDir()
+	srcRoot := filepath.Join(dir, "tree")
+	if err := os.MkdirAll(filepath.Join(srcRoot, "cache"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcRoot, "keep.txt"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := filepath.Join(dir, "layer.yaml")
+	dirCfg(t, cfg, srcRoot, "      excludes:\n        - cache\n")
+
+	h1, _ := Compute(LayerInput{ConfigPath: cfg}, nil)
+
+	// Drop a file under the excluded subdir; hash must not move.
+	if err := os.WriteFile(filepath.Join(srcRoot, "cache", "garbage.bin"), []byte("noise\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h2, _ := Compute(LayerInput{ConfigPath: cfg}, nil)
+	if h1 != h2 {
+		t.Errorf("excluded file must not change the hash: %s vs %s", h1, h2)
+	}
+
+	// Sanity check: a non-excluded edit DOES move the hash.
+	if err := os.WriteFile(filepath.Join(srcRoot, "keep.txt"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h3, _ := Compute(LayerInput{ConfigPath: cfg}, nil)
+	if h1 == h3 {
+		t.Error("edit to a non-excluded file should move the hash")
+	}
+}
+
+// TestCompute_DirectoryHostModeChange: when dir.mode is unset, buildah
+// preserves host modes — so a host chmod must invalidate the cache. When
+// dir.mode is set, all entries get that mode regardless of host, so a host
+// chmod must NOT invalidate the cache.
+func TestCompute_DirectoryHostModeChange(t *testing.T) {
+	dir := t.TempDir()
+	srcRoot := filepath.Join(dir, "tree")
+	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(srcRoot, "script.sh")
+	if err := os.WriteFile(file, []byte("#!/bin/sh\necho hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Case A: no mode set in YAML → host modes preserved → chmod must move hash.
+	cfgA := filepath.Join(dir, "preserve.yaml")
+	dirCfg(t, cfgA, srcRoot, "")
+	hA1, _ := Compute(LayerInput{ConfigPath: cfgA}, nil)
+	if err := os.Chmod(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hA2, _ := Compute(LayerInput{ConfigPath: cfgA}, nil)
+	if hA1 == hA2 {
+		t.Error("with no mode set, host chmod must move the hash (modes flow into the layer)")
+	}
+
+	// Case B: mode forced in YAML → host modes ignored → chmod must NOT move hash.
+	cfgB := filepath.Join(dir, "forced.yaml")
+	dirCfg(t, cfgB, srcRoot, "      mode: \"0644\"\n")
+	hB1, _ := Compute(LayerInput{ConfigPath: cfgB}, nil)
+	if err := os.Chmod(file, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hB2, _ := Compute(LayerInput{ConfigPath: cfgB}, nil)
+	if hB1 != hB2 {
+		t.Errorf("with forced mode, host chmod must NOT move the hash: %s vs %s", hB1, hB2)
+	}
+}
+
+// TestCompute_DirectoryConfigOptionsAffectHash: the config-level option fields
+// (mode, owner, preserve_ownership, contents_only, excludes) live in the YAML,
+// so flipping them must change the hash via the config-bytes path. This isn't
+// a feature of hashDirectory itself — it's an end-to-end guarantee — but it
+// matters enough to lock down with a test.
+func TestCompute_DirectoryConfigOptionsAffectHash(t *testing.T) {
+	dir := t.TempDir()
+	srcRoot := filepath.Join(dir, "tree")
+	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcRoot, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgPlain := filepath.Join(dir, "plain.yaml")
+	dirCfg(t, cfgPlain, srcRoot, "")
+	cfgMode := filepath.Join(dir, "mode.yaml")
+	dirCfg(t, cfgMode, srcRoot, "      mode: \"0644\"\n")
+	cfgOwner := filepath.Join(dir, "owner.yaml")
+	dirCfg(t, cfgOwner, srcRoot, "      owner: \"1000:1000\"\n")
+	cfgSubdir := filepath.Join(dir, "subdir.yaml")
+	dirCfg(t, cfgSubdir, srcRoot, "      contents_only: false\n")
+
+	hPlain, _ := Compute(LayerInput{ConfigPath: cfgPlain}, nil)
+	hMode, _ := Compute(LayerInput{ConfigPath: cfgMode}, nil)
+	hOwner, _ := Compute(LayerInput{ConfigPath: cfgOwner}, nil)
+	hSubdir, _ := Compute(LayerInput{ConfigPath: cfgSubdir}, nil)
+
+	hashes := map[string]string{
+		"plain":  hPlain,
+		"mode":   hMode,
+		"owner":  hOwner,
+		"subdir": hSubdir,
+	}
+	for n1, h1 := range hashes {
+		for n2, h2 := range hashes {
+			if n1 < n2 && h1 == h2 {
+				t.Errorf("%s and %s configs should hash differently, both = %s", n1, n2, h1)
+			}
+		}
 	}
 }
 
