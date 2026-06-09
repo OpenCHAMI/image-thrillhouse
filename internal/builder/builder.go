@@ -14,15 +14,15 @@ import (
 	"strings"
 
 	"github.com/mattn/go-shellwords"
-	"github.com/travisbcotton/image-build/internal/backend"
-	"github.com/travisbcotton/image-build/internal/config"
-	"github.com/travisbcotton/image-build/internal/container"
-	"github.com/travisbcotton/image-build/internal/fetch"
-	"github.com/travisbcotton/image-build/internal/labels"
-	"github.com/travisbcotton/image-build/internal/oscap"
-	"github.com/travisbcotton/image-build/internal/publisher"
+	"github.com/travisbcotton/image-thrillhouse/internal/backend"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/fetch"
+	"github.com/travisbcotton/image-thrillhouse/internal/labels"
+	"github.com/travisbcotton/image-thrillhouse/internal/oscap"
+	"github.com/travisbcotton/image-thrillhouse/internal/publisher"
 
-	ibuildah "github.com/travisbcotton/image-build/internal/buildah"
+	ibuildah "github.com/travisbcotton/image-thrillhouse/internal/buildah"
 )
 
 // Builder orchestrates the image building process.
@@ -293,7 +293,7 @@ func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) erro
 //     image is committed.
 func (b *Builder) placeGPGKey(ctx context.Context, c container.Container, isScratch bool, rootPath string, idx int, keyBytes []byte) (string, func(), error) {
 	if isScratch {
-		f, err := os.CreateTemp("", "image-build-gpg-key-*.bin")
+		f, err := os.CreateTemp("", "image-thrillhouse-gpg-key-*.bin")
 		if err != nil {
 			return "", func() {}, fmt.Errorf("create temp key file: %w", err)
 		}
@@ -308,7 +308,7 @@ func (b *Builder) placeGPGKey(ctx context.Context, c container.Container, isScra
 
 	// Parent build: place inside the container at a stable, codebase-controlled
 	// path. We include the repo index so multiple repos don't collide.
-	inContainer := fmt.Sprintf("/tmp/image-build-gpg-key-%d.bin", idx)
+	inContainer := fmt.Sprintf("/tmp/image-thrillhouse-gpg-key-%d.bin", idx)
 	if err := c.WriteFile(ctx, config.File{
 		Path:    inContainer,
 		Content: string(keyBytes),

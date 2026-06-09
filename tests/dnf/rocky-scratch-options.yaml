@@ -10,14 +10,14 @@ layer:
     config: |
       [main]
       gpgcheck=1
-      reposdir=/etc/image-build/yum.repos.d
+      reposdir=/etc/image-thrillhouse/yum.repos.d
     options:
       releasever: "9"
       install-weak-deps: "false"
       best: "true"
       allowerasing: "true"
   repos: 
-    - path: /etc/image-build/yum.repos.d/rocky-baseos.repo
+    - path: /etc/image-thrillhouse/yum.repos.d/rocky-baseos.repo
       content: |
         [rocky-baseos]
         name=rocky-baseos

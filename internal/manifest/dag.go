@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/travisbcotton/image-build/internal/tag"
+	"github.com/travisbcotton/image-thrillhouse/internal/tag"
 )
 
 type DAG struct {

@@ -9,9 +9,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/travisbcotton/image-build/internal/backend/cmdutil"
-	"github.com/travisbcotton/image-build/internal/config"
-	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/backend/cmdutil"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
 )
 
 // ZypperBackend implements the Backend interface for Zypper-based distributions.
@@ -285,7 +285,7 @@ func (z *ZypperBackend) OutputWriter() container.OutputWriter {
 // Zypper distinguishes "error" exit codes (1..99) from "informational" exit
 // codes (100..149). The informational codes mean the requested operation
 // succeeded — they only carry an extra signal back to the caller. In a
-// container/image-build context where there is no init, no D-Bus, and the
+// container/image-thrillhouse context where there is no init, no D-Bus, and the
 // image is about to be committed and never "run" in the chroot, several of
 // these signals are pure noise:
 //

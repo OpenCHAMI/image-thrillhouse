@@ -137,13 +137,13 @@ func TestAPTImportKey(t *testing.T) {
 			name:        "container-side",
 			rootPath:    "",
 			keyPath:     "/tmp/key.bin",
-			mustContain: []string{"sh", "-c", "/tmp/key.bin", "/etc/apt/trusted.gpg.d/image-build-repo.gpg", "gpg --dearmor"},
+			mustContain: []string{"sh", "-c", "/tmp/key.bin", "/etc/apt/trusted.gpg.d/image-thrillhouse-repo.gpg", "gpg --dearmor"},
 		},
 		{
 			name:        "scratch-root prefixes destination path",
 			rootPath:    "/mnt/scratch",
 			keyPath:     "/tmp/key.bin",
-			mustContain: []string{"/mnt/scratch/etc/apt/trusted.gpg.d/image-build-repo.gpg"},
+			mustContain: []string{"/mnt/scratch/etc/apt/trusted.gpg.d/image-thrillhouse-repo.gpg"},
 		},
 	}
 	for _, tt := range tests {
@@ -189,7 +189,7 @@ func TestAPTImportKey_PositionalArgs(t *testing.T) {
 		t.Errorf("paths leaked into script body (injection surface): %q", script)
 	}
 	// Argv positions: $0 first, then $1 (dest), then $2 (key).
-	if got[4] != "/mnt/root/etc/apt/trusted.gpg.d/image-build-repo.gpg" {
+	if got[4] != "/mnt/root/etc/apt/trusted.gpg.d/image-thrillhouse-repo.gpg" {
 		t.Errorf("argv[4] (destination) = %q, want scratch-rooted path", got[4])
 	}
 	if got[5] != "/host/tmp/key.bin" {

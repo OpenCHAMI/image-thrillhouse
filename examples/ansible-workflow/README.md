@@ -1,6 +1,6 @@
 # Ansible Workflow Example
 
-This example demonstrates how to use Ansible playbooks within the image-build tool to configure container images.
+This example demonstrates how to use Ansible playbooks within the image-thrillhouse tool to configure container images.
 
 ## Overview
 
@@ -13,7 +13,7 @@ This example creates a Rocky Linux 9 compute node image with Ansible-based confi
 
 ```
 .
-├── rocky-compute-ansible.yaml     # Main image-build config
+├── rocky-compute-ansible.yaml     # Main image-thrillhouse config
 ├── inventory/
 │   ├── group_vars/
 │   │   └── compute.yaml          # Group variables
@@ -68,21 +68,21 @@ commands:
 When the build runs, the tool:
 
 1. **Verifies Ansible** is installed in the container.
-2. **Stages a host-side temp directory** (e.g. `/tmp/image-build-ansible-XXXXXX/`) containing:
+2. **Stages a host-side temp directory** (e.g. `/tmp/image-thrillhouse-ansible-XXXXXX/`) containing:
    - the user's playbook (copied)
    - the generated `ansible.cfg` (with `roles_path` pointing at the container-side mount)
    - the generated `00-generated-localhost` inventory file
 3. **Bind-mounts host paths into the container** for the duration of the playbook run, all read-only:
-   - host stage dir → `/run/image-build-ansible/etc`
-   - user roles dir (if present) → `/run/image-build-ansible/roles`
-   - user inventory (if specified) → `/run/image-build-ansible/inventory`
+   - host stage dir → `/run/image-thrillhouse-ansible/etc`
+   - user roles dir (if present) → `/run/image-thrillhouse-ansible/roles`
+   - user inventory (if specified) → `/run/image-thrillhouse-ansible/inventory`
 4. **Executes** `ansible-playbook` directly as argv (no shell wrapping):
    ```
-   ANSIBLE_CONFIG=/run/image-build-ansible/etc/ansible.cfg \
+   ANSIBLE_CONFIG=/run/image-thrillhouse-ansible/etc/ansible.cfg \
    ansible-playbook \
-     -i /run/image-build-ansible/etc/00-generated-localhost \
-     -i /run/image-build-ansible/inventory \
-     /run/image-build-ansible/etc/compute.yaml
+     -i /run/image-thrillhouse-ansible/etc/00-generated-localhost \
+     -i /run/image-thrillhouse-ansible/inventory \
+     /run/image-thrillhouse-ansible/etc/compute.yaml
    ```
 5. **Removes the host stage dir** after the run.
 
@@ -120,7 +120,7 @@ This ensures the playbook runs against localhost within the container, and local
 
 ```bash
 # Build the image
-image-build build examples/ansible-workflow/rocky-compute-ansible.yaml
+image-thrillhouse build examples/ansible-workflow/rocky-compute-ansible.yaml
 
 # The resulting image will be available locally
 podman images | grep rocky-compute-ansible

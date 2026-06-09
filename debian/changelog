@@ -1,4 +1,4 @@
-image-build (0.1.0-1) unstable; urgency=medium
+image-thrillhouse (0.1.0-1) unstable; urgency=medium
 
   * Initial release
   * Go-based image builder wrapping buildah

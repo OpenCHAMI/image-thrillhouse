@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
 )
 
 // Generator creates image labels based on configuration.

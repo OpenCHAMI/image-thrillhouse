@@ -1,4 +1,4 @@
-// Package main is the entry point for the image-build CLI tool.
+// Package main is the entry point for the image-thrillhouse CLI tool.
 // It provides commands for building container images using various package managers
 // and publishing them to different destinations.
 package main
@@ -15,20 +15,20 @@ import (
 	"go.podman.io/storage/pkg/reexec"
 	"go.podman.io/storage/pkg/unshare"
 
-	"github.com/travisbcotton/image-build/internal/backend"
-	"github.com/travisbcotton/image-build/internal/backend/apt"
-	"github.com/travisbcotton/image-build/internal/backend/dnf"
-	"github.com/travisbcotton/image-build/internal/backend/mmdebstrap"
-	"github.com/travisbcotton/image-build/internal/backend/zypper"
-	"github.com/travisbcotton/image-build/internal/builder"
-	"github.com/travisbcotton/image-build/internal/config"
-	"github.com/travisbcotton/image-build/internal/container"
-	"github.com/travisbcotton/image-build/internal/manifest"
-	"github.com/travisbcotton/image-build/internal/publisher"
-	"github.com/travisbcotton/image-build/internal/publisher/local"
-	"github.com/travisbcotton/image-build/internal/publisher/registry"
-	s3pub "github.com/travisbcotton/image-build/internal/publisher/s3"
-	"github.com/travisbcotton/image-build/internal/publisher/squashfs"
+	"github.com/travisbcotton/image-thrillhouse/internal/backend"
+	"github.com/travisbcotton/image-thrillhouse/internal/backend/apt"
+	"github.com/travisbcotton/image-thrillhouse/internal/backend/dnf"
+	"github.com/travisbcotton/image-thrillhouse/internal/backend/mmdebstrap"
+	"github.com/travisbcotton/image-thrillhouse/internal/backend/zypper"
+	"github.com/travisbcotton/image-thrillhouse/internal/builder"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/manifest"
+	"github.com/travisbcotton/image-thrillhouse/internal/publisher"
+	"github.com/travisbcotton/image-thrillhouse/internal/publisher/local"
+	"github.com/travisbcotton/image-thrillhouse/internal/publisher/registry"
+	s3pub "github.com/travisbcotton/image-thrillhouse/internal/publisher/s3"
+	"github.com/travisbcotton/image-thrillhouse/internal/publisher/squashfs"
 )
 
 // Global CLI flags that are shared across all subcommands
@@ -47,7 +47,7 @@ var (
 // rootCmd is the base command that is run when no subcommands are provided.
 // It serves as the entry point for the CLI and holds all subcommands.
 var rootCmd = &cobra.Command{
-	Use:           "image-build",
+	Use:           "image-thrillhouse",
 	Short:         "Build OS images for multiple distros",
 	SilenceUsage:  true, // Don't show usage on errors during execution
 	SilenceErrors: true, // Don't let Cobra print errors (we handle them ourselves)
@@ -92,12 +92,12 @@ var renderCmd = &cobra.Command{
 	RunE:  runRender,
 }
 
-// versionCmd prints the version information for the image-build tool.
+// versionCmd prints the version information for the image-thrillhouse tool.
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("image-build v0.1.0")
+		fmt.Println("image-thrillhouse v0.1.0")
 	},
 }
 

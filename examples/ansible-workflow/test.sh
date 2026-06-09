@@ -60,10 +60,10 @@ echo
 
 # Instructions for building
 echo "To build this image, run:"
-echo "  image-build build $CONFIG_FILE"
+echo "  image-thrillhouse build $CONFIG_FILE"
 echo
 echo "Or with the binary in your path:"
-echo "  ./image-build build examples/ansible-workflow/rocky-compute-ansible.yaml"
+echo "  ./image-thrillhouse build examples/ansible-workflow/rocky-compute-ansible.yaml"
 echo
 
 echo "==================================="

@@ -8,17 +8,17 @@
 	dh $@
 
 override_dh_auto_build:
-	go build -v -o image-build ./cmd/image-build
+	go build -v -tags "exclude_graphdriver_btrfs exclude_graphdriver_devicemapper" -o image-thrillhouse ./cmd/image-thrillhouse
 
 override_dh_auto_install:
-	install -D -m 0755 image-build debian/image-build/usr/bin/image-build
+	install -D -m 0755 image-thrillhouse debian/image-thrillhouse/usr/bin/image-thrillhouse
 
 override_dh_auto_test:
 	# Skip tests during package build as they require Linux-specific dependencies
 	# and container runtime environment
 
 override_dh_auto_clean:
-	rm -f image-build
+	rm -f image-thrillhouse
 
 override_dh_dwz:
 	# Skip dwz debug symbol compression - Go binaries have compressed debug sections

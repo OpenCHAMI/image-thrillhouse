@@ -12,6 +12,8 @@ jobs:
   build-deb:
     name: Build Debian Package (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    container:
+      image: debian:bookworm
     strategy:
       matrix:
         include:
@@ -21,8 +23,22 @@ jobs:
           - arch: arm64
             goarch: arm64
             runner: ubuntu-24.04-arm
-    
+
     steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            ca-certificates \
+            curl \
+            git \
+            debhelper \
+            build-essential \
+            fakeroot \
+            devscripts \
+            pkg-config \
+            libgpgme-dev
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -47,7 +63,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           TIMESTAMP=$(date -R)
           cat > debian/changelog << EOF
-          image-build (${VERSION}-1) unstable; urgency=medium
+          image-thrillhouse (${VERSION}-1) unstable; urgency=medium
 
             * Release version ${VERSION}
 
@@ -55,19 +71,6 @@ jobs:
 
           EOF
           cat debian/changelog
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            debhelper \
-            build-essential \
-            fakeroot \
-            devscripts \
-            pkg-config \
-            libgpgme-dev \
-            libbtrfs-dev \
-            libdevmapper-dev
 
       - name: Build Debian package
         env:
@@ -104,6 +107,8 @@ jobs:
   build-rpm:
     name: Build RPM Package (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    container:
+      image: rockylinux:8
     strategy:
       matrix:
         include:
@@ -113,8 +118,22 @@ jobs:
           - arch: aarch64
             goarch: arm64
             runner: ubuntu-24.04-arm
-    
+
     steps:
+      - name: Install RPM build tools
+        run: |
+          dnf install -y \
+            ca-certificates \
+            curl \
+            git \
+            tar \
+            gzip \
+            gcc \
+            make \
+            rpm-build \
+            pkgconf-pkg-config \
+            gpgme-devel
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -134,16 +153,6 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
 
-      - name: Install RPM build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            rpm \
-            pkg-config \
-            libgpgme-dev \
-            libbtrfs-dev \
-            libdevmapper-dev
-
       - name: Create RPM build structure
         run: |
           mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
@@ -151,28 +160,28 @@ jobs:
       - name: Update spec file version
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          sed -i "s/^Version:.*/Version:        ${VERSION}/" image-build.spec
+          sed -i "s/^Version:.*/Version:        ${VERSION}/" image-thrillhouse.spec
           # Update BuildArch if specified
-          if ! grep -q "^BuildArch:" image-build.spec; then
-            sed -i "/^Release:/a BuildArch:      ${{ matrix.arch }}" image-build.spec
+          if ! grep -q "^BuildArch:" image-thrillhouse.spec; then
+            sed -i "/^Release:/a BuildArch:      ${{ matrix.arch }}" image-thrillhouse.spec
           else
-            sed -i "s/^BuildArch:.*/BuildArch:      ${{ matrix.arch }}/" image-build.spec
+            sed -i "s/^BuildArch:.*/BuildArch:      ${{ matrix.arch }}/" image-thrillhouse.spec
           fi
-          cat image-build.spec
+          cat image-thrillhouse.spec
 
       - name: Create source tarball
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          mkdir -p image-build-${VERSION}
+          mkdir -p image-thrillhouse-${VERSION}
           # Copy all files including hidden ones except .git
           shopt -s dotglob
           for file in *; do
             if [ "$file" != ".git" ]; then
-              cp -r "$file" image-build-${VERSION}/ 2>/dev/null || true
+              cp -r "$file" image-thrillhouse-${VERSION}/ 2>/dev/null || true
             fi
           done
-          tar czf ~/rpmbuild/SOURCES/image-build-${VERSION}.tar.gz image-build-${VERSION}
-          cp image-build.spec ~/rpmbuild/SPECS/
+          tar czf ~/rpmbuild/SOURCES/image-thrillhouse-${VERSION}.tar.gz image-thrillhouse-${VERSION}
+          cp image-thrillhouse.spec ~/rpmbuild/SPECS/
 
       - name: Build RPM package
         env:
@@ -181,7 +190,7 @@ jobs:
           which go
           go version
           echo "Building for architecture: ${{ matrix.arch }}"
-          rpmbuild -bb --nodeps --target=${{ matrix.arch }} ~/rpmbuild/SPECS/image-build.spec
+          rpmbuild -bb --nodeps --target=${{ matrix.arch }} ~/rpmbuild/SPECS/image-thrillhouse.spec
 
       - name: List generated packages
         run: |

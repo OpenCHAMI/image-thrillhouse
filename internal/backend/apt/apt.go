@@ -7,9 +7,9 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/travisbcotton/image-build/internal/backend/cmdutil"
-	"github.com/travisbcotton/image-build/internal/config"
-	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/backend/cmdutil"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
 )
 
 // AptBackend implements the Backend interface for APT-based distributions.
@@ -85,7 +85,7 @@ func (a *AptBackend) SupportsParentInstall() bool { return true }
 // Returns the standard apt.conf.d drop-in directory path with a high priority number
 // to ensure our configuration overrides other settings.
 func (a *AptBackend) ConfigFilePath() string {
-	return "/etc/apt/apt.conf.d/99-image-build.conf"
+	return "/etc/apt/apt.conf.d/99-image-thrillhouse.conf"
 }
 
 // InstallCommands generates apt-get commands to install packages in a running container.

@@ -27,7 +27,7 @@ type Manifest struct {
 //	  - name: base
 //	    config: ../rocky/templates/rocky-base.yaml
 //
-// works the same whether image-build is invoked from the repo root, from a
+// works the same whether image-thrillhouse is invoked from the repo root, from a
 // subdirectory, or from a container mount — no cwd assumption needed.
 // Absolute paths are left as-is.
 func Load(path string) (*Manifest, error) {

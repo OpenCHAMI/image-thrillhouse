@@ -32,11 +32,11 @@ For building from source:
 
 ### Using Pre-built Container (Recommended)
 
-The easiest way to use the image-builder is with the pre-built container image:
+The easiest way to use image-thrillhouse is with the pre-built container image:
 
 ```bash
 # Pull the latest image
-podman pull ghcr.io/openchami/image-builder:latest
+podman pull ghcr.io/openchami/image-thrillhouse:latest
 
 # Build an image using your config
 podman run --rm \
@@ -48,8 +48,8 @@ podman run --rm \
   --security-opt label=disable \
   -v $(pwd)/my-image.yaml:/config.yaml:Z \
   -v $(pwd)/output:/output:Z \
-  ghcr.io/openchami/image-builder:latest \
-  image-build build --config /config.yaml --log-level info
+  ghcr.io/openchami/image-thrillhouse:latest \
+  image-thrillhouse build --config /config.yaml --log-level info
 ```
 
 **Note**: If you're building images that will publish to S3, add credentials:
@@ -64,19 +64,19 @@ Only needed if you're developing or modifying the tool:
 
 First, clone the repository: 
 ```bash
-git clone https://github.com/OpenCHAMI/image-builder.git
-cd image-build
+git clone https://github.com/OpenCHAMI/image-thrillhouse.git
+cd image-thrillhouse
 ```
 
 Building on bare metal:
 ```bash
-go build -o image-build ./cmd/image-build
-sudo mv image-build /usr/local/bin/
+go build -o image-thrillhouse ./cmd/image-thrillhouse
+sudo mv image-thrillhouse /usr/local/bin/
 ```
 
 Or build a local container:
 ```bash
-podman build -t image-builder:dev -f Dockerfile .
+podman build -t image-thrillhouse:dev -f Dockerfile .
 ```
 
 ## Quick Start
@@ -98,9 +98,9 @@ layer:
     config: |
       [main]
       gpgcheck=1
-      reposdir=/etc/image-build/yum.repos.d
+      reposdir=/etc/image-thrillhouse/yum.repos.d
   repos: 
-    - path: /etc/image-build/yum.repos.d/rocky-baseos.repo
+    - path: /etc/image-thrillhouse/yum.repos.d/rocky-baseos.repo
       content: |
         [rocky-baseos]
         name=rocky-baseos
@@ -125,13 +125,13 @@ publish:
 ### Build the Image
 
 ```bash
-image-build build --config my-image.yaml --log-level info
+image-thrillhouse build --config my-image.yaml --log-level info
 ```
 
 ### Validate Configuration
 
 ```bash
-image-build validate --config my-image.yaml
+image-thrillhouse validate --config my-image.yaml
 ```
 
 This will check:
@@ -449,7 +449,7 @@ The Dockerfile provides a unified image based on Debian Bookworm that includes a
 
 ```bash
 # Build the unified image
-podman build -t image-builder:latest .
+podman build -t image-thrillhouse:latest .
 ```
 
 ### Multi-Version Support
@@ -470,9 +470,9 @@ layer:
     config: |
       [main]
       gpgcheck=1
-      reposdir=/etc/image-build/yum.repos.d
+      reposdir=/etc/image-thrillhouse/yum.repos.d
   repos:
-    - path: /etc/image-build/yum.repos.d/rocky-baseos.repo
+    - path: /etc/image-thrillhouse/yum.repos.d/rocky-baseos.repo
       content: |
         [rocky-baseos]
         name=rocky-baseos
@@ -501,9 +501,9 @@ layer:
     config: |
       [main]
       gpgcheck=1
-      reposdir=/etc/image-build/yum.repos.d
+      reposdir=/etc/image-thrillhouse/yum.repos.d
   repos:
-    - path: /etc/image-build/yum.repos.d/rocky-baseos.repo
+    - path: /etc/image-thrillhouse/yum.repos.d/rocky-baseos.repo
       content: |
         [rocky-baseos]
         name=rocky-baseos
@@ -562,7 +562,7 @@ Having the **native package manager** available ensures maximum compatibility an
 
 ### Production Usage (Pre-built Container)
 
-The recommended way to run image-build is using the pre-built container from GitHub Container Registry:
+The recommended way to run image-thrillhouse is using the pre-built container from GitHub Container Registry:
 
 ```bash
 # For any distribution (unified image includes all package managers)
@@ -575,13 +575,13 @@ podman run --rm \
   --security-opt label=disable \
   -v $(pwd)/my-image.yaml:/config.yaml:Z \
   -v $(pwd)/output:/output:Z \
-  ghcr.io/openchami/image-builder:latest \
-  image-build build --config /config.yaml --log-level info
+  ghcr.io/openchami/image-thrillhouse:latest \
+  image-thrillhouse build --config /config.yaml --log-level info
 ```
 
 **Available image tags:**
-- `ghcr.io/openchami/image-builder:latest` - Unified image with all package managers
-- `ghcr.io/openchami/image-builder:v0.1.0` - Specific version (when tagged)
+- `ghcr.io/openchami/image-thrillhouse:latest` - Unified image with all package managers
+- `ghcr.io/openchami/image-thrillhouse:v0.1.0` - Specific version (when tagged)
 
 ### Development Usage (Local Build)
 
@@ -597,8 +597,8 @@ podman run --rm \
   --security-opt label=disable \
   -v $(pwd)/my-image.yaml:/config.yaml:Z \
   -v $(pwd)/output:/output:Z \
-  image-builder:latest \
-  image-build build --config /config.yaml --log-level info
+  image-thrillhouse:latest \
+  image-thrillhouse build --config /config.yaml --log-level info
 ```
 
 ### Understanding the Flags
@@ -622,7 +622,7 @@ podman run --rm \
 ### Build Command
 
 ```bash
-image-build build --config <path> [flags]
+image-thrillhouse build --config <path> [flags]
 ```
 
 - `-c, --config`: Path to YAML configuration file (required)
@@ -630,7 +630,7 @@ image-build build --config <path> [flags]
 ### Validate Command
 
 ```bash
-image-build validate --config <path> [flags]
+image-thrillhouse validate --config <path> [flags]
 ```
 
 Validates the configuration without building the image.
@@ -638,7 +638,7 @@ Validates the configuration without building the image.
 ### Version Command
 
 ```bash
-image-build version
+image-thrillhouse version
 ```
 
 Prints version information.
@@ -687,8 +687,8 @@ See the `tests/` directory for complete examples. The config files double as the
 ## Architecture
 
 ```
-image-build/
-├── cmd/image-build/           # Main application entry point
+image-thrillhouse/
+├── cmd/image-thrillhouse/           # Main application entry point
 │   └── main.go
 ├── internal/
 │   ├── backend/               # Package manager implementations
@@ -726,7 +726,7 @@ image-build/
 ### Building from Source
 
 ```bash
-go build -o image-build ./cmd/image-build
+go build -o image-thrillhouse ./cmd/image-thrillhouse
 ```
 
 ### Running Unit Tests
@@ -762,11 +762,11 @@ The `tests/` directory holds shell-driven smoke tests that build a unified conta
 ./run-all-tests.sh --zypper         # only Zypper
 ```
 
-Each backend script (`tests/<backend>/test-<backend>-{scratch,parent}.sh`) can also be run directly. All scripts share a single podman image tag, `image-build:test`, built from the repo's `Dockerfile`.
+Each backend script (`tests/<backend>/test-<backend>-{scratch,parent}.sh`) can also be run directly. All scripts share a single podman image tag, `image-thrillhouse:test`, built from the repo's `Dockerfile`.
 
 **Rebuilding the test image after a code change:**
 
-The container guard skips the build if `image-build:test` already exists, so iterating on the Go binary requires forcing a rebuild. Set the env var:
+The container guard skips the build if `image-thrillhouse:test` already exists, so iterating on the Go binary requires forcing a rebuild. Set the env var:
 
 ```bash
 REBUILD_IMAGE=1 ./run-all-tests.sh                    # rebuild and run everything
@@ -781,13 +781,13 @@ Per-test logs land in `test-output/<backend>-<type>/`.
 
 1. Create a new package in `internal/backend/mymanager/`
 2. Implement the `Backend` interface from `internal/backend/backend.go`
-3. Register it in `cmd/image-build/main.go` in the `newBackend()` function
+3. Register it in `cmd/image-thrillhouse/main.go` in the `newBackend()` function
 
 ### Adding a New Publisher
 
 1. Create a new package in `internal/publisher/mypublisher/`
 2. Implement the `Publisher` interface from `internal/publisher/publisher.go`
-3. Register it in `cmd/image-build/main.go` in the `newPublishers()` function
+3. Register it in `cmd/image-thrillhouse/main.go` in the `newPublishers()` function
 
 ## Migration from Python Version
 
@@ -841,10 +841,10 @@ If you encounter permission errors, ensure you're running with appropriate privi
 
 ```bash
 # Rootless (recommended)
-image-build build --config my-image.yaml
+image-thrillhouse build --config my-image.yaml
 
 # Root
-sudo image-build build --config my-image.yaml
+sudo image-thrillhouse build --config my-image.yaml
 ```
 
 ### Buildah Not Found

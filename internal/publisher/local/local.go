@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/travisbcotton/image-build/internal/buildah"
-	"github.com/travisbcotton/image-build/internal/container"
+	"github.com/travisbcotton/image-thrillhouse/internal/buildah"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
 )
 
 // LocalPublisher publishes images to the local container storage.

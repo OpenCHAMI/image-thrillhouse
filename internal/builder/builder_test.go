@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/travisbcotton/image-build/internal/config"
-	"github.com/travisbcotton/image-build/internal/publisher"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/publisher"
 )
 
 // builderWithLayer constructs a minimal Builder pointed at the given Layer

@@ -1,5 +1,5 @@
 rocky_version: "9.7"
 releasever: '9'
 arch: x86_64
-reposdir: /etc/image-build/yum.repos.d
+reposdir: /etc/image-thrillhouse/yum.repos.d
 repobase: https://dl.rockylinux.org/pub/rocky

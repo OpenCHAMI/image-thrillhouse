@@ -1,7 +1,7 @@
 .PHONY: all build clean install test deb rpm
 
 # Build variables
-BINARY_NAME=image-build
+BINARY_NAME=image-thrillhouse
 VERSION=0.1.0
 GO=go
 GOFLAGS=-v
@@ -14,12 +14,12 @@ all: build
 
 # Build the binary
 build:
-	$(GO) build $(GOFLAGS) -o $(BINARY_NAME) ./cmd/image-build
+	$(GO) build $(GOFLAGS) -o $(BINARY_NAME) ./cmd/image-thrillhouse
 
 # Clean build artifacts
 clean:
 	rm -f $(BINARY_NAME)
-	rm -rf debian/image-build
+	rm -rf debian/image-thrillhouse
 	rm -rf debian/.debhelper
 	rm -rf debian/files
 	rm -rf debian/*.log

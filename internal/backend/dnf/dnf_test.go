@@ -3,7 +3,7 @@ package dnf
 import (
 	"testing"
 
-	"github.com/travisbcotton/image-build/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
 )
 
 func TestNew(t *testing.T) {
