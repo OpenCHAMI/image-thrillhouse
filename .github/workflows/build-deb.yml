@@ -137,7 +137,8 @@ jobs:
             make \
             rpm-build \
             pkgconf-pkg-config \
-            gpgme-devel
+            gpgme-devel \
+            which
 
       - name: Checkout code
         uses: actions/checkout@v4
