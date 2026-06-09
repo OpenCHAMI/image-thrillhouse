@@ -91,6 +91,15 @@ func (d *DnfBackend) ConfigFilePath() string {
 func (d *DnfBackend) InstallCommands(install config.Install) [][]string {
 	var cmds [][]string
 
+	// Handle module operations (enable, install, disable, reset)
+	for _, mod := range install.Modules {
+		cmd := make([]string, 0, 12)
+		cmd = append(cmd, "dnf", "-q")
+		cmd = d.addOptionFlags(cmd)
+		cmd = append(cmd, "module", "-y", mod.Action, moduleSpec(mod))
+		cmds = append(cmds, cmd)
+	}
+
 	// Install individual packages
 	if len(install.Packages) > 0 {
 		cmd := make([]string, 0, 10+len(install.Packages))
@@ -108,15 +117,6 @@ func (d *DnfBackend) InstallCommands(install config.Install) [][]string {
 		cmd = d.addOptionFlags(cmd)
 		cmd = append(cmd, "groupinstall", "-y")
 		cmd = append(cmd, install.Groups...)
-		cmds = append(cmds, cmd)
-	}
-
-	// Handle module operations (enable, install, disable, reset)
-	for _, mod := range install.Modules {
-		cmd := make([]string, 0, 12)
-		cmd = append(cmd, "dnf", "-q")
-		cmd = d.addOptionFlags(cmd)
-		cmd = append(cmd, "module", "-y", mod.Action, moduleSpec(mod))
 		cmds = append(cmds, cmd)
 	}
 
