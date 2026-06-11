@@ -7,7 +7,6 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/travisbcotton/image-thrillhouse/internal/backend/cmdutil"
 	"github.com/travisbcotton/image-thrillhouse/internal/config"
@@ -307,12 +306,6 @@ func (z *ZypperBackend) IsAcceptableExitCode(exitCode int, output string) bool {
 		// Informational codes after a successful install. Safe to treat as
 		// success for an image build.
 		return true
-	case 8:
-		// Legacy: ZYPPER_EXIT_ERR_COMMIT can mean "post-install scriptlet
-		// failed but packages installed." Confirm via output sniffing.
-		return strings.Contains(output, "Installing:") ||
-			strings.Contains(output, "NEW packages are going to be installed") ||
-			strings.Contains(output, "done]")
 	}
 	return false
 }
