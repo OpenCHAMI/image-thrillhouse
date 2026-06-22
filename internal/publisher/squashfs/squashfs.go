@@ -70,16 +70,16 @@ func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, 
 	primary := tags[0]
 	output := filepath.Join(s.path, fmt.Sprintf("%s-%s.squashfs", name, primary))
 	if len(tags) > 1 {
-		log.Info("multiple tags configured; squashfs uses the first tag for the filename",
+		log.Info("multiple tags configured; using the first for the filename",
 			"primary", primary, "ignored_tags", tags[1:])
 	}
 
-	log.Info("Creating squashfs", "squashfs", output, "source", c.MountPath())
+	log.Info("creating squashfs", "squashfs", output, "source", c.MountPath())
 	if err := fsutil.MakeSquashFS(ctx, c.MountPath(), output); err != nil {
 		return err
 	}
 
-	log.Info("Published squashfs", "squashfs", output)
+	log.Info("published squashfs", "squashfs", output)
 	return nil
 }
 

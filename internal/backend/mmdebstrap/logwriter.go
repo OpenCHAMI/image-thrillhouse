@@ -30,21 +30,21 @@ func (c *mmdebstrapClassifier) Line(line string, hadErr bool) {
 	}
 	switch {
 	case strings.HasPrefix(line, "I: "):
-		msg := strings.TrimPrefix(line, "I: ")
-		if strings.HasPrefix(msg, "success") {
-			c.log.Info("mmdebstrap", "msg", msg)
+		text := strings.TrimPrefix(line, "I: ")
+		if strings.HasPrefix(text, "success") {
+			c.log.Info(text)
 		} else {
-			c.log.Debug("mmdebstrap", "msg", msg)
+			c.log.Debug(text)
 		}
 	case strings.HasPrefix(line, "W: "):
-		c.log.Warn("mmdebstrap", "msg", strings.TrimPrefix(line, "W: "))
+		c.log.Warn(strings.TrimPrefix(line, "W: "))
 	case strings.HasPrefix(line, "E: "):
-		c.log.Error("mmdebstrap", "msg", strings.TrimPrefix(line, "E: "))
+		c.log.Error(strings.TrimPrefix(line, "E: "))
 	default:
 		if hadErr {
-			c.log.Error("mmdebstrap", "msg", line)
+			c.log.Error(line)
 		} else {
-			c.log.Debug("mmdebstrap", "msg", line)
+			c.log.Debug(line)
 		}
 	}
 }

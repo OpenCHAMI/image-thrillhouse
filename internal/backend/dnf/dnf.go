@@ -265,7 +265,7 @@ func (d *DnfBackend) Bootstrap(ctx context.Context, c container.Container, rootP
 	}
 	for _, dir := range baseDirs {
 		if err := os.MkdirAll(rootPath+dir, 0755); err != nil {
-			log.Warn("Failed to create base directory", "dir", dir, "error", err)
+			log.Warn("failed to create base directory", "dir", dir, "error", err)
 		}
 	}
 
@@ -273,10 +273,10 @@ func (d *DnfBackend) Bootstrap(ctx context.Context, c container.Container, rootP
 	cmdutil.WriteRPMMacros(ctx, c, log, d.customMacros)
 
 	// Initialize the RPM database.
-	log.Debug("Initializing RPM database")
+	log.Debug("initializing rpm database")
 	out := d.OutputWriter()
 	if err := c.Run(ctx, []string{"rpm", "--root", rootPath, "--initdb"}, container.RunModeHost, out); err != nil {
-		log.Warn("Failed to initialize RPM database", "error", err)
+		log.Warn("failed to initialize rpm database", "error", err)
 	}
 	return nil
 }

@@ -205,7 +205,7 @@ func (w *ansibleStreamWriter) emit(line []byte) {
 		// "level=… key=\"value\"" preamble so the streamed block is visually
 		// consistent with the surrounding records.
 		if !w.boxOpen {
-			fmt.Fprintln(os.Stderr, `level=INFO component="ansible"`)
+			fmt.Fprintln(os.Stderr, `level=INFO component="builder.ansible"`)
 			fmt.Fprintln(os.Stderr, "┌──── ansible playbook ────")
 			w.boxOpen = true
 		}
@@ -241,7 +241,7 @@ func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, 
 	log := slog.With("component", "builder.ansible")
 
 	// Step 1: Verify Ansible is installed in the container.
-	log.Debug("Verifying Ansible installation")
+	log.Debug("verifying ansible installation")
 	if err := b.verifyAnsibleInstalled(ctx, c); err != nil {
 		return fmt.Errorf("ansible not installed: %w", err)
 	}
@@ -252,10 +252,10 @@ func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, 
 		return fmt.Errorf("stage ansible payload: %w", err)
 	}
 	defer func() {
-		log.Debug("Cleaning up ansible stage dir", "dir", stageDir)
+		log.Debug("cleaning up ansible stage dir", "dir", stageDir)
 		_ = os.RemoveAll(stageDir)
 	}()
-	log.Debug("Staged ansible payload", "host_dir", stageDir, "container_dir", stageEtcPath)
+	log.Debug("staged ansible payload", "host_dir", stageDir, "container_dir", stageEtcPath)
 
 	// Step 3: Resolve optional user-provided roles and inventory paths. Both
 	// are bind-mounted directly from their host locations (no copy). OCI bind
@@ -287,18 +287,18 @@ func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, 
 	}
 
 	// Step 4: Execute ansible-playbook with the bind mounts in place.
-	log.Info("Running ansible-playbook", "playbook", ansible.Playbook, "groups", ansible.Groups)
+	log.Info("running ansible-playbook", "playbook", ansible.Playbook, "groups", ansible.Groups)
 	if err := b.executeAnsiblePlaybook(ctx, c, ansible, playbookBase, stageDir, rolesHost, hasRoles, inventoryHost); err != nil {
 		return fmt.Errorf("execute ansible-playbook: %w", err)
 	}
 
-	log.Info("Ansible playbook execution completed successfully")
+	log.Info("ansible playbook complete")
 	return nil
 }
 
 // verifyAnsibleInstalled checks if Ansible is installed in the container.
 func (b *Builder) verifyAnsibleInstalled(ctx context.Context, c container.Container) error {
-	if err := container.RunCmd(ctx, c, []string{"ansible-playbook", "--version"}, container.RunModeContainer); err != nil {
+	if err := container.RunCmd(ctx, c, "builder.ansible", []string{"ansible-playbook", "--version"}, container.RunModeContainer); err != nil {
 		return fmt.Errorf("ansible-playbook not found - ensure ansible-core or ansible is installed")
 	}
 	return nil
@@ -444,9 +444,9 @@ func (b *Builder) executeAnsiblePlaybook(
 		opts = append(opts, container.WithBindMount(inventoryHost, stageInv, true))
 	}
 
-	log.Debug("Executing ansible command",
+	log.Debug("executing ansible command",
 		"cmd", cmd,
-		"ANSIBLE_CONFIG", configPath,
+		"ansible_config", configPath,
 		"stage_host", stageDir,
 		"roles_host", rolesHost,
 		"inventory_host", inventoryHost,

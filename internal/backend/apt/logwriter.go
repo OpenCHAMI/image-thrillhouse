@@ -74,11 +74,11 @@ func (c *aptClassifier) Done(raw string, err error) {
 		c.log.Info("additional packages installed", "packages", c.additionalPackages)
 	}
 	for _, w := range c.warnings {
-		c.log.Warn("apt warning", "msg", w)
+		c.log.Warn("apt warning", "line", w)
 	}
 	if err != nil {
 		for _, e := range c.errors {
-			c.log.Error("apt error", "msg", e)
+			c.log.Error("apt error", "line", e)
 		}
 	}
 }

@@ -98,7 +98,7 @@ func (b *Builder) Build(ctx context.Context) error {
 	}
 	defer c.Delete() // Always clean up the container when done
 
-	log.Debug("Created container", "id", c.GetID(), "name", c.GetName(), "from", c.GetParent())
+	log.Debug("created container", "id", c.GetID(), "name", c.GetName(), "from", c.GetParent())
 
 	// Apply package manager configuration (e.g., dnf.conf)
 	if err := b.applyManagerConfig(ctx, c); err != nil {
@@ -156,10 +156,10 @@ func (b *Builder) Build(ctx context.Context) error {
 	}
 
 	// Generate image labels
-	log.Debug("Generating image labels")
+	log.Debug("generating image labels")
 	labelGen := labels.New(b.cfg)
 	imageLabels := labelGen.Generate()
-	log.Debug("Generated labels", "count", len(imageLabels))
+	log.Debug("generated labels", "count", len(imageLabels))
 
 	// Publish to all configured destinations
 	for _, p := range b.publishers {
@@ -189,7 +189,7 @@ func (b *Builder) applyManagerConfig(ctx context.Context, c container.Container)
 	if path == "" {
 		return fmt.Errorf("backend %s does not support layer.manager.config", b.cfg.Layer.Manager.Name)
 	}
-	log.Info("Writing configfile", "config", b.cfg.Layer.Manager.Config)
+	log.Info("writing manager config", "path", path)
 	return c.WriteFile(ctx, config.File{
 		Path:    path,
 		Content: b.cfg.Layer.Manager.Config,
@@ -202,7 +202,7 @@ func (b *Builder) applyManagerConfig(ctx context.Context, c container.Container)
 func (b *Builder) writeRepos(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	for _, repo := range b.cfg.Layer.Repos {
-		log.Info("writing repos:", "repo", repo.Path)
+		log.Info("writing repo", "repo", repo.Path)
 		file := config.File{
 			Path:    repo.Path,
 			Content: repo.Content,
@@ -247,23 +247,23 @@ func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) erro
 			continue
 		}
 
-		log.Info("Importing GPG key for repository", "repo", repo.Path, "key", repo.GPGKey)
+		log.Info("importing gpg key for repository", "repo", repo.Path, "key", repo.GPGKey)
 
 		keyBytes, err := fetch.Get(ctx, repo.GPGKey)
 		if err != nil {
-			log.Warn("Failed to fetch GPG key (continuing)", "repo", repo.Path, "error", err)
+			log.Warn("failed to fetch gpg key (continuing)", "repo", repo.Path, "error", err)
 			continue
 		}
 
 		keyPath, cleanup, err := b.placeGPGKey(ctx, c, isScratch, rootPath, i, keyBytes)
 		if err != nil {
-			log.Warn("Failed to place GPG key (continuing)", "repo", repo.Path, "error", err)
+			log.Warn("failed to place gpg key (continuing)", "repo", repo.Path, "error", err)
 			continue
 		}
 
 		cmd := b.backend.ImportGPGKeyCommand(keyPath, rootPath)
 		if cmd == nil {
-			log.Warn("Backend does not support GPG key import", "backend", b.cfg.Layer.Manager.Name)
+			log.Warn("backend does not support gpg key import", "backend", b.cfg.Layer.Manager.Name)
 			cleanup()
 			continue
 		}
@@ -273,10 +273,10 @@ func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) erro
 			runMode = container.RunModeHost
 		}
 
-		if err := container.RunCmd(ctx, c, cmd, runMode); err != nil {
-			log.Warn("Failed to import GPG key (continuing)", "repo", repo.Path, "error", err)
+		if err := container.RunCmd(ctx, c, "builder", cmd, runMode); err != nil {
+			log.Warn("failed to import gpg key (continuing)", "repo", repo.Path, "error", err)
 		} else {
-			log.Info("Successfully imported GPG key", "repo", repo.Path)
+			log.Info("imported gpg key", "repo", repo.Path)
 		}
 		cleanup()
 	}
@@ -329,7 +329,7 @@ func (b *Builder) placeGPGKey(ctx context.Context, c container.Container, isScra
 func (b *Builder) writeFiles(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	for _, file := range b.cfg.Layer.Files {
-		log.Info("Writing Files:", "file", file.Path)
+		log.Info("writing file", "path", file.Path)
 		if err := c.WriteFile(ctx, file); err != nil {
 			return fmt.Errorf("write file %s: %w", file.Path, err)
 		}
@@ -358,7 +358,7 @@ func (b *Builder) writeDirectories(ctx context.Context, c container.Container) e
 			Excludes:          dir.Excludes,
 			ContentsOnly:      contentsOnly,
 		}
-		log.Info("Copying directory", "src", dir.Src, "dest", dir.Path)
+		log.Info("copying directory", "src", dir.Src, "dest", dir.Path)
 		if err := c.CopyDirectory(ctx, dir.Src, dir.Path, opts); err != nil {
 			return fmt.Errorf("copy directory %s -> %s: %w", dir.Src, dir.Path, err)
 		}
@@ -382,7 +382,7 @@ func (b *Builder) writeDirectories(ctx context.Context, c container.Container) e
 // The backend generates the appropriate commands for the selected mode.
 func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
-	log.Info("Starting install commands:", "install", b.cfg.Layer.Actions.Install)
+	log.Info("starting install", "install", b.cfg.Layer.Actions.Install)
 
 	var (
 		cmds    [][]string
@@ -415,7 +415,7 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 		return err
 	}
 
-	log.Info("Done installing commands:", "install", b.cfg.Layer.Actions.Install)
+	log.Info("install complete", "install", b.cfg.Layer.Actions.Install)
 	return nil
 }
 
@@ -432,7 +432,7 @@ func (b *Builder) runInstallCommands(
 	log *slog.Logger,
 ) error {
 	for _, cmd := range cmds {
-		log.Debug("Install", "action", cmd)
+		log.Debug("install", "action", cmd)
 		// Capture output so the backend can decide whether to tolerate a
 		// non-zero exit (e.g. zypper post-install scriptlet noise).
 		out := container.NewCapturingWriter(b.backend.OutputWriter())
@@ -443,10 +443,10 @@ func (b *Builder) runInstallCommands(
 
 		exitCode := extractExitCode(err)
 		log.Debug("install command exited non-zero",
-			"exitCode", exitCode, "backend", b.cfg.Layer.Manager.Name, "cmd", cmd)
+			"exit_code", exitCode, "backend", b.cfg.Layer.Manager.Name, "cmd", cmd)
 		if exitCode > 0 && b.backend.IsAcceptableExitCode(exitCode, out.String()) {
-			log.Warn("Command returned non-zero exit code but packages were installed successfully",
-				"exitCode", exitCode, "cmd", cmd)
+			log.Warn("install non-zero exit accepted; packages installed",
+				"exit_code", exitCode, "cmd", cmd)
 			continue
 		}
 		if exitCode == -1 {
@@ -454,8 +454,8 @@ func (b *Builder) runInstallCommands(
 			// an *exec.ExitError — the acceptable-exit-code check can't even
 			// run, so a backend that *would* tolerate this code silently
 			// won't get the chance.
-			log.Warn("could not determine exit code from error; acceptable-exit-code checks skipped",
-				"err", err)
+			log.Warn("could not determine exit code; acceptable-exit-code checks skipped",
+				"error", err)
 		}
 		return fmt.Errorf("%s %v: %w", errVerb, cmd, err)
 	}
@@ -474,35 +474,31 @@ func (b *Builder) runInstallCommands(
 func (b *Builder) runCommands(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 
-	// Log start with count
 	if len(b.cfg.Layer.Actions.Commands) > 0 {
-		log.Info("Starting Run Commands", "count", len(b.cfg.Layer.Actions.Commands))
+		log.Info("starting commands", "count", len(b.cfg.Layer.Actions.Commands))
 	}
 
 	for i, cmd := range b.cfg.Layer.Actions.Commands {
-		// Log the command being executed with proper formatting
 		switch cmd.Type() {
 		case config.CommandRun:
-			log.Debug("Executing run command", "index", i, "run", cmd.Run)
+			log.Debug("executing run command", "index", i, "run", cmd.Run)
 			// Parse the command string into parts (handles quoting properly)
 			parts, err := shellwords.Parse(cmd.Run)
 			if err != nil {
 				return fmt.Errorf("parse command %q: %w", cmd.Run, err)
 			}
-			if err := container.RunCmd(ctx, c, parts, container.RunModeContainer); err != nil {
+			if err := container.RunCmd(ctx, c, "builder", parts, container.RunModeContainer); err != nil {
 				return fmt.Errorf("run %s: %w", cmd.Run, err)
 			}
 
 		case config.CommandScript:
-			log.Debug("Executing script", "index", i, "script", cmd.Script)
-			// Execute a multi-line script
-			if err := container.RunScriptCmd(ctx, c, cmd.Script); err != nil {
+			log.Debug("executing script", "index", i, "script", cmd.Script)
+			if err := container.RunScriptCmd(ctx, c, "builder", cmd.Script); err != nil {
 				return fmt.Errorf("run script: %w", err)
 			}
 
 		case config.CommandAnsible:
-			log.Debug("Executing ansible playbook", "index", i, "playbook", cmd.Ansible.Playbook)
-			// Execute Ansible playbook
+			log.Debug("executing ansible playbook", "index", i, "playbook", cmd.Ansible.Playbook)
 			if err := b.runAnsibleCommand(ctx, c, cmd.Ansible); err != nil {
 				return fmt.Errorf("run ansible: %w", err)
 			}
@@ -512,19 +508,8 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 		}
 	}
 
-	// Log completion with each command formatted nicely
 	if len(b.cfg.Layer.Actions.Commands) > 0 {
-		log.Info("Done Run Commands", "count", len(b.cfg.Layer.Actions.Commands))
-		for i, cmd := range b.cfg.Layer.Actions.Commands {
-			switch cmd.Type() {
-			case config.CommandRun:
-				log.Info("command", "index", i, "type", "run", "run", cmd.Run)
-			case config.CommandScript:
-				log.Info("command", "index", i, "type", "script", "script", cmd.Script)
-			case config.CommandAnsible:
-				log.Info("command", "index", i, "type", "ansible", "playbook", cmd.Ansible.Playbook)
-			}
-		}
+		log.Info("commands complete", "count", len(b.cfg.Layer.Actions.Commands))
 	}
 	return nil
 }
@@ -545,7 +530,7 @@ func (b *Builder) removePackages(ctx context.Context, c container.Container) err
 		return nil
 	}
 
-	log.Info("Removing packages", "count", len(packages), "packages", packages)
+	log.Info("removing packages", "count", len(packages), "packages", packages)
 
 	rootPath := ""
 	runMode := container.RunModeContainer
@@ -559,11 +544,11 @@ func (b *Builder) removePackages(ctx context.Context, c container.Container) err
 		return fmt.Errorf("backend %s does not support package removal", b.cfg.Layer.Manager.Name)
 	}
 
-	if err := container.RunCmd(ctx, c, cmd, runMode); err != nil {
+	if err := container.RunCmd(ctx, c, "builder", cmd, runMode); err != nil {
 		return fmt.Errorf("remove packages %v: %w", packages, err)
 	}
 
-	log.Info("Successfully removed packages")
+	log.Info("removed packages")
 	return nil
 }
 
@@ -591,14 +576,14 @@ func (b *Builder) runOpenSCAP(ctx context.Context, c container.Container) error 
 		return nil
 	}
 
-	log.Info("Starting OpenSCAP security scanning")
+	log.Info("starting openscap security scanning")
 
 	scanner := oscap.New(oscapCfg)
 	if err := scanner.Run(ctx, c, b.cfg.Layer.Manager.Name); err != nil {
 		return fmt.Errorf("OpenSCAP failed: %w", err)
 	}
 
-	log.Info("OpenSCAP security scanning complete")
+	log.Info("openscap security scanning complete")
 	return nil
 }
 

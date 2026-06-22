@@ -55,7 +55,7 @@ func (c *zypperClassifier) Line(line string, hadErr bool) {
 	case strings.HasPrefix(trimmed, "No provider of"):
 		c.errors = append(c.errors, trimmed)
 	case strings.HasPrefix(trimmed, "Overall download size:"):
-		c.log.Info("zypper", "msg", trimmed)
+		c.log.Info(trimmed)
 	case strings.HasPrefix(trimmed, "Continue?"):
 		// suppress
 	}
@@ -71,7 +71,7 @@ func (c *zypperClassifier) Done(raw string, err error) {
 	}
 	if err != nil {
 		for _, e := range c.errors {
-			c.log.Error("zypper error", "msg", e)
+			c.log.Error("zypper error", "line", e)
 		}
 	}
 }

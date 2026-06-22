@@ -36,12 +36,12 @@ func (l *LocalPublisher) Publish(ctx context.Context, c container.Container, nam
 		images[i] = fmt.Sprintf("localhost/%s:%s", name, tag)
 	}
 
-	log.Info("Committing locally", "images", images)
+	log.Info("committing locally", "images", images)
 	id, err := c.CommitWithLabelsTags(ctx, name, tags, labels)
 	if err != nil {
 		return fmt.Errorf("commit %v: %w", images, err)
 	}
-	log.Info("Committed locally", "images", images, "containerID", id)
+	log.Info("committed locally", "images", images, "container_id", id)
 	return nil
 }
 

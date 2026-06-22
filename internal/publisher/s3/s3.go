@@ -68,7 +68,7 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	tag := tags[0]
 
 	log := slog.With("component", "publisher.s3")
-	log.Info("Publishing to S3", "bucket", s.bucket, "prefix", s.prefix)
+	log.Info("publishing to s3", "bucket", s.bucket, "prefix", s.prefix)
 
 	mountPath := c.MountPath()
 
@@ -77,21 +77,21 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	if err != nil {
 		return fmt.Errorf("find kernel version: %w", err)
 	}
-	log.Info("Found kernel version", "version", kernelVersion)
+	log.Info("found kernel version", "version", kernelVersion)
 
 	// Step 2: Find initramfs
 	initramfsPath, initramfsName, err := s.findInitramfs(mountPath, kernelVersion)
 	if err != nil {
 		return fmt.Errorf("find initramfs: %w", err)
 	}
-	log.Info("Found initramfs", "path", initramfsPath, "name", initramfsName)
+	log.Info("found initramfs", "path", initramfsPath, "name", initramfsName)
 
 	// Step 3: Find vmlinuz
 	vmlinuzPath := filepath.Join(mountPath, "boot", fmt.Sprintf("vmlinuz-%s", kernelVersion))
 	if _, err := os.Stat(vmlinuzPath); err != nil {
 		return fmt.Errorf("vmlinuz not found at %s: %w", vmlinuzPath, err)
 	}
-	log.Info("Found vmlinuz", "path", vmlinuzPath)
+	log.Info("found vmlinuz", "path", vmlinuzPath)
 
 	// Step 4: Create SquashFS image
 	squashfsPath, err := s.createSquashFS(ctx, mountPath, name, tag)
@@ -99,12 +99,12 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 		return fmt.Errorf("create squashfs: %w", err)
 	}
 	defer os.Remove(squashfsPath)
-	log.Info("Created SquashFS", "path", squashfsPath)
+	log.Info("created squashfs", "path", squashfsPath)
 
 	// Step 5: Detect OS for naming
 	osName, err := s.detectOS(mountPath)
 	if err != nil {
-		log.Warn("Could not detect OS, using 'linux'", "error", err)
+		log.Warn("could not detect os, using 'linux'", "error", err)
 		osName = "linux"
 	}
 
@@ -121,23 +121,23 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	if err := s.uploadFile(ctx, uploader, squashfsPath, rootfsKey); err != nil {
 		return fmt.Errorf("upload rootfs: %w", err)
 	}
-	log.Info("Uploaded rootfs", "key", rootfsKey)
+	log.Info("uploaded rootfs", "key", rootfsKey)
 
 	// Step 8: Upload kernel
 	vmlinuzKey := fmt.Sprintf("efi-images/%svmlinuz-%s", s.prefix, kernelVersion)
 	if err := s.uploadFile(ctx, uploader, vmlinuzPath, vmlinuzKey); err != nil {
 		return fmt.Errorf("upload vmlinuz: %w", err)
 	}
-	log.Info("Uploaded vmlinuz", "key", vmlinuzKey)
+	log.Info("uploaded vmlinuz", "key", vmlinuzKey)
 
 	// Step 9: Upload initramfs
 	initramfsKey := fmt.Sprintf("efi-images/%s%s", s.prefix, initramfsName)
 	if err := s.uploadFile(ctx, uploader, initramfsPath, initramfsKey); err != nil {
 		return fmt.Errorf("upload initramfs: %w", err)
 	}
-	log.Info("Uploaded initramfs", "key", initramfsKey)
+	log.Info("uploaded initramfs", "key", initramfsKey)
 
-	log.Info("Successfully published to S3")
+	log.Info("published to s3")
 	return nil
 }
 

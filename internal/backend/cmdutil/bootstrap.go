@@ -29,7 +29,7 @@ func WriteRPMMacros(ctx context.Context, c container.Container, log *slog.Logger
 		Path:    RPMMacrosPath,
 		Content: content,
 	}); err != nil {
-		log.Warn("Failed to write RPM macros", "error", err)
+		log.Warn("failed to write rpm macros", "error", err)
 	}
 }
 

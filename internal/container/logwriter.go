@@ -14,31 +14,38 @@ import (
 // previously a 2-line pattern repeated a dozen+ times across builder/oscap/
 // ansible_incontainer.
 //
+// component is the canonical slog "component" name (see streamlog.go) that
+// will be attached to the captured-output records. Required so command output
+// groups with the rest of each caller's logs instead of being unattributed.
+//
 // Callers that need to inspect the captured output (e.g. acceptable-exit-code
 // checks) should keep calling c.Run directly with a CapturingWriter.
-func RunCmd(ctx context.Context, c Container, cmd []string, mode RunMode, opts ...RunOption) error {
-	return c.Run(ctx, cmd, mode, NewBufLogWriter("stdout"), opts...)
+func RunCmd(ctx context.Context, c Container, component string, cmd []string, mode RunMode, opts ...RunOption) error {
+	return c.Run(ctx, cmd, mode, NewBufLogWriter(component, "stdout"), opts...)
 }
 
 // RunScriptCmd is the RunScript analogue of RunCmd — same boilerplate-saver
 // for callers that only care about pass/fail and don't need the writer.
-func RunScriptCmd(ctx context.Context, c Container, script string, opts ...RunOption) error {
-	return c.RunScript(ctx, script, NewBufLogWriter("stdout"), opts...)
+// See RunCmd for the component parameter.
+func RunScriptCmd(ctx context.Context, c Container, component string, script string, opts ...RunOption) error {
+	return c.RunScript(ctx, script, NewBufLogWriter(component, "stdout"), opts...)
 }
 
 // BufLogWriter is a thread-safe buffered writer that logs output line-by-line.
 // It buffers all writes and logs them when Flush is called.
 // Used for capturing and logging command output from containers.
 type BufLogWriter struct {
-	mu  sync.Mutex // Protects concurrent writes
-	buf []byte     // Buffered output
-	key string     // Log attribute key (e.g., "stdout", "stderr")
+	mu        sync.Mutex // Protects concurrent writes
+	buf       []byte     // Buffered output
+	component string     // canonical slog component (e.g. "oscap", "builder")
+	key       string     // Log attribute key (e.g., "stdout", "stderr")
 }
 
-// NewBufLogWriter creates a new buffered log writer with the specified key.
-// The key is used as a log attribute when output is flushed (e.g., "stdout").
-func NewBufLogWriter(key string) *BufLogWriter {
-	return &BufLogWriter{key: key}
+// NewBufLogWriter creates a new buffered log writer tagged with the given
+// component (see streamlog.go for the canonical names). key is used as a
+// log attribute when output is flushed (e.g., "stdout").
+func NewBufLogWriter(component, key string) *BufLogWriter {
+	return &BufLogWriter{component: component, key: key}
 }
 
 // Write appends data to the buffer in a thread-safe manner.
@@ -65,7 +72,7 @@ func (w *BufLogWriter) Flush(err error) {
 		level = slog.LevelError
 		msg = "command output (failed)"
 	}
-	LogStreamBlock(level, msg, string(w.buf), "stream", w.key)
+	LogStreamBlock(level, msg, string(w.buf), "component", w.component, "stream", w.key)
 	w.buf = nil
 }
 

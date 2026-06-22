@@ -272,7 +272,7 @@ func (c *Container) RunScript(ctx context.Context, script string, out container.
 	// produced. Routing through /bin/sh lets the shell parse the file.
 	runErr := c.Run(ctx, []string{"/bin/sh", tmpPath}, container.RunModeContainer, out, opts...)
 	if runErr != nil {
-		slog.With("component", "buildah").Error("script failed", "path", tmpPath, "script", script)
+		slog.With("component", "buildah").Error("script execution failed", "path", tmpPath, "script", script)
 	}
 
 	// Cleanup always runs so we don't leave script files behind in the layer.
@@ -280,7 +280,7 @@ func (c *Container) RunScript(ctx context.Context, script string, out container.
 	// status — masking the real error here was the previous behaviour and it
 	// hid genuine script failures behind "cleanup script" errors.
 	if rmErr := c.Run(ctx, []string{"rm", tmpPath}, container.RunModeContainer, out); rmErr != nil {
-		slog.With("component", "buildah").Warn("cleanup script (continuing)", "path", tmpPath, "error", rmErr)
+		slog.With("component", "buildah").Warn("script cleanup failed (continuing)", "path", tmpPath, "error", rmErr)
 	}
 
 	if runErr != nil {
@@ -324,7 +324,7 @@ func (c *Container) WriteFile(ctx context.Context, file config.File) error {
 	default:
 		return fmt.Errorf("write file %s: one of content, src, or url is required", file.Path)
 	}
-	log.Debug("Write file", "path", file.Path)
+	log.Debug("write file", "path", file.Path)
 
 	// Write to a host-side temp file and hand the path to buildah.Add.
 	// We close explicitly (rather than just defer-close) so the bytes are
@@ -379,11 +379,11 @@ func (c *Container) CopyDirectory(ctx context.Context, srcDir, destDir string, o
 		return fmt.Errorf("source path %s is not a directory", srcDir)
 	}
 
-	log.Debug("Copying directory to container",
+	log.Debug("copying directory to container",
 		"src", srcDir, "dest", destDir,
 		"chmod", opts.Chmod, "chown", opts.Chown,
-		"preserveOwnership", opts.PreserveOwnership,
-		"contentsOnly", opts.ContentsOnly,
+		"preserve_ownership", opts.PreserveOwnership,
+		"contents_only", opts.ContentsOnly,
 		"excludes", len(opts.Excludes))
 
 	addOpts := buildah.AddAndCopyOptions{
@@ -438,7 +438,7 @@ func (c *Container) CommitWithLabels(ctx context.Context, name, tag string, labe
 // Returns the container ID on success.
 func (c *Container) CommitWithLabelsTags(ctx context.Context, name string, tags []string, labels map[string]string) (string, error) {
 	log := slog.With("component", "buildah")
-	log.Debug("Commit Container", "ID", c.GetID(), "Name", c.GetName(), "name", name, "tags", tags, "labels", len(labels))
+	log.Debug("committing container", "id", c.GetID(), "container", c.GetName(), "name", name, "tags", tags, "labels", len(labels))
 
 	if len(tags) == 0 {
 		return "", fmt.Errorf("commit %s: at least one tag is required", name)
@@ -474,7 +474,7 @@ func (c *Container) CommitWithLabelsTags(ctx context.Context, name string, tags 
 // here was masking storage leaks that only surfaced as disk pressure days later.
 func (c *Container) Delete() {
 	log := slog.With("component", "buildah")
-	log.Debug("Deleting Container", "ID", c.GetID(), "Name", c.GetName())
+	log.Debug("deleting container", "id", c.GetID(), "container", c.GetName())
 	if err := c.Builder.Unmount(); err != nil {
 		log.Warn("unmount container", "id", c.GetID(), "error", err)
 	}
