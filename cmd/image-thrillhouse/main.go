@@ -259,7 +259,7 @@ func setupLogger(level, format string) error {
 func init() {
 	// Persistent flags apply to all subcommands (root and children)
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (debug, info, warn, error)")
-	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "json", "log format (json, text, textblock)")
+	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "textblock", "log format (json, text, textblock)")
 
 	// Build-specific flags
 	buildCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")

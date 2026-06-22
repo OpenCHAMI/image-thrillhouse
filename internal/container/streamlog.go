@@ -46,7 +46,9 @@ var logFormat atomic.Value // string: "json", "text", or "textblock"
 // SetLogFormat records the active --log-format value so stream helpers can
 // render captured command output in a way that matches the user's choice.
 // Called once from main.setupLogger after the default slog logger is set.
-// If never called, helpers default to "json" (the CLI default).
+// If never called (e.g. library use without going through the CLI), helpers
+// fall back to "json" so structured logs remain parseable by default — the
+// CLI default is "textblock", set in cmd/image-thrillhouse/main.go.
 func SetLogFormat(format string) {
 	logFormat.Store(format)
 }
