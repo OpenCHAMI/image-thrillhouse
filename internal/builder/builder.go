@@ -79,6 +79,15 @@ func (b *Builder) SetSkipIfExists(v bool) {
 func (b *Builder) Build(ctx context.Context) error {
 	log := slog.With("component", "builder")
 
+	log.Info("starting build",
+		"name", b.cfg.Meta.Name,
+		"from", b.cfg.Meta.From,
+		"backend", b.cfg.Layer.Manager.Name,
+		"tags", b.cfg.Meta.Tags,
+		"publishers", publisherNames(b.publishers),
+		"config", b.cfgPath,
+	)
+
 	if b.skipIfExists {
 		exists, err := b.allExist(ctx, b.cfg.Meta.Name, b.cfg.Meta.Tags)
 		if err != nil {
@@ -615,6 +624,26 @@ func extractExitCode(err error) int {
 		}
 	}
 	return -1
+}
+
+// publisherNames returns a short label for each publisher (e.g. "local",
+// "registry", "s3", "squashfs"), derived from the concrete type's package
+// name. Used in the startup banner so operators can see at a glance where
+// the build will publish without us having to add a Name() method to the
+// Publisher interface.
+func publisherNames(ps []publisher.Publisher) []string {
+	names := make([]string, len(ps))
+	for i, p := range ps {
+		// %T yields "*local.LocalPublisher"; the package segment is the
+		// stable, human-readable label.
+		t := fmt.Sprintf("%T", p)
+		t = strings.TrimPrefix(t, "*")
+		if dot := strings.Index(t, "."); dot >= 0 {
+			t = t[:dot]
+		}
+		names[i] = t
+	}
+	return names
 }
 
 // allExist reports whether the given (name, tags) pair already exists at
