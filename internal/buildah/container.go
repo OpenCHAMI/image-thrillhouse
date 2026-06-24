@@ -24,6 +24,29 @@ import (
 	"github.com/travisbcotton/image-thrillhouse/internal/fetch"
 )
 
+// annotateRunErr adds a one-line hint to buildah.Run errors that match a
+// well-known host-side misconfiguration. These failures originate in
+// podman/buildah/netavark/crun on the host, not in the user's image config —
+// so the more helpful response is to point at where to look rather than
+// surface a wall of buildah debug output. Patterns are intentionally narrow
+// to avoid false positives: each branch keys off a string the underlying
+// tool prints verbatim.
+func annotateRunErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "netavark"):
+		return fmt.Errorf("%w (hint: podman/netavark network setup failed; check /etc/containers/networks/*.json and `podman network inspect <name>` for malformed options)", err)
+	case strings.Contains(msg, "newuidmap") || strings.Contains(msg, "newgidmap"):
+		return fmt.Errorf("%w (hint: rootless uid/gid mapping failed; check /etc/subuid and /etc/subgid for the running user)", err)
+	case strings.Contains(msg, "fuse-overlayfs"):
+		return fmt.Errorf("%w (hint: overlay filesystem setup failed; ensure fuse-overlayfs is installed and /etc/containers/storage.conf is correct)", err)
+	}
+	return err
+}
+
 // toSpecsMounts converts our internal BindMount type to the OCI runtime
 // spec.Mount slice that buildah.RunOptions expects. Always uses "rbind" so
 // nested mounts under the source are visible.
@@ -183,7 +206,11 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 			err := command.Run()
 			out.Flush(err)
 			if err != nil {
-				return fmt.Errorf("run %v: %w", cmd, err)
+				// Don't restate the argv — callers already wrap with the
+				// user-facing command string. The "host exec" prefix tells
+				// the user *which side* ran (scratch host vs in-container)
+				// without duplicating the command text.
+				return fmt.Errorf("host exec: %w", err)
 			}
 			return nil
 		case container.RunModeContainer:
@@ -203,7 +230,7 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 			})
 			out.Flush(err)
 			if err != nil {
-				return fmt.Errorf("run %v: %w", cmd, err)
+				return fmt.Errorf("buildah run: %w", annotateRunErr(err))
 			}
 			return nil
 		}
@@ -227,7 +254,7 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 		})
 		out.Flush(err)
 		if err != nil {
-			return fmt.Errorf("run %v: %w", cmd, err)
+			return fmt.Errorf("buildah run: %w", annotateRunErr(err))
 		}
 	}
 	return nil
