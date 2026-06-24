@@ -92,7 +92,7 @@ func (z *ZypperBackend) InstallCommands(install config.Install) [][]string {
 	var cmds [][]string
 
 	if len(install.Modules) > 0 {
-		slog.With("component", "backend.zypper").Warn("Zypper backend does not support modules, ignoring", "modules", install.Modules)
+		slog.With("component", "backend.zypper").Warn("zypper backend does not support modules, ignoring", "modules", install.Modules)
 	}
 
 	if len(install.Packages) > 0 {
@@ -133,7 +133,7 @@ func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath str
 	var cmds [][]string
 
 	if len(install.Modules) > 0 {
-		slog.With("component", "backend.zypper").Warn("Zypper backend does not support modules, ignoring", "modules", install.Modules)
+		slog.With("component", "backend.zypper").Warn("zypper backend does not support modules, ignoring", "modules", install.Modules)
 	}
 
 	// Always refresh repository metadata first for scratch builds
@@ -255,7 +255,7 @@ func (z *ZypperBackend) Bootstrap(ctx context.Context, c container.Container, ro
 
 	for _, dir := range []string{"/proc", "/sys", "/run", "/etc/rpm"} {
 		if err := os.MkdirAll(rootPath+dir, 0755); err != nil {
-			log.Warn("Failed to create essential directory", "dir", dir, "error", err)
+			log.Warn("failed to create essential directory", "dir", dir, "error", err)
 		}
 	}
 

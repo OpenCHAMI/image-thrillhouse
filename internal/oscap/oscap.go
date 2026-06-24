@@ -35,7 +35,7 @@ func New(cfg *config.OpenSCAP) *Scanner {
 // It installs: openscap-utils, scap-security-guide, bzip2
 // These packages are required for running security scans and handling OVAL files.
 func (s *Scanner) InstallSCAP(ctx context.Context, c container.Container, pkgManager string) error {
-	s.log.Info("Installing OpenSCAP packages")
+	s.log.Info("installing openscap packages")
 
 	packages := []string{"openscap-utils", "scap-security-guide", "bzip2"}
 
@@ -50,8 +50,8 @@ func (s *Scanner) InstallSCAP(ctx context.Context, c container.Container, pkgMan
 	case "apt":
 		// Update package list first for APT, matching the builder's style.
 		updateCmd := []string{"apt-get", "update", "-q"}
-		if err := container.RunCmd(ctx, c, updateCmd, container.RunModeContainer); err != nil {
-			s.log.Warn("Failed to update apt cache", "error", err)
+		if err := container.RunCmd(ctx, c, "oscap", updateCmd, container.RunModeContainer); err != nil {
+			s.log.Warn("failed to update apt cache", "error", err)
 		}
 		cmd = []string{"apt-get", "install", "-y", "-q", "--no-install-recommends"}
 		cmd = append(cmd, packages...)
@@ -59,11 +59,11 @@ func (s *Scanner) InstallSCAP(ctx context.Context, c container.Container, pkgMan
 		return fmt.Errorf("unsupported package manager for OpenSCAP: %s", pkgManager)
 	}
 
-	if err := container.RunCmd(ctx, c, cmd, container.RunModeContainer); err != nil {
+	if err := container.RunCmd(ctx, c, "oscap", cmd, container.RunModeContainer); err != nil {
 		return fmt.Errorf("install OpenSCAP packages: %w", err)
 	}
 
-	s.log.Info("OpenSCAP packages installed successfully")
+	s.log.Info("openscap packages installed")
 	return nil
 }
 
@@ -72,17 +72,17 @@ func (s *Scanner) InstallSCAP(ctx context.Context, c container.Container, pkgMan
 // install_scap to install it — saying "set install_scap: true" when they
 // already did is just noise.
 func (s *Scanner) CheckInstall(ctx context.Context, c container.Container) error {
-	s.log.Info("Checking OpenSCAP installation")
+	s.log.Info("checking openscap installation")
 
 	cmd := []string{"oscap", "--version"}
-	if err := container.RunCmd(ctx, c, cmd, container.RunModeContainer); err != nil {
+	if err := container.RunCmd(ctx, c, "oscap", cmd, container.RunModeContainer); err != nil {
 		if s.cfg != nil && s.cfg.InstallSCAP {
 			return fmt.Errorf("oscap --version failed after install_scap; installation may have failed: %w", err)
 		}
 		return fmt.Errorf("oscap not found in image; set install_scap: true or pre-install openscap-utils in the base image: %w", err)
 	}
 
-	s.log.Info("OpenSCAP is installed")
+	s.log.Info("openscap is installed")
 	return nil
 }
 
@@ -95,7 +95,7 @@ func (s *Scanner) CheckInstall(ctx context.Context, c container.Container) error
 //
 // Results are saved to results_path (default: /root/scan.xml)
 func (s *Scanner) RunBenchmark(ctx context.Context, c container.Container) error {
-	s.log.Info("Running XCCDF security benchmark")
+	s.log.Info("running xccdf security benchmark")
 
 	if s.cfg.Profile == "" {
 		return fmt.Errorf("profile is required for SCAP benchmark")
@@ -118,15 +118,15 @@ func (s *Scanner) RunBenchmark(ctx context.Context, c container.Container) error
 		s.cfg.BenchmarkPath,
 	}
 
-	s.log.Info("Running XCCDF evaluation", "profile", s.cfg.Profile, "benchmark", s.cfg.BenchmarkPath)
+	s.log.Info("running xccdf evaluation", "profile", s.cfg.Profile, "benchmark", s.cfg.BenchmarkPath)
 
 	// Note: SCAP scans often return non-zero exit codes even on successful scans
 	// (when findings are discovered), so we continue even if there's an error
-	if err := container.RunCmd(ctx, c, evalCmd, container.RunModeContainer); err != nil {
-		s.log.Warn("XCCDF evaluation completed with findings", "error", err)
+	if err := container.RunCmd(ctx, c, "oscap", evalCmd, container.RunModeContainer); err != nil {
+		s.log.Warn("xccdf evaluation completed with findings", "error", err)
 	}
 
-	s.log.Info("XCCDF evaluation complete", "results", resultsPath)
+	s.log.Info("xccdf evaluation complete", "results", resultsPath)
 
 	// Generate remediation script
 	return s.generateRemediation(ctx, c, resultsPath)
@@ -147,14 +147,14 @@ func (s *Scanner) generateRemediation(ctx context.Context, c container.Container
 		resultsPath,
 	}
 
-	s.log.Info("Generating remediation script", "output", remediatePath)
+	s.log.Info("generating remediation script", "output", remediatePath)
 
-	if err := container.RunCmd(ctx, c, cmd, container.RunModeContainer); err != nil {
-		s.log.Warn("Failed to generate remediation script", "error", err)
+	if err := container.RunCmd(ctx, c, "oscap", cmd, container.RunModeContainer); err != nil {
+		s.log.Warn("failed to generate remediation script", "error", err)
 		return nil // Don't fail the build if remediation generation fails
 	}
 
-	s.log.Info("Remediation script generated", "path", remediatePath)
+	s.log.Info("remediation script generated", "path", remediatePath)
 	return nil
 }
 
@@ -166,7 +166,7 @@ func (s *Scanner) generateRemediation(ctx context.Context, c container.Container
 //
 // Results are saved to oval_result_path (default: /root/vulnerabilities.xml)
 func (s *Scanner) RunOVALEval(ctx context.Context, c container.Container) error {
-	s.log.Info("Running OVAL vulnerability evaluation")
+	s.log.Info("running oval vulnerability evaluation")
 
 	if s.cfg.OVALUrl == "" {
 		return fmt.Errorf("oval_url is required for OVAL evaluation")
@@ -183,7 +183,7 @@ func (s *Scanner) RunOVALEval(ctx context.Context, c container.Container) error 
 	// user-supplied URL through `sh -c`, which was a shell-injection sink, and
 	// removes the implicit dependency on curl + bzip2 being present in the
 	// container.
-	s.log.Info("Downloading OVAL definitions", "url", s.cfg.OVALUrl)
+	s.log.Info("downloading oval definitions", "url", s.cfg.OVALUrl)
 	ovalXML, err := fetchOVAL(ctx, s.cfg.OVALUrl)
 	if err != nil {
 		return fmt.Errorf("download OVAL definitions: %w", err)
@@ -199,14 +199,14 @@ func (s *Scanner) RunOVALEval(ctx context.Context, c container.Container) error 
 		ovalXMLPath,
 	}
 
-	s.log.Info("Running OVAL evaluation")
+	s.log.Info("running oval evaluation")
 
 	// OVAL evaluations return non-zero when vulnerabilities are found
-	if err := container.RunCmd(ctx, c, evalCmd, container.RunModeContainer); err != nil {
-		s.log.Warn("OVAL evaluation completed with vulnerabilities found", "error", err)
+	if err := container.RunCmd(ctx, c, "oscap", evalCmd, container.RunModeContainer); err != nil {
+		s.log.Warn("oval evaluation completed with vulnerabilities found", "error", err)
 	}
 
-	s.log.Info("OVAL evaluation complete", "results", ovalResultPath)
+	s.log.Info("oval evaluation complete", "results", ovalResultPath)
 	return nil
 }
 

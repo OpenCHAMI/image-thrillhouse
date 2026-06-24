@@ -73,11 +73,11 @@ func (c *dnfClassifier) Done(raw string, err error) {
 		c.log.Info("packages installed", "packages", c.installed)
 	}
 	for _, w := range c.warnings {
-		c.log.Warn("dnf warning", "msg", w)
+		c.log.Warn("dnf warning", "line", w)
 	}
 	if err != nil && len(c.errors) > 0 {
 		// Combine all error lines into a single message for better readability
 		errorMsg := strings.Join(c.errors, "\n")
-		c.log.Error("dnf error", "msg", errorMsg)
+		c.log.Error("dnf error", "detail", errorMsg)
 	}
 }
