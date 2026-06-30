@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 
 	"github.com/docker/distribution/registry/api/errcode"
@@ -71,6 +72,7 @@ func (r *RegistryPublisher) Publish(ctx context.Context, c container.Container, 
 func (r *RegistryPublisher) Exists(ctx context.Context, name string, tags []string) (bool, error) {
 	sys := &types.SystemContext{
 		DockerInsecureSkipTLSVerify: types.NewOptionalBool(!r.tlsVerify),
+		AuthFilePath:                os.Getenv("REGISTRY_AUTH_FILE"),
 	}
 
 	for _, t := range tags {
