@@ -237,7 +237,7 @@ const (
 // directory plus any user inventory/roles are bind-mounted into the container
 // for the duration of the run. Everything is cleaned up via defer on the
 // host, so no temporary state is committed into the image layer.
-func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, ansible *config.AnsibleCommand) error {
+func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, ansible *config.AnsibleCommand, additionalOpts ...container.RunOption) error {
 	log := slog.With("component", "builder.ansible")
 
 	// Step 1: Verify Ansible is installed in the container.
@@ -288,7 +288,7 @@ func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, 
 
 	// Step 4: Execute ansible-playbook with the bind mounts in place.
 	log.Info("running ansible-playbook", "playbook", ansible.Playbook, "groups", ansible.Groups)
-	if err := b.executeAnsiblePlaybook(ctx, c, ansible, playbookBase, stageDir, rolesHost, hasRoles, inventoryHost); err != nil {
+	if err := b.executeAnsiblePlaybook(ctx, c, ansible, playbookBase, stageDir, rolesHost, hasRoles, inventoryHost, additionalOpts...); err != nil {
 		return fmt.Errorf("execute ansible-playbook: %w", err)
 	}
 
@@ -399,6 +399,7 @@ func (b *Builder) executeAnsiblePlaybook(
 	playbookBase, stageDir, rolesHost string,
 	hasRoles bool,
 	inventoryHost string,
+	additionalOpts ...container.RunOption,
 ) error {
 	log := slog.With("component", "builder.ansible")
 
@@ -443,6 +444,8 @@ func (b *Builder) executeAnsiblePlaybook(
 	if inventoryHost != "" {
 		opts = append(opts, container.WithBindMount(inventoryHost, stageInv, true))
 	}
+	// Merge in additional options from the caller (e.g., env vars from config)
+	opts = append(opts, additionalOpts...)
 
 	log.Debug("executing ansible command",
 		"cmd", cmd,

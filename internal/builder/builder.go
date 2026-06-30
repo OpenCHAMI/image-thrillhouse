@@ -471,6 +471,57 @@ func (b *Builder) runInstallCommands(
 	return nil
 }
 
+// resolveEnv converts EnvConfig structs into a slice of "KEY=VALUE" strings
+// suitable for container.WithEnv(). It merges layer-level and command-level
+// env configs, with command-level taking precedence.
+//
+// Variables in Pass are read from the host environment and must exist.
+// Variables in Set are defined with explicit values in the configuration.
+// If a required variable from Pass is not found on the host, an error is returned.
+func (b *Builder) resolveEnv(layerEnv, cmdEnv *config.EnvConfig) ([]string, error) {
+	envMap := make(map[string]string)
+
+	// Process layer-level env first
+	if layerEnv != nil {
+		// Handle "pass" - variables from host environment
+		for _, key := range layerEnv.Pass {
+			value, exists := os.LookupEnv(key)
+			if !exists {
+				return nil, fmt.Errorf("required environment variable %q not found on host", key)
+			}
+			envMap[key] = value
+		}
+
+		// Handle "set" - explicit values
+		for key, value := range layerEnv.Set {
+			envMap[key] = value
+		}
+	}
+
+	// Process command-level env (overrides layer-level)
+	if cmdEnv != nil {
+		for _, key := range cmdEnv.Pass {
+			value, exists := os.LookupEnv(key)
+			if !exists {
+				return nil, fmt.Errorf("required environment variable %q not found on host", key)
+			}
+			envMap[key] = value
+		}
+
+		for key, value := range cmdEnv.Set {
+			envMap[key] = value
+		}
+	}
+
+	// Convert to []string format
+	result := make([]string, 0, len(envMap))
+	for key, value := range envMap {
+		result = append(result, fmt.Sprintf("%s=%s", key, value))
+	}
+
+	return result, nil
+}
+
 // runCommands executes all custom commands specified in the configuration.
 // Commands can be either simple one-liners or multi-line shell scripts.
 //
@@ -488,6 +539,19 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 	}
 
 	for i, cmd := range b.cfg.Layer.Actions.Commands {
+		// Resolve environment variables for this command
+		envVars, err := b.resolveEnv(b.cfg.Layer.Env, cmd.Env)
+		if err != nil {
+			return fmt.Errorf("resolve env for command %d: %w", i, err)
+		}
+
+		// Create run options with environment variables
+		var opts []container.RunOption
+		if len(envVars) > 0 {
+			log.Debug("setting environment variables", "index", i, "count", len(envVars))
+			opts = append(opts, container.WithEnv(envVars...))
+		}
+
 		switch cmd.Type() {
 		case config.CommandRun:
 			log.Debug("executing run command", "index", i, "run", cmd.Run)
@@ -496,19 +560,19 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 			if err != nil {
 				return fmt.Errorf("parse command %q: %w", cmd.Run, err)
 			}
-			if err := container.RunCmd(ctx, c, "builder", parts, container.RunModeContainer); err != nil {
+			if err := container.RunCmd(ctx, c, "builder", parts, container.RunModeContainer, opts...); err != nil {
 				return fmt.Errorf("run %s: %w", cmd.Run, err)
 			}
 
 		case config.CommandScript:
 			log.Debug("executing script", "index", i, "script", cmd.Script)
-			if err := container.RunScriptCmd(ctx, c, "builder", cmd.Script); err != nil {
+			if err := container.RunScriptCmd(ctx, c, "builder", cmd.Script, opts...); err != nil {
 				return fmt.Errorf("run script: %w", err)
 			}
 
 		case config.CommandAnsible:
 			log.Debug("executing ansible playbook", "index", i, "playbook", cmd.Ansible.Playbook)
-			if err := b.runAnsibleCommand(ctx, c, cmd.Ansible); err != nil {
+			if err := b.runAnsibleCommand(ctx, c, cmd.Ansible, opts...); err != nil {
 				return fmt.Errorf("run ansible: %w", err)
 			}
 

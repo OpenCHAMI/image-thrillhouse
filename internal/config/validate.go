@@ -39,6 +39,7 @@ func (m *Meta) Validate() error {
 //   - Manager name is specified and supported
 //   - All files are valid
 //   - All actions are valid
+//   - Environment configuration is valid
 func (l *Layer) Validate() error {
 	if l.Manager.Name == "" {
 		return fmt.Errorf("layer.manager is required")
@@ -53,6 +54,13 @@ func (l *Layer) Validate() error {
 	}
 	if !validManagers[l.Manager.Name] {
 		return fmt.Errorf("layer.manager %q is not supported", l.Manager.Name)
+	}
+
+	// Validate layer-level environment configuration
+	if l.Env != nil {
+		if err := l.Env.Validate(); err != nil {
+			return fmt.Errorf("layer.env: %w", err)
+		}
 	}
 
 	// Validate all files
@@ -207,6 +215,7 @@ func (m *Module) Validate() error {
 // Requirements:
 //   - exactly one of run, script, or ansible must be set
 //   - if ansible is set, validate ansible configuration
+//   - if env is set, validate environment configuration
 func (c *Command) Validate() error {
 	// Count which command type is set
 	set := 0
@@ -234,6 +243,13 @@ func (c *Command) Validate() error {
 		}
 	}
 
+	// Validate command-level environment configuration
+	if c.Env != nil {
+		if err := c.Env.Validate(); err != nil {
+			return fmt.Errorf("env: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -252,5 +268,40 @@ func (a *AnsibleCommand) Validate() error {
 	if a.Verbose < 0 || a.Verbose > 4 {
 		return fmt.Errorf("ansible.verbose must be between 0 and 4, got %d", a.Verbose)
 	}
+	return nil
+}
+
+// Validate checks an EnvConfig configuration for correctness.
+// Requirements:
+//   - pass keys must not be empty
+//   - set keys must not be empty
+//   - a key cannot appear in both pass and set (conflict)
+func (e *EnvConfig) Validate() error {
+	if e == nil {
+		return nil
+	}
+
+	// Create a set of "pass" keys for checking conflicts
+	passKeys := make(map[string]bool)
+	for _, key := range e.Pass {
+		if key == "" {
+			return fmt.Errorf("pass contains empty key")
+		}
+		if passKeys[key] {
+			return fmt.Errorf("duplicate key %q in pass", key)
+		}
+		passKeys[key] = true
+	}
+
+	// Check if any "set" keys conflict with "pass" keys
+	for key := range e.Set {
+		if key == "" {
+			return fmt.Errorf("set contains empty key")
+		}
+		if passKeys[key] {
+			return fmt.Errorf("environment variable %q appears in both pass and set", key)
+		}
+	}
+
 	return nil
 }
