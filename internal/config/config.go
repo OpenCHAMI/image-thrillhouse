@@ -39,10 +39,19 @@ type Meta struct {
 	Labels        map[string]string `yaml:"labels"`
 }
 
+// EnvConfig defines environment variables to pass from host or set explicitly.
+// Variables in Pass are read from the host environment and must exist.
+// Variables in Set are defined with explicit values in the configuration.
+type EnvConfig struct {
+	Pass []string          `yaml:"pass"` // Environment variable names to pass from host
+	Set  map[string]string `yaml:"set"`  // Environment variables to set with explicit values
+}
+
 // Layer defines how to build the image layer.
 // It specifies the package manager, repositories, files, and actions to perform.
 type Layer struct {
 	Manager     Manager     `yaml:"manager"`     // Package manager configuration
+	Env         *EnvConfig  `yaml:"env"`         // Optional: Layer-level environment variables
 	Repos       []Repo      `yaml:"repos"`       // Repository configurations
 	Files       []File      `yaml:"files"`       // Files to add to the image
 	Directories []Directory `yaml:"directories"` // Host directories to recursively copy into the image
@@ -130,6 +139,7 @@ type Command struct {
 	Run     string          `yaml:"run"`     // Simple command to run (e.g., "systemctl enable service")
 	Script  string          `yaml:"script"`  // Multi-line shell script to run
 	Ansible *AnsibleCommand `yaml:"ansible"` // Ansible playbook execution
+	Env     *EnvConfig      `yaml:"env"`     // Optional: Command-level environment variables
 }
 
 // AnsibleCommand configures Ansible playbook execution inside the container.
