@@ -45,6 +45,16 @@ Intentionally invalid configs used to verify the `validate` subcommand rejects t
 - [`tests/apt/invalid-option.yaml`](../tests/apt/invalid-option.yaml) — unknown apt option
 - [`tests/apt/invalid-no-suite.yaml`](../tests/apt/invalid-no-suite.yaml) — mmdebstrap missing required `suite`
 
+## Manifests
+
+Multi-layer DAG builds and multi-arch expansion live under [`tests/manifests/`](../tests/manifests/). See [Manifests](configuration.md#manifests) for the schema.
+
+- [`tests/manifests/rocky.yaml`](../tests/manifests/rocky.yaml) — minimal single-arch DAG (base → compute)
+- [`tests/manifests/bookworm.yaml`](../tests/manifests/bookworm.yaml) — Debian single-arch (mmdebstrap + apt)
+- [`tests/manifests/rocky-multiarch.yaml`](../tests/manifests/rocky-multiarch.yaml) — Rocky with an `architectures:` block; one template per arch
+- [`tests/manifests/suse-multiarch.yaml`](../tests/manifests/suse-multiarch.yaml) — openSUSE Leap multi-arch (zypper)
+- [`tests/manifests/cross-backend.yaml`](../tests/manifests/cross-backend.yaml) — three roots (apt/dnf/zypper) in one manifest
+
 ## Ansible post-install workflow
 
 [`examples/ansible-workflow/`](../examples/ansible-workflow/) shows a complete pipeline that builds a Rocky compute image and then applies Ansible roles to it. See the [example's README](../examples/ansible-workflow/README.md).

@@ -208,3 +208,238 @@ func TestLoad_UnknownDependency(t *testing.T) {
 		t.Errorf("error should mention the missing dependency name: %v", err)
 	}
 }
+
+// TestLoad_ExpandsArchitectures: with an architectures block, each logical
+// layer expands into one concrete layer per declared arch. Concrete names
+// are "<logical>-<arch>", VarFiles are arch-first then layer-specific, and
+// depends_on gets rewritten to point at the same-arch parent.
+func TestLoad_ExpandsArchitectures(t *testing.T) {
+	p := writeManifestYAML(t, `architectures:
+  - name: x86_64
+    var_files: [x86.yaml]
+  - name: aarch64
+    var_files: [arm.yaml]
+
+layers:
+  - name: rocky-base
+    config: base.yaml
+  - name: rocky-compute
+    config: compute.yaml
+    var_files: [common.yaml]
+    depends_on: [rocky-base]
+`)
+	m, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(m.Layers) != 4 {
+		t.Fatalf("expected 4 concrete layers (2 logical × 2 arches), got %d", len(m.Layers))
+	}
+
+	byName := make(map[string]Layer)
+	for _, l := range m.Layers {
+		byName[l.Name] = l
+	}
+	for _, want := range []string{"rocky-base-x86_64", "rocky-base-aarch64",
+		"rocky-compute-x86_64", "rocky-compute-aarch64"} {
+		if _, ok := byName[want]; !ok {
+			t.Errorf("missing concrete layer %q; got %v", want, m.Layers)
+		}
+	}
+
+	// LogicalName + Arch propagate.
+	got := byName["rocky-compute-aarch64"]
+	if got.LogicalName != "rocky-compute" || got.Arch != "aarch64" {
+		t.Errorf("logical/arch metadata wrong: %+v", got)
+	}
+
+	// depends_on rewritten to arch-suffixed parent.
+	if len(got.DependsOn) != 1 || got.DependsOn[0] != "rocky-base-aarch64" {
+		t.Errorf("depends_on not rewritten to same-arch parent: %+v", got.DependsOn)
+	}
+
+	// Arch var_files come first, then layer-specific var_files.
+	if len(got.VarFiles) != 2 ||
+		filepath.Base(got.VarFiles[0]) != "arm.yaml" ||
+		filepath.Base(got.VarFiles[1]) != "common.yaml" {
+		t.Errorf("var_files order wrong: %+v", got.VarFiles)
+	}
+}
+
+// TestLoad_ArchesOptOut: a layer with `arches:` builds only for the listed
+// subset. Concrete layers for other arches must NOT be produced.
+func TestLoad_ArchesOptOut(t *testing.T) {
+	p := writeManifestYAML(t, `architectures:
+  - name: x86_64
+  - name: aarch64
+
+layers:
+  - name: base
+    config: base.yaml
+  - name: x86only
+    config: x.yaml
+    arches: [x86_64]
+    depends_on: [base]
+`)
+	m, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	names := make(map[string]bool)
+	for _, l := range m.Layers {
+		names[l.Name] = true
+	}
+	if !names["x86only-x86_64"] {
+		t.Error("missing x86only-x86_64")
+	}
+	if names["x86only-aarch64"] {
+		t.Error("x86only should not have an aarch64 expansion")
+	}
+}
+
+// TestLoad_UnknownArch: `arches:` entries must be a subset of the declared
+// architectures — a typo like `arch64` should error out at load time
+// listing the valid options, not silently drop the layer.
+func TestLoad_UnknownArch(t *testing.T) {
+	p := writeManifestYAML(t, `architectures:
+  - name: x86_64
+  - name: aarch64
+
+layers:
+  - name: base
+    config: base.yaml
+    arches: [arch64]
+`)
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for unknown arch")
+	}
+	if !strings.Contains(err.Error(), "arch64") {
+		t.Errorf("error should mention the offending arch name: %v", err)
+	}
+}
+
+// TestLoad_ArchOnlyParent: a child that builds for arch A but whose parent
+// does not is a load-time error — silent inference would surprise users.
+// The message must name both layers and the offending arch so the fix is
+// obvious.
+func TestLoad_ArchOnlyParent(t *testing.T) {
+	p := writeManifestYAML(t, `architectures:
+  - name: x86_64
+  - name: aarch64
+
+layers:
+  - name: base
+    config: base.yaml
+    arches: [x86_64]
+  - name: compute
+    config: compute.yaml
+    depends_on: [base]
+`)
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for arch-only parent")
+	}
+	for _, want := range []string{"compute", "base", "aarch64"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q: %v", want, err)
+		}
+	}
+}
+
+// TestLoad_ArchesWithoutArchitectures: `arches:` is only meaningful when
+// the manifest has an architectures block. Using it in a plain (non-multi-
+// arch) manifest is almost certainly a typo/misunderstanding — error out.
+func TestLoad_ArchesWithoutArchitectures(t *testing.T) {
+	p := writeManifestYAML(t, `layers:
+  - name: base
+    config: base.yaml
+    arches: [x86_64]
+`)
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for arches without architectures block")
+	}
+}
+
+// TestLoad_DuplicateArch: two architectures with the same name would
+// silently overwrite one another during expansion — reject at load time.
+func TestLoad_DuplicateArch(t *testing.T) {
+	p := writeManifestYAML(t, `architectures:
+  - name: x86_64
+  - name: x86_64
+
+layers:
+  - name: base
+    config: base.yaml
+`)
+	_, err := Load(p)
+	if err == nil {
+		t.Fatal("expected error for duplicate architecture name")
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("wrong error: %v", err)
+	}
+}
+
+// TestLoad_NoArchitectures_LogicalNameDefaults: when no architectures
+// block is present, expansion is a no-op but LogicalName is still
+// populated (defaulting to Name) so downstream code can uniformly read
+// LogicalName without a nil-check dance.
+func TestLoad_NoArchitectures_LogicalNameDefaults(t *testing.T) {
+	p := writeManifestYAML(t, `layers:
+  - name: base
+    config: base.yaml
+`)
+	m, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if m.Layers[0].LogicalName != "base" {
+		t.Errorf("LogicalName should default to Name; got %q", m.Layers[0].LogicalName)
+	}
+	if m.Layers[0].Arch != "" {
+		t.Errorf("Arch should be empty for non-expanded layer; got %q", m.Layers[0].Arch)
+	}
+}
+
+// TestLoad_ArchVarFilesResolved: relative paths under architectures[].var_files
+// must be resolved against the manifest directory too — expansion folds
+// them into layer VarFiles which resolveLayerPaths then rewrites.
+func TestLoad_ArchVarFilesResolved(t *testing.T) {
+	root := t.TempDir()
+	manifestDir := filepath.Join(root, "manifests")
+	configsDir := filepath.Join(root, "configs")
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(configsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"base.yaml", "x86.yaml"} {
+		if err := os.WriteFile(filepath.Join(configsDir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	manifestPath := filepath.Join(manifestDir, "m.yaml")
+	body := `architectures:
+  - name: x86_64
+    var_files: [../configs/x86.yaml]
+
+layers:
+  - name: base
+    config: ../configs/base.yaml
+`
+	if err := os.WriteFile(manifestPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := Load(manifestPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := filepath.Join(configsDir, "x86.yaml")
+	if got := m.Layers[0].VarFiles[0]; got != want {
+		t.Errorf("arch var_file not resolved: got %q, want %q", got, want)
+	}
+}

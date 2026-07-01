@@ -273,3 +273,149 @@ publish:
 ```
 
 S3 publishing reads credentials from the `S3_ACCESS` and `S3_SECRET` environment variables.
+
+## Manifests
+
+A **manifest** is a YAML file that describes a DAG of layers. Each layer references a config file (of the shape above) and declares which other layers it depends on. `image-thrillhouse` computes a deterministic hash tag for each layer from its config + var files + ancestors, so a child layer's `from:` can pin the exact parent it was built against via `{{ .parent_tag }}` — no manual tag bookkeeping.
+
+Manifests replace the pattern of hand-writing one config per (distro × arch) with a single template plus per-arch var files.
+
+### Minimal example
+
+```yaml
+# tests/manifests/rocky.yaml
+layers:
+  - name: rocky-base
+    config: ../rocky/templates/rocky-base.yaml
+    var_files:
+      - ../rocky/templates/x86_64.yaml
+  - name: rocky-compute
+    config: ../rocky/templates/rocky-compute.yaml
+    var_files:
+      - ../rocky/templates/x86_64.yaml
+    depends_on:
+      - rocky-base
+```
+
+Fields:
+
+- `name` (required): unique identifier for the layer within the manifest.
+- `config` (required): path to the layer's config file. Relative paths resolve against the manifest's directory.
+- `var_files` (optional): var files applied when rendering `config`.
+- `depends_on` (optional): logical layer names this layer builds on top of.
+
+Build a specific layer:
+
+```bash
+image-thrillhouse build --manifest tests/manifests/rocky.yaml --layer rocky-compute
+```
+
+### Multi-arch manifests
+
+Declare an `architectures:` block at the top of the manifest and each `layers[]` entry expands into one concrete build per arch it targets. The same template is reused across arches; per-arch differences (repo URLs, arch-only packages, etc.) live in the arch var files.
+
+```yaml
+# tests/manifests/rocky-multiarch.yaml
+architectures:
+  - name: x86_64
+    var_files: [../rocky/templates/x86_64.yaml]
+  - name: aarch64
+    var_files: [../rocky/templates/aarch64.yaml]
+
+layers:
+  - name: rocky-base
+    config: ../rocky/templates/rocky-base.yaml
+  - name: rocky-compute
+    config: ../rocky/templates/rocky-compute.yaml
+    depends_on:
+      - rocky-base
+```
+
+This expands to four concrete build targets — `rocky-base-x86_64`, `rocky-base-aarch64`, `rocky-compute-x86_64`, `rocky-compute-aarch64` — with `depends_on` rewired so each child pins its same-arch parent.
+
+Build a specific expansion by naming the **logical** layer and passing `--arch`:
+
+```bash
+image-thrillhouse build --manifest tests/manifests/rocky-multiarch.yaml \
+  --layer rocky-compute --arch aarch64
+```
+
+`--arch` defaults to the host arch when omitted (`amd64` → `x86_64`, `arm64` → `aarch64`, `386` → `i386`, other values pass through).
+
+### Restricting a layer to a subset of arches
+
+Some packages only exist for one arch, or a whole layer might not make sense on every target. Add `arches:` to opt a layer into a subset of the manifest's declared architectures:
+
+```yaml
+layers:
+  - name: base
+    config: base.yaml
+  - name: hpc-tuning
+    config: hpc-tuning.yaml
+    arches: [x86_64]       # skip aarch64 entirely
+    depends_on: [base]
+```
+
+Rules:
+
+- `arches:` values must be a subset of the manifest's `architectures[]` names.
+- A layer that builds for arch `A` cannot depend on a layer that doesn't. If `hpc-tuning` above tried to depend on an `aarch64`-only parent, `image-thrillhouse` would refuse to load the manifest and tell you which arches to reconcile.
+- `arches:` outside a manifest that has an `architectures:` block is an error — the field only makes sense with expansion.
+
+For **per-package** arch differences (as opposed to whole layers), keep one shared template and let the arch var files supply an arch-specific package list — the template references e.g. `{{ .extra_packages }}` and each arch var file defines its own list.
+
+### Template variables injected by manifests
+
+When rendering a manifest layer's config, `image-thrillhouse` injects the following into the template's variable scope. These take precedence over CLI vars and var files.
+
+| Variable | Value |
+| --- | --- |
+| `tag` | This layer's computed hash. Use in `meta.tags`. |
+| `arch` | This layer's arch name (multi-arch manifests only). |
+| `<parent>_tag` | Each direct parent's hash, keyed by the parent's **logical** name (hyphens → underscores). |
+| `parent_tag` | Alias for the one parent's hash when the layer has exactly one direct parent. |
+
+A multi-arch template can stay arch-agnostic by using `parent_tag` (or `{{ .rocky_base_tag }}`) — both resolve to the same-arch parent for whichever arch is being built.
+
+```yaml
+# rocky-compute.yaml — used unchanged across arches
+meta:
+  name: rocky-compute
+  tags: ["{{ .arch }}-{{ .tag }}"]
+  from: localhost/rocky-base:{{ .parent_tag }}
+```
+
+### CLI
+
+```
+image-thrillhouse build|validate|render \
+  --manifest <path> \
+  --layer <logical-name> \
+  [--arch <arch>]           # required for multi-arch, defaults to host
+  [--var-file <path>] [--var key=value]
+  [--skip-if-exists]        # build only; skip when publishers report the image exists
+```
+
+- `--layer` names a **logical** layer. In a multi-arch manifest, passing a concrete arch-suffixed name is rejected — the error message will point at the correct `--layer + --arch` pair.
+- `--config` and `--manifest` are mutually exclusive.
+- `--arch` requires `--manifest`.
+
+### Var precedence
+
+When rendering a manifest layer, values from multiple sources are merged — highest wins:
+
+1. Manifest-computed vars (`tag`, `arch`, `parent_tag`, `<parent>_tag`).
+2. CLI `--var key=value`.
+3. CLI `--var-file`.
+4. Layer `var_files`.
+5. Architecture `var_files`.
+
+This lets a shared template default arch values in `architectures[].var_files`, override for a specific layer in `layers[].var_files`, and pin ad-hoc values at the CLI without editing the manifest.
+
+### Example manifests
+
+- [`tests/manifests/rocky.yaml`](../tests/manifests/rocky.yaml) — minimal single-arch DAG (dnf).
+- [`tests/manifests/bookworm.yaml`](../tests/manifests/bookworm.yaml) — Debian single-arch (mmdebstrap + apt).
+- [`tests/manifests/rocky-multiarch.yaml`](../tests/manifests/rocky-multiarch.yaml) — Rocky with `architectures:` expansion.
+- [`tests/manifests/suse-multiarch.yaml`](../tests/manifests/suse-multiarch.yaml) — openSUSE Leap multi-arch (zypper).
+- [`tests/manifests/cross-backend.yaml`](../tests/manifests/cross-backend.yaml) — three roots (apt/dnf/zypper) in one manifest.

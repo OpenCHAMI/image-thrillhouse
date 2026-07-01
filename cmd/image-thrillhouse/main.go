@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -41,8 +42,61 @@ var (
 	renderOutput string   // Output path for the render command (default: stdout)
 	manifestPath string   // Path to a manifest file describing a DAG of layers
 	layerName    string   // Layer name (within the manifest) to build
+	archName     string   // Target architecture for a multi-arch manifest build (defaults to host arch)
 	skipIfExists bool     // Skip build when every configured publisher reports the image already exists
 )
+
+// canonicalHostArch returns the arch name the manifest is likely to use
+// for the current host. runtime.GOARCH speaks the Go idiom ("amd64",
+// "arm64") but manifests and package repositories use the RPM/dpkg names
+// ("x86_64", "aarch64"). We map the two ubiquitous cases and pass
+// anything else through unchanged — if the user is on a niche arch and
+// names it with a distro convention we don't know, they can still set
+// --arch explicitly.
+func canonicalHostArch() string {
+	switch runtime.GOARCH {
+	case "amd64":
+		return "x86_64"
+	case "arm64":
+		return "aarch64"
+	case "386":
+		return "i386"
+	default:
+		return runtime.GOARCH
+	}
+}
+
+// validateManifestFlags rejects nonsensical --config/--manifest/--layer/--arch
+// combinations before any file I/O happens. Shared by build, validate,
+// and render so all three surface the same error text.
+func validateManifestFlags() error {
+	if manifestPath != "" && cfgPath != "" {
+		return fmt.Errorf("--config and --manifest are mutually exclusive")
+	}
+	if manifestPath != "" && layerName == "" {
+		return fmt.Errorf("--layer is required when using --manifest")
+	}
+	if layerName != "" && manifestPath == "" {
+		return fmt.Errorf("--manifest is required when using --layer")
+	}
+	if archName != "" && manifestPath == "" {
+		return fmt.Errorf("--arch is only meaningful with --manifest")
+	}
+	return nil
+}
+
+// resolveManifestLayer maps the CLI --layer/--arch pair to a concrete DAG
+// layer name. When the manifest has an architectures block and --arch was
+// not supplied, we fall back to the canonicalised host arch — dag.Resolve
+// still produces a helpful error listing the manifest's declared arches
+// when the host arch isn't one of them.
+func resolveManifestLayer(dag *manifest.DAG) (string, error) {
+	effectiveArch := archName
+	if effectiveArch == "" && dag.IsMultiArch() {
+		effectiveArch = canonicalHostArch()
+	}
+	return dag.Resolve(layerName, effectiveArch)
+}
 
 // rootCmd is the base command that is run when no subcommands are provided.
 // It serves as the entry point for the CLI and holds all subcommands.
@@ -264,7 +318,8 @@ func init() {
 	// Build-specific flags
 	buildCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
 	buildCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file")
-	buildCmd.Flags().StringVar(&layerName, "layer", "", "layer name to build (requires --manifest)")
+	buildCmd.Flags().StringVar(&layerName, "layer", "", "logical layer name to build (requires --manifest)")
+	buildCmd.Flags().StringVar(&archName, "arch", "", "target architecture (multi-arch manifests only; defaults to host arch)")
 	buildCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
 	buildCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 	buildCmd.Flags().BoolVar(&skipIfExists, "skip-if-exists", false, "skip the build when all publishers report the image already exists")
@@ -274,7 +329,8 @@ func init() {
 	// render when they only care about pass/fail.
 	validateCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
 	validateCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file (use with --layer)")
-	validateCmd.Flags().StringVar(&layerName, "layer", "", "layer name in the manifest (requires --manifest)")
+	validateCmd.Flags().StringVar(&layerName, "layer", "", "logical layer name in the manifest (requires --manifest)")
+	validateCmd.Flags().StringVar(&archName, "arch", "", "target architecture (multi-arch manifests only; defaults to host arch)")
 	validateCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
 	validateCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 
@@ -283,7 +339,8 @@ func init() {
 	// --layer for full manifest context with computed tags.
 	renderCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")
 	renderCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file (use with --layer)")
-	renderCmd.Flags().StringVar(&layerName, "layer", "", "layer name in the manifest (requires --manifest)")
+	renderCmd.Flags().StringVar(&layerName, "layer", "", "logical layer name in the manifest (requires --manifest)")
+	renderCmd.Flags().StringVar(&archName, "arch", "", "target architecture (multi-arch manifests only; defaults to host arch)")
 	renderCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
 	renderCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 	renderCmd.Flags().StringVarP(&renderOutput, "output", "o", "", "output file (default: stdout)")
@@ -314,14 +371,8 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	// Validate mutually-exclusive flag combinations. Either a single config
 	// file is provided, or a manifest + layer pair driving a manifest-based
 	// build — never both.
-	if manifestPath != "" && cfgPath != "" {
-		return fmt.Errorf("--config and --manifest are mutually exclusive")
-	}
-	if manifestPath != "" && layerName == "" {
-		return fmt.Errorf("--layer is required when using --manifest")
-	}
-	if layerName != "" && manifestPath == "" {
-		return fmt.Errorf("--manifest is required when using --layer")
+	if err := validateManifestFlags(); err != nil {
+		return err
 	}
 
 	// Always load vars (possibly empty). Templating is supported in both
@@ -338,7 +389,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		layer, err := dag.Get(layerName)
+		concreteName, err := resolveManifestLayer(dag)
+		if err != nil {
+			return err
+		}
+		layer, err := dag.Get(concreteName)
 		if err != nil {
 			return fmt.Errorf("get layer: %w", err)
 		}
@@ -484,14 +539,8 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if manifestPath != "" && cfgPath != "" {
-		return fmt.Errorf("--config and --manifest are mutually exclusive")
-	}
-	if manifestPath != "" && layerName == "" {
-		return fmt.Errorf("--layer is required when using --manifest")
-	}
-	if layerName != "" && manifestPath == "" {
-		return fmt.Errorf("--manifest is required when using --layer")
+	if err := validateManifestFlags(); err != nil {
+		return err
 	}
 	if manifestPath == "" && cfgPath == "" {
 		return fmt.Errorf("either --config or --manifest is required")
@@ -513,8 +562,12 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		concreteName, err := resolveManifestLayer(dag)
+		if err != nil {
+			return err
+		}
 		validateConfigPath, mergedVars, err = prepareLayerRender(
-			dag, layerName, cliVars, cliGlobalVarFiles(),
+			dag, concreteName, cliVars, cliGlobalVarFiles(),
 		)
 		if err != nil {
 			return err
@@ -561,14 +614,8 @@ func runRender(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if manifestPath != "" && cfgPath != "" {
-		return fmt.Errorf("--config and --manifest are mutually exclusive")
-	}
-	if manifestPath != "" && layerName == "" {
-		return fmt.Errorf("--layer is required when using --manifest")
-	}
-	if layerName != "" && manifestPath == "" {
-		return fmt.Errorf("--manifest is required when using --layer")
+	if err := validateManifestFlags(); err != nil {
+		return err
 	}
 	if manifestPath == "" && cfgPath == "" {
 		return fmt.Errorf("either --config or --manifest is required")
@@ -589,8 +636,12 @@ func runRender(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		concreteName, err := resolveManifestLayer(dag)
+		if err != nil {
+			return err
+		}
 		renderConfigPath, mergedVars, err = prepareLayerRender(
-			dag, layerName, cliVars, cliGlobalVarFiles(),
+			dag, concreteName, cliVars, cliGlobalVarFiles(),
 		)
 		if err != nil {
 			return err

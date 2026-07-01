@@ -6,6 +6,7 @@ A Go-based image builder that wraps `buildah` to create layered OS images with s
 
 - **Multiple package managers** — DNF, Zypper, APT (parent builds only), mmdebstrap (scratch builds only)
 - **Scratch & parent builds** — build from `scratch` or layer on top of an existing image
+- **Multi-arch manifests** — one template, one manifest, per-arch expansion with automatic tag pinning
 - **Declarative YAML config** with a `validate` subcommand
 - **Multiple publishers** — local container storage, SquashFS, container registry, S3
 - **OpenSCAP scanning** — XCCDF benchmarks + OVAL vulnerability evaluation
@@ -111,10 +112,13 @@ For registry and S3 targets, see [docs/configuration.md#publish](docs/configurat
 ## Command-line usage
 
 ```bash
-image-thrillhouse build    --config <path>   # build an image
-image-thrillhouse validate --config <path>   # validate config without building
-image-thrillhouse version                    # print version info
+image-thrillhouse build    --config <path>                    # build a single image
+image-thrillhouse build    --manifest <path> --layer <name>   # build one layer from a manifest
+image-thrillhouse validate --config <path>                    # validate config without building
+image-thrillhouse version                                     # print version info
 ```
+
+For multi-arch manifests, pass `--arch <x86_64|aarch64|…>`; it defaults to the host arch. See [Manifests](docs/configuration.md#manifests) for the full manifest schema.
 
 Global flags:
 
