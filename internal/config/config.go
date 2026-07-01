@@ -284,7 +284,27 @@ func (m *Meta) TLSVerify() bool {
 }
 
 func replaceTemplatePlaceholders(data []byte) []byte {
-	// replace {{ ... }} with a placeholder string
-	re := regexp.MustCompile(`\{\{[^}]*\}\}`)
-	return re.ReplaceAll(data, []byte("__placeholder__"))
+	// Handle template control flow blocks (range/if/with/else) that span multiple lines.
+	// These need special handling because simply replacing {{ ... }} breaks YAML structure
+	// when the block contains list items or other structural elements.
+	
+	// First, replace range blocks: {{- range .items }} ... {{- end }}
+	// The (?ms) flags enable multiline and dotall mode so .* crosses newlines.
+	reRangeBlock := regexp.MustCompile(`(?ms)\{\{-?\s*range\s+[^}]*\}\}.*?\{\{-?\s*end\s*-?\}\}`)
+	cleaned := reRangeBlock.ReplaceAllFunc(data, func(match []byte) []byte {
+		// Check if this range contains simple list items: lines with "- {{ ... }}"
+		if regexp.MustCompile(`(?m)^\s*-\s+\{\{`).Match(match) {
+			return []byte("- __placeholder__")
+		}
+		// Check if this range contains structured list items: "- key: {{ ... }}"
+		if regexp.MustCompile(`(?m)^\s*-\s+\w+:`).Match(match) {
+			return []byte("- __placeholder__: __placeholder__")
+		}
+		// Otherwise just use a simple placeholder
+		return []byte("__placeholder__")
+	})
+	
+	// Replace remaining inline template expressions {{ .var }}
+	reInline := regexp.MustCompile(`\{\{[^}]*\}\}`)
+	return reInline.ReplaceAll(cleaned, []byte("__placeholder__"))
 }

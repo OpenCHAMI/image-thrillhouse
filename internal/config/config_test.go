@@ -193,6 +193,55 @@ layer:
 	}
 }
 
+// TestLoadConfigRaw_RangeBlocks verifies that LoadConfigRaw can parse
+// template files containing {{ range }} blocks without breaking YAML structure.
+// This is critical for tag computation which must hash the unrendered template.
+func TestLoadConfigRaw_RangeBlocks(t *testing.T) {
+	tmpl := filepath.Join(t.TempDir(), "tmpl.yaml")
+	body := `meta:
+  name: test-{{ .arch }}
+  tags: ["{{ .tag }}"]
+  from: scratch
+layer:
+  manager:
+    name: dnf
+  actions:
+    install:
+      packages:
+        - {{ .kernel_package }}
+        # Shared packages
+        {{- range .base_shared_packages }}
+        - {{ . }}
+        {{- end }}
+        # x86_64-only packages
+        {{- range .base_x86_64_only_packages }}
+        - {{ . }}
+        {{- end }}
+        - static-package
+`
+	if err := os.WriteFile(tmpl, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfigRaw(tmpl)
+	if err != nil {
+		t.Fatalf("LoadConfigRaw with range blocks failed: %v", err)
+	}
+
+	// The range blocks should be replaced with placeholder list items,
+	// leaving valid YAML structure that can be parsed
+	if cfg.Layer.Manager.Name != "dnf" {
+		t.Errorf("expected manager dnf, got %q", cfg.Layer.Manager.Name)
+	}
+
+	// The packages list should contain placeholders for the template vars
+	// and range blocks, plus the static package
+	if len(cfg.Layer.Actions.Install.Packages) < 1 {
+		t.Errorf("expected at least 1 package after placeholder replacement, got %d", 
+			len(cfg.Layer.Actions.Install.Packages))
+	}
+}
+
 // TestLoadVars_CLIWinsOverFile verifies the documented precedence: --var
 // key=value on the command line overrides the same key in --var-file.
 // This is the property templates rely on for per-build pin-tweaks.
