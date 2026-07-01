@@ -239,15 +239,15 @@ func LoadConfigWithVars(path string, vars map[string]interface{}) (*Config, erro
 
 // RenderConfig reads the file at path and renders it as a Go text/template
 // using the provided vars (arbitrary YAML/JSON-shaped data). Missing keys are
-// treated as errors so that typos in variable names fail loudly rather than
-// silently producing empty values.
+// treated as zero values (empty string, nil slice, etc.) to allow optional
+// variables and conditional rendering with {{ range }} ... {{ else }} or {{ if }}.
 func RenderConfig(path string, vars map[string]interface{}) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
 
-	t, err := template.New("config").Option("missingkey=error").Parse(string(raw))
+	t, err := template.New("config").Option("missingkey=zero").Parse(string(raw))
 	if err != nil {
 		return "", fmt.Errorf("parse template: %w", err)
 	}

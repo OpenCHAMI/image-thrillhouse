@@ -130,26 +130,36 @@ layer:
 	}
 }
 
-// TestRenderConfig_MissingKeyErrors guards the missingkey=error contract.
-// A template that references an unset var must fail loudly rather than
-// silently produce an empty value — that's the difference between a typo
-// caught immediately and a broken build hours later.
-func TestRenderConfig_MissingKeyErrors(t *testing.T) {
+// TestRenderConfig_MissingKeyZero verifies that missing keys are treated as
+// zero values (empty string, nil, etc.) to support optional variables and
+// conditional rendering with {{ if }} or {{ range }} ... {{ else }}.
+func TestRenderConfig_MissingKeyZero(t *testing.T) {
 	tmpl := filepath.Join(t.TempDir(), "tmpl.yaml")
 	if err := os.WriteFile(tmpl, []byte(`meta:
-  name: {{ .missing }}
+  name: {{ .name }}
+  optional: {{ .missing }}
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := RenderConfig(tmpl, map[string]interface{}{})
-	if err == nil {
-		t.Fatal("expected error from missing template var, got nil")
+	out, err := RenderConfig(tmpl, map[string]interface{}{
+		"name": "test",
+		// .missing is not provided
+	})
+	if err != nil {
+		t.Fatalf("RenderConfig should not error on missing keys: %v", err)
 	}
-	// missingkey=error surfaces this exact phrase; lock it in so we don't
-	// silently regress to "<no value>" substitution.
-	if !strings.Contains(err.Error(), "map has no entry for key") {
-		t.Errorf("expected missingkey error message, got: %v", err)
+	
+	// Missing key should render as empty string (zero value)
+	if !strings.Contains(out, "name: test") {
+		t.Errorf("expected 'name: test' in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "optional: ") {
+		t.Errorf("expected 'optional: ' (empty) in output, got:\n%s", out)
+	}
+	// Should NOT contain the template marker
+	if strings.Contains(out, "{{ .missing }}") {
+		t.Errorf("template marker should be replaced, got:\n%s", out)
 	}
 }
 

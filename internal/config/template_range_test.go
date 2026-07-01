@@ -252,3 +252,145 @@ publish:
 		}
 	}
 }
+
+// TestRenderConfig_RangeWithElse tests that {{ range }} ... {{ else }} works
+// correctly with optional/missing variables when using missingkey=zero
+func TestRenderConfig_RangeWithElse(t *testing.T) {
+	tmpl := filepath.Join(t.TempDir(), "tmpl.yaml")
+	body := `meta:
+  name: test
+  tags: ["1.0"]
+  from: scratch
+
+layer:
+  manager:
+    name: dnf
+  actions:
+    install:
+      packages:
+        - base-package
+{{- range .optional_packages }}
+        - {{ . }}
+{{- else }}
+        # No optional packages
+{{- end }}
+        - another-package
+`
+	if err := os.WriteFile(tmpl, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test with undefined optional_packages variable
+	out, err := RenderConfig(tmpl, map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("RenderConfig with undefined variable in range-else failed: %v", err)
+	}
+
+	// Should execute the else branch
+	if !strings.Contains(out, "# No optional packages") {
+		t.Errorf("expected else branch comment in output, got:\n%s", out)
+	}
+
+	// Should have the other packages
+	if !strings.Contains(out, "- base-package") || !strings.Contains(out, "- another-package") {
+		t.Errorf("expected base packages in output, got:\n%s", out)
+	}
+
+	// Should NOT contain template markers
+	if strings.Contains(out, "{{") || strings.Contains(out, "}}") {
+		t.Errorf("rendered output still contains template markers:\n%s", out)
+	}
+}
+
+// TestRenderConfig_MultiArchOptionalPackages tests the real-world use case
+// where x86_64 and aarch64 have their own optional package lists
+func TestRenderConfig_MultiArchOptionalPackages(t *testing.T) {
+	tmpl := filepath.Join(t.TempDir(), "tmpl.yaml")
+	body := `meta:
+  name: test-{{ .arch }}
+  tags: ["1.0"]
+  from: scratch
+
+layer:
+  manager:
+    name: zypper
+  actions:
+    install:
+      packages:
+        - {{ .kernel_package }}
+{{- range .base_shared_packages }}
+        - {{ . }}
+{{- end }}
+{{- range .base_x86_64_only_packages }}
+        - {{ . }}
+{{- else }}
+        # No x86_64 packages
+{{- end }}
+{{- range .base_aarch64_only_packages }}
+        - {{ . }}
+{{- else }}
+        # No aarch64 packages
+{{- end }}
+`
+	if err := os.WriteFile(tmpl, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test x86_64 build - base_aarch64_only_packages is missing
+	varsX86 := map[string]interface{}{
+		"arch":                      "x86_64",
+		"kernel_package":            "kernel-default",
+		"base_shared_packages":      []interface{}{"systemd", "vim"},
+		"base_x86_64_only_packages": []interface{}{"grub2-x86_64-efi"},
+		// base_aarch64_only_packages is intentionally missing
+	}
+
+	outX86, err := RenderConfig(tmpl, varsX86)
+	if err != nil {
+		t.Fatalf("RenderConfig for x86_64 with missing aarch64 vars failed: %v", err)
+	}
+
+	// Should contain x86_64 packages
+	if !strings.Contains(outX86, "- grub2-x86_64-efi") {
+		t.Errorf("expected x86_64 package in output, got:\n%s", outX86)
+	}
+
+	// Should contain else branch for aarch64
+	if !strings.Contains(outX86, "# No aarch64 packages") {
+		t.Errorf("expected aarch64 else comment in output, got:\n%s", outX86)
+	}
+
+	// Should NOT contain x86_64 else branch
+	if strings.Contains(outX86, "# No x86_64 packages") {
+		t.Errorf("should not contain x86_64 else comment, got:\n%s", outX86)
+	}
+
+	// Test aarch64 build - base_x86_64_only_packages is missing
+	varsARM := map[string]interface{}{
+		"arch":                         "aarch64",
+		"kernel_package":               "kernel-default",
+		"base_shared_packages":         []interface{}{"systemd", "vim"},
+		"base_aarch64_only_packages":   []interface{}{"grub2-arm64-efi"},
+		// base_x86_64_only_packages is intentionally missing
+	}
+
+	outARM, err := RenderConfig(tmpl, varsARM)
+	if err != nil {
+		t.Fatalf("RenderConfig for aarch64 with missing x86_64 vars failed: %v", err)
+	}
+
+	// Should contain aarch64 packages
+	if !strings.Contains(outARM, "- grub2-arm64-efi") {
+		t.Errorf("expected aarch64 package in output, got:\n%s", outARM)
+	}
+
+	// Should contain else branch for x86_64
+	if !strings.Contains(outARM, "# No x86_64 packages") {
+		t.Errorf("expected x86_64 else comment in output, got:\n%s", outARM)
+	}
+
+	// Should NOT contain aarch64 else branch
+	if strings.Contains(outARM, "# No aarch64 packages") {
+		t.Errorf("should not contain aarch64 else comment, got:\n%s", outARM)
+	}
+}
