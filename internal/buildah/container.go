@@ -91,6 +91,17 @@ var defaultCaps = []string{
 	"CAP_SYS_CHROOT",
 }
 
+// newSystemContext creates a SystemContext with the appropriate auth file
+// and TLS verification settings. If REGISTRY_AUTH_FILE is set, it will be
+// used for authentication; otherwise buildah's default discovery is used
+// (typically ~/.docker/config.json or /run/containers/auth.json).
+func newSystemContext(tlsVerify bool) *types.SystemContext {
+	return &types.SystemContext{
+		DockerInsecureSkipTLSVerify: types.NewOptionalBool(!tlsVerify),
+		AuthFilePath:                os.Getenv("REGISTRY_AUTH_FILE"),
+	}
+}
+
 // Container wraps a Buildah builder and implements the container.Container interface.
 // It provides methods for running commands, writing files, and committing images.
 type Container struct {
@@ -120,10 +131,8 @@ func NewContainer(ctx context.Context, name string, from string, tlsverify bool)
 
 	// create new builder
 	builder, err := buildah.NewBuilder(ctx, store, buildah.BuilderOptions{
-		FromImage: from,
-		SystemContext: &types.SystemContext{
-			DockerInsecureSkipTLSVerify: types.NewOptionalBool(!tlsverify),
-		},
+		FromImage:     from,
+		SystemContext: newSystemContext(tlsverify),
 	})
 	if err != nil {
 		// Builder construction failed, so there's nothing buildah-side to
@@ -576,9 +585,7 @@ func (c *Container) CommitToRegistry(ctx context.Context, ref string, tlsVerify 
 	}
 
 	_, _, _, err = c.Builder.Commit(ctx, imageRef, buildah.CommitOptions{
-		SystemContext: &types.SystemContext{
-			DockerInsecureSkipTLSVerify: types.NewOptionalBool(!tlsVerify),
-		},
+		SystemContext: newSystemContext(tlsVerify),
 	})
 	if err != nil {
 		return fmt.Errorf("commit to registry: %w", err)
