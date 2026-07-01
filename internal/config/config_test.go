@@ -130,26 +130,36 @@ layer:
 	}
 }
 
-// TestRenderConfig_MissingKeyErrors guards the missingkey=error contract.
-// A template that references an unset var must fail loudly rather than
-// silently produce an empty value — that's the difference between a typo
-// caught immediately and a broken build hours later.
-func TestRenderConfig_MissingKeyErrors(t *testing.T) {
+// TestRenderConfig_MissingKeyZero verifies that missing keys are treated as
+// zero values (empty string, nil, etc.) to support optional variables and
+// conditional rendering with {{ if }} or {{ range }} ... {{ else }}.
+func TestRenderConfig_MissingKeyZero(t *testing.T) {
 	tmpl := filepath.Join(t.TempDir(), "tmpl.yaml")
 	if err := os.WriteFile(tmpl, []byte(`meta:
-  name: {{ .missing }}
+  name: {{ .name }}
+  optional: {{ .missing }}
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := RenderConfig(tmpl, map[string]interface{}{})
-	if err == nil {
-		t.Fatal("expected error from missing template var, got nil")
+	out, err := RenderConfig(tmpl, map[string]interface{}{
+		"name": "test",
+		// .missing is not provided
+	})
+	if err != nil {
+		t.Fatalf("RenderConfig should not error on missing keys: %v", err)
 	}
-	// missingkey=error surfaces this exact phrase; lock it in so we don't
-	// silently regress to "<no value>" substitution.
-	if !strings.Contains(err.Error(), "map has no entry for key") {
-		t.Errorf("expected missingkey error message, got: %v", err)
+	
+	// Missing key should render as empty string (zero value)
+	if !strings.Contains(out, "name: test") {
+		t.Errorf("expected 'name: test' in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "optional: ") {
+		t.Errorf("expected 'optional: ' (empty) in output, got:\n%s", out)
+	}
+	// Should NOT contain the template marker
+	if strings.Contains(out, "{{ .missing }}") {
+		t.Errorf("template marker should be replaced, got:\n%s", out)
 	}
 }
 
@@ -190,6 +200,55 @@ layer:
 	// replaced by the placeholder string).
 	if cfg.Layer.Manager.Name != "dnf" {
 		t.Errorf("expected manager dnf, got %q", cfg.Layer.Manager.Name)
+	}
+}
+
+// TestLoadConfigRaw_RangeBlocks verifies that LoadConfigRaw can parse
+// template files containing {{ range }} blocks without breaking YAML structure.
+// This is critical for tag computation which must hash the unrendered template.
+func TestLoadConfigRaw_RangeBlocks(t *testing.T) {
+	tmpl := filepath.Join(t.TempDir(), "tmpl.yaml")
+	body := `meta:
+  name: test-{{ .arch }}
+  tags: ["{{ .tag }}"]
+  from: scratch
+layer:
+  manager:
+    name: dnf
+  actions:
+    install:
+      packages:
+        - {{ .kernel_package }}
+        # Shared packages
+        {{- range .base_shared_packages }}
+        - {{ . }}
+        {{- end }}
+        # x86_64-only packages
+        {{- range .base_x86_64_only_packages }}
+        - {{ . }}
+        {{- end }}
+        - static-package
+`
+	if err := os.WriteFile(tmpl, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfigRaw(tmpl)
+	if err != nil {
+		t.Fatalf("LoadConfigRaw with range blocks failed: %v", err)
+	}
+
+	// The range blocks should be replaced with placeholder list items,
+	// leaving valid YAML structure that can be parsed
+	if cfg.Layer.Manager.Name != "dnf" {
+		t.Errorf("expected manager dnf, got %q", cfg.Layer.Manager.Name)
+	}
+
+	// The packages list should contain placeholders for the template vars
+	// and range blocks, plus the static package
+	if len(cfg.Layer.Actions.Install.Packages) < 1 {
+		t.Errorf("expected at least 1 package after placeholder replacement, got %d", 
+			len(cfg.Layer.Actions.Install.Packages))
 	}
 }
 

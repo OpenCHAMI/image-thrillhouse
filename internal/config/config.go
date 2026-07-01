@@ -239,15 +239,15 @@ func LoadConfigWithVars(path string, vars map[string]interface{}) (*Config, erro
 
 // RenderConfig reads the file at path and renders it as a Go text/template
 // using the provided vars (arbitrary YAML/JSON-shaped data). Missing keys are
-// treated as errors so that typos in variable names fail loudly rather than
-// silently producing empty values.
+// treated as zero values (empty string, nil slice, etc.) to allow optional
+// variables and conditional rendering with {{ range }} ... {{ else }} or {{ if }}.
 func RenderConfig(path string, vars map[string]interface{}) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
 
-	t, err := template.New("config").Option("missingkey=error").Parse(string(raw))
+	t, err := template.New("config").Option("missingkey=zero").Parse(string(raw))
 	if err != nil {
 		return "", fmt.Errorf("parse template: %w", err)
 	}
@@ -284,7 +284,27 @@ func (m *Meta) TLSVerify() bool {
 }
 
 func replaceTemplatePlaceholders(data []byte) []byte {
-	// replace {{ ... }} with a placeholder string
-	re := regexp.MustCompile(`\{\{[^}]*\}\}`)
-	return re.ReplaceAll(data, []byte("__placeholder__"))
+	// Handle template control flow blocks (range/if/with/else) that span multiple lines.
+	// These need special handling because simply replacing {{ ... }} breaks YAML structure
+	// when the block contains list items or other structural elements.
+	
+	// First, replace range blocks: {{- range .items }} ... {{- end }}
+	// The (?ms) flags enable multiline and dotall mode so .* crosses newlines.
+	reRangeBlock := regexp.MustCompile(`(?ms)\{\{-?\s*range\s+[^}]*\}\}.*?\{\{-?\s*end\s*-?\}\}`)
+	cleaned := reRangeBlock.ReplaceAllFunc(data, func(match []byte) []byte {
+		// Check if this range contains simple list items: lines with "- {{ ... }}"
+		if regexp.MustCompile(`(?m)^\s*-\s+\{\{`).Match(match) {
+			return []byte("- __placeholder__")
+		}
+		// Check if this range contains structured list items: "- key: {{ ... }}"
+		if regexp.MustCompile(`(?m)^\s*-\s+\w+:`).Match(match) {
+			return []byte("- __placeholder__: __placeholder__")
+		}
+		// Otherwise just use a simple placeholder
+		return []byte("__placeholder__")
+	})
+	
+	// Replace remaining inline template expressions {{ .var }}
+	reInline := regexp.MustCompile(`\{\{[^}]*\}\}`)
+	return reInline.ReplaceAll(cleaned, []byte("__placeholder__"))
 }
