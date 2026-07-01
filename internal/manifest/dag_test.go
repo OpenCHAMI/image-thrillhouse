@@ -3,6 +3,7 @@ package manifest
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -192,6 +193,111 @@ func TestTopologicalSort(t *testing.T) {
 	// child1 must come before child2
 	if pos["child1"] >= pos["child2"] {
 		t.Errorf("child1 should come before child2")
+	}
+}
+
+// TestResolve_SingleArch: with no architectures block, --arch must be
+// empty and --layer is looked up as-is (backwards-compatible path).
+func TestResolve_SingleArch(t *testing.T) {
+	m := &Manifest{
+		Layers: []Layer{
+			{Name: "base", Config: "b.yaml", LogicalName: "base"},
+		},
+	}
+	dag, _ := NewDAG(m)
+
+	got, err := dag.Resolve("base", "")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got != "base" {
+		t.Errorf("expected 'base', got %q", got)
+	}
+
+	if _, err := dag.Resolve("base", "x86_64"); err == nil {
+		t.Error("expected error passing --arch to a single-arch manifest")
+	}
+
+	if _, err := dag.Resolve("missing", ""); err == nil {
+		t.Error("expected unknown-layer error")
+	}
+}
+
+// TestResolve_MultiArchHappyPath: --layer + --arch composes to the
+// concrete arch-suffixed name and the resulting layer exists in the DAG.
+func TestResolve_MultiArchHappyPath(t *testing.T) {
+	m := &Manifest{
+		Layers: []Layer{
+			{Name: "base-x86_64", Config: "b.yaml", LogicalName: "base", Arch: "x86_64"},
+			{Name: "base-aarch64", Config: "b.yaml", LogicalName: "base", Arch: "aarch64"},
+		},
+	}
+	dag, _ := NewDAG(m)
+
+	got, err := dag.Resolve("base", "aarch64")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got != "base-aarch64" {
+		t.Errorf("expected 'base-aarch64', got %q", got)
+	}
+}
+
+// TestResolve_MultiArchMissingArch: --arch is required whenever the DAG
+// is expanded — the CLI defaults it to host arch, so an empty value here
+// means the CLI couldn't or didn't provide one.
+func TestResolve_MultiArchMissingArch(t *testing.T) {
+	m := &Manifest{
+		Layers: []Layer{
+			{Name: "base-x86_64", Config: "b.yaml", LogicalName: "base", Arch: "x86_64"},
+		},
+	}
+	dag, _ := NewDAG(m)
+
+	if _, err := dag.Resolve("base", ""); err == nil {
+		t.Error("expected --arch-required error for multi-arch DAG")
+	}
+}
+
+// TestResolve_MultiArchConcreteNameRejected: user must pass logical name
+// + --arch, not the arch-suffixed concrete name. The error must point
+// them at the correct spelling so the fix is obvious.
+func TestResolve_MultiArchConcreteNameRejected(t *testing.T) {
+	m := &Manifest{
+		Layers: []Layer{
+			{Name: "base-x86_64", Config: "b.yaml", LogicalName: "base", Arch: "x86_64"},
+		},
+	}
+	dag, _ := NewDAG(m)
+
+	_, err := dag.Resolve("base-x86_64", "x86_64")
+	if err == nil {
+		t.Fatal("expected concrete-name rejection")
+	}
+	for _, want := range []string{"base", "x86_64"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should suggest the logical+arch spelling; missing %q: %v", want, err)
+		}
+	}
+}
+
+// TestResolve_MultiArchUnknownArch: asking for an arch the layer doesn't
+// build for lists the available arches in the error so the user can pick
+// a valid one without re-reading the manifest.
+func TestResolve_MultiArchUnknownArch(t *testing.T) {
+	m := &Manifest{
+		Layers: []Layer{
+			{Name: "base-x86_64", Config: "b.yaml", LogicalName: "base", Arch: "x86_64"},
+		},
+	}
+	dag, _ := NewDAG(m)
+
+	_, err := dag.Resolve("base", "aarch64")
+	if err == nil {
+		t.Fatal("expected unsupported-arch error")
+	}
+	if !strings.Contains(err.Error(), "x86_64") {
+		t.Errorf("error should list available arches; got: %v", err)
 	}
 }
 
@@ -417,6 +523,76 @@ func TestComputeBuildVars_DirectParentsOnly(t *testing.T) {
 	// Absent: grandparent_tag. Transitive ancestors are not injected.
 	if _, ok := vars["grandparent_tag"]; ok {
 		t.Errorf("grandparent_tag should NOT be injected for an indirect ancestor; got %v", vars)
+	}
+}
+
+// TestComputeBuildVars_ArchInjected checks that expanded (multi-arch)
+// layers get an `arch` template var matching their concrete arch, while
+// non-expanded layers do not — so single-arch manifests keep arch var
+// files as the source of truth.
+func TestComputeBuildVars_ArchInjected(t *testing.T) {
+	dir := t.TempDir()
+	base := writeConfig(t, dir, "base.yaml", minimalConfig)
+	m := &Manifest{
+		Layers: []Layer{
+			{Name: "base-x86_64", Config: base, LogicalName: "base", Arch: "x86_64"},
+			{Name: "solo", Config: base},
+		},
+	}
+	dag, err := NewDAG(m)
+	if err != nil {
+		t.Fatalf("dag: %v", err)
+	}
+	v, err := ComputeBuildVars(dag, "base-x86_64", nil)
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if v["arch"] != "x86_64" {
+		t.Errorf("arch should be x86_64; got %v", v["arch"])
+	}
+	v2, err := ComputeBuildVars(dag, "solo", nil)
+	if err != nil {
+		t.Fatalf("solo: %v", err)
+	}
+	if _, ok := v2["arch"]; ok {
+		t.Errorf("arch should NOT be injected for non-expanded layer; got %v", v2["arch"])
+	}
+}
+
+// TestComputeBuildVars_ParentTagUsesLogicalName verifies that after arch
+// expansion, `<parent>_tag` is keyed by the parent's LOGICAL name (so a
+// template can write `{{ .rocky_base_tag }}` once and have it resolve to
+// the same-arch parent for every arch build).
+func TestComputeBuildVars_ParentTagUsesLogicalName(t *testing.T) {
+	dir := t.TempDir()
+	base := writeConfig(t, dir, "base.yaml", minimalConfig)
+	compute := writeConfig(t, dir, "compute.yaml", minimalConfig)
+	m := &Manifest{
+		Layers: []Layer{
+			{Name: "rocky-base-x86_64", Config: base, LogicalName: "rocky-base", Arch: "x86_64"},
+			{
+				Name: "rocky-compute-x86_64", Config: compute,
+				LogicalName: "rocky-compute", Arch: "x86_64",
+				DependsOn: []string{"rocky-base-x86_64"},
+			},
+		},
+	}
+	dag, err := NewDAG(m)
+	if err != nil {
+		t.Fatalf("dag: %v", err)
+	}
+	v, err := ComputeBuildVars(dag, "rocky-compute-x86_64", nil)
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	// Logical-name key present.
+	if _, ok := v["rocky_base_tag"]; !ok {
+		t.Errorf("expected rocky_base_tag (logical name), got vars: %v", v)
+	}
+	// Arch-suffixed key must NOT be injected — templates should never see
+	// concrete names, only logical ones.
+	if _, ok := v["rocky_base_x86_64_tag"]; ok {
+		t.Errorf("rocky_base_x86_64_tag should NOT be injected; got %v", v)
 	}
 }
 
