@@ -55,6 +55,13 @@ func (c *dnfClassifier) Line(line string, hadErr bool) {
 	case strings.HasPrefix(trimmed, "Unable to detect release version"):
 		c.warnings = append(c.warnings, trimmed)
 		c.inError = false
+	case strings.HasPrefix(trimmed, "Error in") && strings.Contains(trimmed, "scriptlet"):
+		// Scriptlet failures (e.g. "Error in POSTTRANS scriptlet in rpm
+		// package kernel-core") don't fail the transaction — the packages
+		// still land — but the affected package may be half-configured.
+		// Surface at WARN so it isn't buried in the raw DEBUG dump.
+		c.warnings = append(c.warnings, trimmed)
+		c.inError = false
 	case strings.HasPrefix(trimmed, "Error:"):
 		// Start of error section - capture this line and subsequent lines
 		c.errors = append(c.errors, trimmed)
@@ -73,8 +80,12 @@ func (c *dnfClassifier) Line(line string, hadErr bool) {
 func (c *dnfClassifier) Done(raw string, err error) {
 	container.FlushRawDebug("dnf", raw)
 
+	// INFO gets just the count — the full NEVRA list (140+ lines on a
+	// base image) is already visible at DEBUG inside the raw-output block
+	// FlushRawDebug emits above, so re-logging it here would print the
+	// same list twice per install command.
 	if len(c.installed) > 0 {
-		c.log.Info("packages installed", "packages", c.installed)
+		c.log.Info("packages installed", "count", len(c.installed))
 	}
 	for _, w := range c.warnings {
 		c.log.Warn("dnf warning", "line", w)

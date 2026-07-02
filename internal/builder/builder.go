@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mattn/go-shellwords"
 	"github.com/travisbcotton/image-thrillhouse/internal/backend"
@@ -82,6 +83,7 @@ func (b *Builder) SetSkipIfExists(v bool) {
 // cleaned up via defer, even if the build fails.
 func (b *Builder) Build(ctx context.Context) error {
 	log := slog.With("component", "builder")
+	buildStart := time.Now()
 
 	log.Info("starting build",
 		"name", b.cfg.Meta.Name,
@@ -181,6 +183,11 @@ func (b *Builder) Build(ctx context.Context) error {
 		}
 	}
 
+	log.Info("build complete",
+		"name", b.cfg.Meta.Name,
+		"tags", b.cfg.Meta.Tags,
+		"duration", time.Since(buildStart).Round(time.Millisecond),
+	)
 	return nil
 }
 
@@ -395,7 +402,8 @@ func (b *Builder) writeDirectories(ctx context.Context, c container.Container) e
 // The backend generates the appropriate commands for the selected mode.
 func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
-	log.Info("starting install", "install", b.cfg.Layer.Actions.Install)
+	log.Info("starting install", installAttrs(b.cfg.Layer.Actions.Install)...)
+	start := time.Now()
 
 	var (
 		cmds    [][]string
@@ -428,8 +436,30 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 		return err
 	}
 
-	log.Info("install complete", "install", b.cfg.Layer.Actions.Install)
+	log.Info("install complete", "duration", time.Since(start).Round(time.Millisecond))
 	return nil
+}
+
+// installAttrs renders a config.Install as slog attrs, one per non-empty
+// field. Logging the fields separately (instead of dumping the struct) keeps
+// multi-word group names like "Minimal Install" intact — the struct fallback
+// formatter splits on whitespace, which made one group read as two packages.
+func installAttrs(inst config.Install) []any {
+	attrs := make([]any, 0, 6)
+	if len(inst.Packages) > 0 {
+		attrs = append(attrs, "packages", inst.Packages)
+	}
+	if len(inst.Groups) > 0 {
+		attrs = append(attrs, "groups", inst.Groups)
+	}
+	if len(inst.Modules) > 0 {
+		mods := make([]string, len(inst.Modules))
+		for i, m := range inst.Modules {
+			mods[i] = fmt.Sprintf("%s:%s (%s)", m.Name, m.Stream, m.Action)
+		}
+		attrs = append(attrs, "modules", mods)
+	}
+	return attrs
 }
 
 // runInstallCommands executes a backend's install command list, applying the
@@ -445,7 +475,9 @@ func (b *Builder) runInstallCommands(
 	log *slog.Logger,
 ) error {
 	for _, cmd := range cmds {
-		log.Debug("install", "action", cmd)
+		// Joined, not the raw slice: a command line reads (and copy-pastes)
+		// as one line, whereas the slice renders one argument per line.
+		log.Debug("running install command", "cmd", strings.Join(cmd, " "))
 		// Capture output so the backend can decide whether to tolerate a
 		// non-zero exit (e.g. zypper post-install scriptlet noise).
 		out := container.NewCapturingWriter(b.backend.OutputWriter())
@@ -456,7 +488,7 @@ func (b *Builder) runInstallCommands(
 
 		exitCode := extractExitCode(err)
 		log.Debug("install command exited non-zero",
-			"exit_code", exitCode, "backend", b.cfg.Layer.Manager.Name, "cmd", cmd)
+			"exit_code", exitCode, "backend", b.cfg.Layer.Manager.Name, "cmd", strings.Join(cmd, " "))
 		if exitCode > 0 && b.backend.IsAcceptableExitCode(exitCode, out.String()) {
 			log.Warn("install non-zero exit accepted; packages installed",
 				"exit_code", exitCode, "cmd", cmd)
@@ -541,6 +573,7 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 	if len(b.cfg.Layer.Actions.Commands) > 0 {
 		log.Info("starting commands", "count", len(b.cfg.Layer.Actions.Commands))
 	}
+	start := time.Now()
 
 	for i, cmd := range b.cfg.Layer.Actions.Commands {
 		// Resolve environment variables for this command
@@ -586,7 +619,10 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 	}
 
 	if len(b.cfg.Layer.Actions.Commands) > 0 {
-		log.Info("commands complete", "count", len(b.cfg.Layer.Actions.Commands))
+		log.Info("commands complete",
+			"count", len(b.cfg.Layer.Actions.Commands),
+			"duration", time.Since(start).Round(time.Millisecond),
+		)
 	}
 	return nil
 }
@@ -608,6 +644,7 @@ func (b *Builder) removePackages(ctx context.Context, c container.Container) err
 	}
 
 	log.Info("removing packages", "count", len(packages), "packages", packages)
+	start := time.Now()
 
 	rootPath := ""
 	runMode := container.RunModeContainer
@@ -625,7 +662,7 @@ func (b *Builder) removePackages(ctx context.Context, c container.Container) err
 		return fmt.Errorf("remove packages %v: %w", packages, err)
 	}
 
-	log.Info("removed packages")
+	log.Info("removed packages", "count", len(packages), "duration", time.Since(start).Round(time.Millisecond))
 	return nil
 }
 

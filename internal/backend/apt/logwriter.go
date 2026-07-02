@@ -71,11 +71,14 @@ func (c *aptClassifier) Line(line string, hadErr bool) {
 func (c *aptClassifier) Done(raw string, err error) {
 	container.FlushRawDebug("apt", raw)
 
+	// Counts at INFO only — the full lists are already visible at DEBUG
+	// in the raw-output block above. Mirrors the dnf classifier so the
+	// user-facing summary volume is backend-independent.
 	if len(c.newPackages) > 0 {
-		c.log.Info("packages installed", "packages", c.newPackages)
+		c.log.Info("packages installed", "count", len(c.newPackages))
 	}
 	if len(c.additionalPackages) > 0 {
-		c.log.Info("additional packages installed", "packages", c.additionalPackages)
+		c.log.Info("additional packages installed", "count", len(c.additionalPackages))
 	}
 	for _, w := range c.warnings {
 		c.log.Warn("apt warning", "line", w)

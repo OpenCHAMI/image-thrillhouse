@@ -171,6 +171,21 @@ func writeTextBlock(lines []string) {
 // TextBlockHandler is a custom slog.Handler that formats logs in a clean,
 // human-readable format without timestamps, suitable for textblock mode.
 //
+// Rendering is size-aware: records whose attributes are all scalar (or short
+// lists) collapse to a single line —
+//
+//	INFO  [manifest] computed tag layer="rocky-base-aarch64" tag="b61dfec5…"
+//
+// while records carrying bulky values (multi-line strings, lists longer than
+// inlineListMax, struct dumps) emit that same header line followed by a box
+// holding only the bulky attributes. This keeps one-event records at one
+// line each and reserves the visual framing for content that actually needs
+// it (install lists, file contents, captured command output).
+//
+// The "component" attribute is special-cased into a [name] prefix on the
+// header line rather than rendered as a key=value pair, since every record
+// in this codebase carries one and it reads as a category, not data.
+//
 // Groups are tracked as a stack so that interleaved With/WithGroup calls
 // produce the dotted keys that slog's interface contract requires:
 //
@@ -209,38 +224,20 @@ func (h *TextBlockHandler) Enabled(_ context.Context, level slog.Level) bool {
 	return level >= minLevel
 }
 
-// Handle formats and writes a log record.
+// inlineListMax is the longest []string/[]int/[]interface{} attribute that
+// still renders inline as key=[a b c] on the header line. Longer lists get
+// one item per line inside the box.
+const inlineListMax = 3
+
+// Handle formats and writes a log record. See the type doc for the layout.
 func (h *TextBlockHandler) Handle(_ context.Context, r slog.Record) error {
 	buf := bufio.NewWriter(h.w)
 
-	// Format: level=LEVEL key=value key=value...
-	// followed by textblock containing the message
-	fmt.Fprintf(buf, "level=%s", r.Level.String())
-
-	// Collect handler-level attributes first (like component=)
-	for _, a := range h.attrs {
-		if a.Key != "" {
-			fmt.Fprintf(buf, " %s=", a.Key)
-			h.appendValue(buf, a.Value)
-		}
-	}
-
-	fmt.Fprintln(buf)
-
-	// Now emit the textblock with message and attributes
-	fmt.Fprintln(buf, "┌──── output ────")
-
-	// Start with the message
-	if r.Message != "" {
-		msgLines := strings.Split(r.Message, "\n")
-		for _, line := range msgLines {
-			fmt.Fprintf(buf, "| %s\n", line)
-		}
-	}
-
-	// Add record attributes in the textblock. Record-level attrs get the
-	// active group prefix applied here (handler-level attrs in h.attrs were
-	// already prefixed at WithAttrs time).
+	// Gather all attributes in one list: handler-level attrs first (already
+	// prefixed at WithAttrs time), then record-level attrs with the active
+	// group prefix applied.
+	attrs := make([]slog.Attr, 0, len(h.attrs)+r.NumAttrs())
+	attrs = append(attrs, h.attrs...)
 	prefix := h.groupPrefix()
 	r.Attrs(func(a slog.Attr) bool {
 		if a.Key == "" {
@@ -249,13 +246,125 @@ func (h *TextBlockHandler) Handle(_ context.Context, r slog.Record) error {
 		if prefix != "" {
 			a = slog.Attr{Key: prefix + a.Key, Value: a.Value}
 		}
-		h.appendAttrInBlock(buf, a)
+		attrs = append(attrs, a)
 		return true
 	})
 
-	fmt.Fprintln(buf, "└────────────────")
+	// Split into inline (scalar/short) and boxed (bulky) attributes, and
+	// pull out the component for the [name] header prefix.
+	component := ""
+	var inline, boxed []slog.Attr
+	for _, a := range attrs {
+		if a.Key == "component" && component == "" && a.Value.Kind() == slog.KindString {
+			component = a.Value.String()
+			continue
+		}
+		if h.isInlineAttr(a) {
+			inline = append(inline, a)
+		} else {
+			boxed = append(boxed, a)
+		}
+	}
+
+	// A multi-line message can't sit on the header line; render it inside
+	// the box like any other bulky content.
+	msg := r.Message
+	multilineMsg := strings.Contains(msg, "\n")
+
+	// Header line: LEVEL [component] message key=value...
+	fmt.Fprintf(buf, "%-5s", r.Level.String())
+	if component != "" {
+		fmt.Fprintf(buf, " [%s]", component)
+	}
+	if msg != "" && !multilineMsg {
+		fmt.Fprintf(buf, " %s", msg)
+	}
+	for _, a := range inline {
+		fmt.Fprintf(buf, " %s=", a.Key)
+		h.appendInlineValue(buf, a.Value)
+	}
+	fmt.Fprintln(buf)
+
+	// Box: only when there is bulky content to frame.
+	if multilineMsg || len(boxed) > 0 {
+		fmt.Fprintln(buf, "┌──── output ────")
+		if multilineMsg {
+			for _, line := range strings.Split(msg, "\n") {
+				fmt.Fprintf(buf, "| %s\n", line)
+			}
+		}
+		for _, a := range boxed {
+			h.appendAttrInBlock(buf, a)
+		}
+		fmt.Fprintln(buf, "└────────────────")
+	}
 
 	return buf.Flush()
+}
+
+// isInlineAttr reports whether the attribute is compact enough to render on
+// the header line: any scalar, a single-line string, or a list with at most
+// inlineListMax elements.
+func (h *TextBlockHandler) isInlineAttr(a slog.Attr) bool {
+	if a.Value.Kind() != slog.KindAny {
+		if a.Value.Kind() == slog.KindString {
+			return !strings.Contains(a.Value.String(), "\n")
+		}
+		return true
+	}
+	switch val := a.Value.Any().(type) {
+	case string:
+		return !strings.Contains(val, "\n")
+	case []string:
+		return len(val) <= inlineListMax
+	case []int:
+		return len(val) <= inlineListMax
+	case []interface{}:
+		return len(val) <= inlineListMax
+	default:
+		// Struct-like values ({...}) get the box; anything else that
+		// formats to a single line is fine inline.
+		valStr := fmt.Sprintf("%v", val)
+		return !strings.HasPrefix(valStr, "{") && !strings.Contains(valStr, "\n")
+	}
+}
+
+// appendInlineValue writes a value in header-line form. Short lists render
+// as [a b c]; everything else defers to appendValue.
+func (h *TextBlockHandler) appendInlineValue(buf *bufio.Writer, v slog.Value) {
+	if v.Kind() == slog.KindAny {
+		switch val := v.Any().(type) {
+		case []string:
+			// Quote items containing whitespace so a two-word item (e.g.
+			// the "Minimal Install" package group) can't be misread as
+			// two separate items.
+			parts := make([]string, len(val))
+			for i, s := range val {
+				if strings.ContainsAny(s, " \t") {
+					parts[i] = fmt.Sprintf("%q", s)
+				} else {
+					parts[i] = s
+				}
+			}
+			fmt.Fprintf(buf, "[%s]", strings.Join(parts, " "))
+			return
+		case []int:
+			parts := make([]string, len(val))
+			for i, n := range val {
+				parts[i] = fmt.Sprintf("%d", n)
+			}
+			fmt.Fprintf(buf, "[%s]", strings.Join(parts, " "))
+			return
+		case []interface{}:
+			parts := make([]string, len(val))
+			for i, item := range val {
+				parts[i] = fmt.Sprintf("%v", item)
+			}
+			fmt.Fprintf(buf, "[%s]", strings.Join(parts, " "))
+			return
+		}
+	}
+	h.appendValue(buf, v)
 }
 
 // appendAttrInBlock formats an attribute inside the textblock
