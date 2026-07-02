@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package mmdebstrap implements a backend for creating Debian/Ubuntu scratch builds.
 package mmdebstrap
 

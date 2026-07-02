@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package container defines interfaces for container operations.
 // It provides abstractions for running commands, writing files, and managing containers.
 package container

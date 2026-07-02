@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package fetch provides a small HTTP GET helper that respects the caller's
 // context and applies a sane timeout. It exists so that callers don't reach
 // for http.Get (which uses Go's default client — no timeout, no cancellation

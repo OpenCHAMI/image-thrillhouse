@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package labels provides functionality for generating and managing container image labels.
 // It automatically creates standard OpenCHAMI labels based on the build configuration
 // and allows for custom labels to be added.

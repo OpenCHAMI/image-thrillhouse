@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Tests for the pure helpers in the builder package — extractExitCode,
 // firstNonEmpty, absPath, resolveConfigPath. These don't need any container/
 // backend mocks; they're string/error/path massagers exercising specific

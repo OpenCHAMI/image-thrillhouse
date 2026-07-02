@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package builder orchestrates the image building process.
 // It coordinates between the backend (package manager), container operations,
 // and publishers to create and distribute container images.

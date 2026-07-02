@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+#
+# SPDX-License-Identifier: MIT
 # Example usage of the config converter
 
 echo "=== Image Builder Config Converter - Usage Examples ==="

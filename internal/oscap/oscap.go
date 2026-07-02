@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package oscap provides OpenSCAP security scanning functionality.
 // OpenSCAP enables security compliance checking and vulnerability assessment
 // for container images using XCCDF benchmarks and OVAL definitions.

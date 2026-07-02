@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Tests for stageAnsiblePayload — the host-side filesystem prep that builds
 // a temp dir with the playbook copy, generated localhost inventory, and
 // ansible.cfg. Pure FS, no Container involved.

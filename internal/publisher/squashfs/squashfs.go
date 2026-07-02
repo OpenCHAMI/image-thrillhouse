@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2026 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package squashfs provides a publisher that creates SquashFS filesystem images.
 // SquashFS is a compressed read-only filesystem commonly used for bootable images,
 // live CDs, and network boot scenarios.
