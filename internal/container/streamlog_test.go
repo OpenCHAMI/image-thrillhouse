@@ -147,6 +147,24 @@ func TestTextBlockHandler_ShortListInline(t *testing.T) {
 	}
 }
 
+// TestTextBlockHandler_InlineListQuotesSpaces verifies that list items
+// containing whitespace are quoted so multi-word items (e.g. the DNF group
+// "Minimal Install") can't be misread as separate items.
+func TestTextBlockHandler_InlineListQuotesSpaces(t *testing.T) {
+	var buf bytes.Buffer
+	handler := NewTextBlockHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	logger := slog.New(handler).With("component", "builder")
+
+	logger.Info("starting install", "groups", []string{"Minimal Install"})
+
+	output := buf.String()
+	t.Logf("Output:\n%s", output)
+
+	if !strings.Contains(output, `groups=["Minimal Install"]`) {
+		t.Errorf(`Expected quoted multi-word item 'groups=["Minimal Install"]', got: %s`, output)
+	}
+}
+
 // TestTextBlockHandler_LongListBoxed verifies that lists longer than
 // inlineListMax get one item per line inside the box.
 func TestTextBlockHandler_LongListBoxed(t *testing.T) {

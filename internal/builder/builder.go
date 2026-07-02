@@ -402,7 +402,7 @@ func (b *Builder) writeDirectories(ctx context.Context, c container.Container) e
 // The backend generates the appropriate commands for the selected mode.
 func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
-	log.Info("starting install", "install", b.cfg.Layer.Actions.Install)
+	log.Info("starting install", installAttrs(b.cfg.Layer.Actions.Install)...)
 	start := time.Now()
 
 	var (
@@ -438,6 +438,28 @@ func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 
 	log.Info("install complete", "duration", time.Since(start).Round(time.Millisecond))
 	return nil
+}
+
+// installAttrs renders a config.Install as slog attrs, one per non-empty
+// field. Logging the fields separately (instead of dumping the struct) keeps
+// multi-word group names like "Minimal Install" intact — the struct fallback
+// formatter splits on whitespace, which made one group read as two packages.
+func installAttrs(inst config.Install) []any {
+	attrs := make([]any, 0, 6)
+	if len(inst.Packages) > 0 {
+		attrs = append(attrs, "packages", inst.Packages)
+	}
+	if len(inst.Groups) > 0 {
+		attrs = append(attrs, "groups", inst.Groups)
+	}
+	if len(inst.Modules) > 0 {
+		mods := make([]string, len(inst.Modules))
+		for i, m := range inst.Modules {
+			mods[i] = fmt.Sprintf("%s:%s (%s)", m.Name, m.Stream, m.Action)
+		}
+		attrs = append(attrs, "modules", mods)
+	}
+	return attrs
 }
 
 // runInstallCommands executes a backend's install command list, applying the

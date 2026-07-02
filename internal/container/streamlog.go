@@ -335,7 +335,18 @@ func (h *TextBlockHandler) appendInlineValue(buf *bufio.Writer, v slog.Value) {
 	if v.Kind() == slog.KindAny {
 		switch val := v.Any().(type) {
 		case []string:
-			fmt.Fprintf(buf, "[%s]", strings.Join(val, " "))
+			// Quote items containing whitespace so a two-word item (e.g.
+			// the "Minimal Install" package group) can't be misread as
+			// two separate items.
+			parts := make([]string, len(val))
+			for i, s := range val {
+				if strings.ContainsAny(s, " \t") {
+					parts[i] = fmt.Sprintf("%q", s)
+				} else {
+					parts[i] = s
+				}
+			}
+			fmt.Fprintf(buf, "[%s]", strings.Join(parts, " "))
 			return
 		case []int:
 			parts := make([]string, len(val))

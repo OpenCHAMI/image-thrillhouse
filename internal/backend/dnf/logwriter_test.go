@@ -187,3 +187,39 @@ bash-5.0`
 		t.Error("Log output does not contain expected warning message")
 	}
 }
+
+// TestDnfClassifier_ScriptletWarning verifies that scriptlet failures — which
+// don't fail the transaction but can leave a package half-configured — are
+// surfaced as warnings rather than staying buried in the raw DEBUG output.
+func TestDnfClassifier_ScriptletWarning(t *testing.T) {
+	input := `Error in POSTTRANS scriptlet in rpm package kernel-core
+Installed:
+kernel-core-5.14.0`
+
+	var logBuf bytes.Buffer
+	handler := slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	logger := slog.New(handler)
+
+	classifier := &dnfClassifier{
+		log: logger.With("component", "backend.dnf"),
+	}
+
+	writer := container.NewLineWriter(classifier)
+	writer.Write([]byte(input))
+	writer.Flush(nil)
+
+	if len(classifier.warnings) != 1 {
+		t.Fatalf("Expected 1 warning, got %d: %v", len(classifier.warnings), classifier.warnings)
+	}
+	if len(classifier.errors) != 0 {
+		t.Fatalf("Scriptlet failure must classify as warning, not error, got errors: %v", classifier.errors)
+	}
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "dnf warning") {
+		t.Error("Log output does not contain 'dnf warning'")
+	}
+	if !strings.Contains(logOutput, "Error in POSTTRANS scriptlet") {
+		t.Error("Log output does not contain the scriptlet warning message")
+	}
+}
