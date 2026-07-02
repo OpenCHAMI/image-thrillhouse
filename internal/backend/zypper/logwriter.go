@@ -70,8 +70,11 @@ func (c *zypperClassifier) Line(line string, hadErr bool) {
 func (c *zypperClassifier) Done(raw string, err error) {
 	container.FlushRawDebug("zypper", raw)
 
+	// Count at INFO, full list at DEBUG — mirrors the dnf classifier so
+	// the user-facing summary volume is backend-independent.
 	if len(c.newPackages) > 0 {
-		c.log.Info("packages installed", "packages", c.newPackages)
+		c.log.Info("packages installed", "count", len(c.newPackages))
+		c.log.Debug("installed package list", "packages", c.newPackages)
 	}
 	if err != nil {
 		for _, e := range c.errors {

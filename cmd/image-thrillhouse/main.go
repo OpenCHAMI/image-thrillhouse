@@ -38,16 +38,17 @@ import (
 
 // Global CLI flags that are shared across all subcommands
 var (
-	cfgPath      string   // Path to the YAML configuration file
-	logLevel     string   // Logging level: debug, info, warn, error
-	logFormat    string   // Logging format: json or text
-	varFile      string   // Path to a variables file (yaml or json) used for templating
-	vars         []string // Variable overrides in key=value format
-	renderOutput string   // Output path for the render command (default: stdout)
-	manifestPath string   // Path to a manifest file describing a DAG of layers
-	layerName    string   // Layer name (within the manifest) to build
-	archName     string   // Target architecture for a multi-arch manifest build (defaults to host arch)
-	skipIfExists bool     // Skip build when every configured publisher reports the image already exists
+	cfgPath        string   // Path to the YAML configuration file
+	logLevel       string   // Logging level: debug, info, warn, error
+	logFormat      string   // Logging format: json or text
+	containerDebug bool     // Enable debug logging from buildah/containers-storage internals
+	varFile        string   // Path to a variables file (yaml or json) used for templating
+	vars           []string // Variable overrides in key=value format
+	renderOutput   string   // Output path for the render command (default: stdout)
+	manifestPath   string   // Path to a manifest file describing a DAG of layers
+	layerName      string   // Layer name (within the manifest) to build
+	archName       string   // Target architecture for a multi-arch manifest build (defaults to host arch)
+	skipIfExists   bool     // Skip build when every configured publisher reports the image already exists
 )
 
 // canonicalHostArch returns the arch name the manifest is likely to use
@@ -264,7 +265,12 @@ func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
 // and textblock formats all output in human-readable blocks.
 //
 // This function also configures the logrus logger used by buildah and other
-// container libraries to suppress their logs unless debug level is enabled.
+// container libraries. Their logs are pinned at WARN regardless of the app
+// log level: --log-level debug means "tell me more about my build", not
+// "dump every bind mount and blob-cache lookup buildah performs". Users who
+// actually need the container-runtime firehose (typically developers
+// debugging storage/isolation issues) opt in explicitly with
+// --container-debug.
 func setupLogger(level, format string) error {
 	var lvl slog.Level
 	if err := lvl.UnmarshalText([]byte(level)); err != nil {
@@ -293,18 +299,19 @@ func setupLogger(level, format string) error {
 	slog.SetDefault(slog.New(handler))
 	container.SetLogFormat(format)
 
-	// Configure logrus (used by buildah and container libraries)
-	// to suppress INFO level logs unless debug is enabled.
-	// This prevents repetitive buildah messages like:
-	//   "network namespace isolation not supported with chroot isolation, forcing host network"
-	if lvl == slog.LevelDebug {
+	// Configure logrus (used by buildah and container libraries).
+	// Deliberately NOT tied to the app log level: at WARN the libraries
+	// still surface real problems, but their internal chatter (bind
+	// mounts, overlay mount_data, blob-cache lookups, OCI manifest dumps)
+	// stays out of --log-level debug output. Note the logrus level also
+	// propagates to buildah's chroot reexec child via LOGLEVEL, so this
+	// single knob controls both the parent and child firehoses.
+	switch {
+	case containerDebug:
 		logrus.SetLevel(logrus.DebugLevel)
-	} else if lvl == slog.LevelWarn {
-		logrus.SetLevel(logrus.WarnLevel)
-	} else if lvl >= slog.LevelError {
+	case lvl >= slog.LevelError:
 		logrus.SetLevel(logrus.ErrorLevel)
-	} else {
-		// For INFO and above, set logrus to WARN to suppress buildah noise
+	default:
 		logrus.SetLevel(logrus.WarnLevel)
 	}
 	logrus.SetOutput(os.Stderr)
@@ -318,6 +325,7 @@ func init() {
 	// Persistent flags apply to all subcommands (root and children)
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "textblock", "log format (json, text, textblock)")
+	rootCmd.PersistentFlags().BoolVar(&containerDebug, "container-debug", false, "enable debug output from the container runtime libraries (buildah, containers/storage); very verbose")
 
 	// Build-specific flags
 	buildCmd.Flags().StringVarP(&cfgPath, "config", "c", "", "path to YAML config")

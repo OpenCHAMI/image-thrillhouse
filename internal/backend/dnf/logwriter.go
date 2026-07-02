@@ -73,8 +73,12 @@ func (c *dnfClassifier) Line(line string, hadErr bool) {
 func (c *dnfClassifier) Done(raw string, err error) {
 	container.FlushRawDebug("dnf", raw)
 
+	// INFO gets the count; the full NEVRA list (140+ lines on a base
+	// image) only appears at DEBUG. Users who want to see exactly what
+	// landed can drop to debug without wading through it by default.
 	if len(c.installed) > 0 {
-		c.log.Info("packages installed", "packages", c.installed)
+		c.log.Info("packages installed", "count", len(c.installed))
+		c.log.Debug("installed package list", "packages", c.installed)
 	}
 	for _, w := range c.warnings {
 		c.log.Warn("dnf warning", "line", w)

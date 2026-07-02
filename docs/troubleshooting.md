@@ -32,7 +32,19 @@ sudo zypper install buildah
 - Ensure repository URLs are reachable
 - Check GPG key configuration (see [configuration.md](configuration.md#gpg-key-import))
 - For scratch builds, verify the package manager is installed on the host (or use the pre-built container, which includes them all)
-- Re-run with `--log-level debug` for more detail
+- Re-run with `--log-level debug` for more detail (full package lists, raw package-manager output, exact install commands)
+
+## Storage, mount, or isolation errors
+
+Errors mentioning overlay mounts, bind mounts, user namespaces, or
+containers-storage come from the container runtime libraries, not from
+image-thrillhouse itself. Their internal logging is suppressed by default —
+even at `--log-level debug` — because it is far too verbose for normal use.
+To see it, add `--container-debug`:
+
+```bash
+image-thrillhouse --log-level debug --container-debug build --config my.yaml
+```
 
 ## SquashFS creation fails
 

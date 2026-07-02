@@ -122,8 +122,9 @@ For multi-arch manifests, pass `--arch <x86_64|aarch64|…>`; it defaults to the
 
 Global flags:
 
-- `--log-level` — `debug` | `info` | `warn` | `error` (default `info`)
-- `--log-format` — `json` | `text` (default `json`)
+- `--log-level` — `debug` | `info` | `warn` | `error` (default `info`). `debug` adds build detail (created containers, written files, full package lists) without container-runtime internals.
+- `--log-format` — `json` | `text` | `textblock` (default `textblock`)
+- `--container-debug` — also emit debug output from the container runtime libraries (buildah, containers/storage). Very verbose; mainly useful for diagnosing storage, mount, or isolation problems.
 
 ## Recommendations
 
