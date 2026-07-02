@@ -1,6 +1,6 @@
 meta:
   name: bookworm-base
-  tags: 
+  tags:
     - "{{ .tag }}"
   from: scratch
 

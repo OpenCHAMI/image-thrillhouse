@@ -27,11 +27,11 @@ FAILED_TESTS=0
 run_test() {
     local test_name="$1"
     local config_file="$2"
-    
+
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
     echo "[$TOTAL_TESTS] Testing: $test_name"
     echo "  Config: $config_file"
-    
+
     if podman run --rm \
         --device /dev/fuse \
         --cap-add=SYS_ADMIN \
@@ -58,10 +58,10 @@ run_test() {
 validate_config() {
     local test_name="$1"
     local config_file="$2"
-    
+
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
     echo "[$TOTAL_TESTS] Validating: $test_name"
-    
+
     if podman run --rm \
         -v "${SCRIPT_DIR}/tests:/tests:Z" \
         image-thrillhouse:test \

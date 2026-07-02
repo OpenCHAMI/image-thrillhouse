@@ -1,6 +1,6 @@
 meta:
   name: debian-scratch-full
-  tags: 
+  tags:
     - "bookworm"
   from: scratch
 

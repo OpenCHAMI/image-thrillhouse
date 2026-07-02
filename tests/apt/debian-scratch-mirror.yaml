@@ -1,6 +1,6 @@
 meta:
   name: debian-scratch-mirror
-  tags: 
+  tags:
     - "bookworm"
   from: scratch
 

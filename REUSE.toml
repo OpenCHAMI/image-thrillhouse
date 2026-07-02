@@ -12,7 +12,7 @@ SPDX-License-Identifier = "MIT"
 
 # Go module metadata and repository config.
 [[annotations]]
-path = ["go.mod", "go.sum", ".gitignore"]
+path = ["go.mod", "go.sum", ".gitignore", "renovate.json"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "© 2026 OpenCHAMI a Series of LF Projects, LLC"
 SPDX-License-Identifier = "MIT"

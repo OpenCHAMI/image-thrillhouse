@@ -1,6 +1,6 @@
 meta:
   name: debian-parent-commands
-  tags: 
+  tags:
     - "bookworm-commands"
   from: docker://debian:bookworm-slim
 

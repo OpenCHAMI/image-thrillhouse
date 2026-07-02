@@ -1,6 +1,6 @@
 meta:
   name: invalid-dnf-test
-  tags: 
+  tags:
     - "9.5"
   from: scratch
 
@@ -14,7 +14,7 @@ layer:
     options:
       releasever: "9"
       invalid_option: "should_fail"
-  repos: 
+  repos:
     - path: /etc/image-thrillhouse/yum.repos.d/rocky-baseos.repo
       content: |
         [rocky-baseos]

@@ -82,4 +82,3 @@ ENV BUILDAH_ISOLATION=chroot
 
 USER builder
 WORKDIR /home/builder
-

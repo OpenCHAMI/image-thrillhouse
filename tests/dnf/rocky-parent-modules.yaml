@@ -1,6 +1,6 @@
 meta:
   name: alma-parent-modules
-  tags: 
+  tags:
     - "9-modules"
   from: docker://almalinux:9
 

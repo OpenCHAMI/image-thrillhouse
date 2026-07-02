@@ -1,6 +1,6 @@
 meta:
   name: rocky-parent-squashfs
-  tags: 
+  tags:
     - "9-squashfs"
   from: docker://rockylinux:9-minimal
 

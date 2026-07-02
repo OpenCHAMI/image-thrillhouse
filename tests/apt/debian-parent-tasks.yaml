@@ -1,6 +1,6 @@
 meta:
   name: debian-parent-tasks
-  tags: 
+  tags:
     - "bookworm-tasks"
   from: docker://debian:bookworm
 

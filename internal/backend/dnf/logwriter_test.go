@@ -55,8 +55,8 @@ Unable to find a match: doca-extra
 Installed:
 bash-5.0
 systemd-239`,
-			err:             errors.New("exit status 1"),
-			wantErrorMsgs:   []string{"Error:", "Unable to find a match: doca-extra"},
+			err:           errors.New("exit status 1"),
+			wantErrorMsgs: []string{"Error:", "Unable to find a match: doca-extra"},
 		},
 		{
 			name: "success with no errors",

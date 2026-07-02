@@ -1,6 +1,6 @@
 meta:
   name: rocky-scratch-full
-  tags: 
+  tags:
     - "9.5"
   from: scratch
 
@@ -18,7 +18,7 @@ layer:
     options:
       releasever: "9"
       install-weak-deps: "false"
-  repos: 
+  repos:
     - path: /etc/image-thrillhouse/yum.repos.d/rocky-baseos.repo
       content: |
         [rocky-baseos]

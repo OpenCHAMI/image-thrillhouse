@@ -1,6 +1,6 @@
 meta:
   name: rocky-scratch-options
-  tags: 
+  tags:
     - "9.5"
   from: scratch
 
@@ -16,7 +16,7 @@ layer:
       install-weak-deps: "false"
       best: "true"
       allowerasing: "true"
-  repos: 
+  repos:
     - path: /etc/image-thrillhouse/yum.repos.d/rocky-baseos.repo
       content: |
         [rocky-baseos]

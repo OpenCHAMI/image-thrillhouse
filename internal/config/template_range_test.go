@@ -371,10 +371,10 @@ layer:
 
 	// Test aarch64 build - base_x86_64_only_packages is missing
 	varsARM := map[string]interface{}{
-		"arch":                         "aarch64",
-		"kernel_package":               "kernel-default",
-		"base_shared_packages":         []interface{}{"systemd", "vim"},
-		"base_aarch64_only_packages":   []interface{}{"grub2-arm64-efi"},
+		"arch":                       "aarch64",
+		"kernel_package":             "kernel-default",
+		"base_shared_packages":       []interface{}{"systemd", "vim"},
+		"base_aarch64_only_packages": []interface{}{"grub2-arm64-efi"},
 		// base_x86_64_only_packages is intentionally missing
 	}
 

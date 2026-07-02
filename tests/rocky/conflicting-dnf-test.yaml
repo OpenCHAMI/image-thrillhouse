@@ -1,6 +1,6 @@
 meta:
   name: conflicting-dnf-test
-  tags: 
+  tags:
     - "9.5"
   from: scratch
 
@@ -15,7 +15,7 @@ layer:
       releasever: "9"
       best: "true"
       nobest: "true"
-  repos: 
+  repos:
     - path: /etc/image-thrillhouse/yum.repos.d/rocky-baseos.repo
       content: |
         [rocky-baseos]

@@ -230,7 +230,7 @@ jobs:
     name: Create GitHub Release
     needs: [build-deb, build-rpm]
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Extract version from tag
         id: version

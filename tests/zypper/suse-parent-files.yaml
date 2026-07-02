@@ -1,6 +1,6 @@
 meta:
   name: opensuse-parent-files
-  tags: 
+  tags:
     - "leap-15.6-files"
   from: docker://opensuse/leap:15.6
 

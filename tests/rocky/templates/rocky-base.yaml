@@ -1,6 +1,6 @@
 meta:
   name: rocky-base
-  tags: 
+  tags:
     - "{{ .tag }}"
   from: scratch
 
@@ -15,7 +15,7 @@ layer:
       best=True
       skip_if_unavailable=False
       reposdir={{ .reposdir }}
-  repos: 
+  repos:
     - path: {{ .reposdir }}/rocky-baseos.repo
       content: |
         [rocky-baseos]

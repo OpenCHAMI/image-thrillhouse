@@ -5,7 +5,7 @@ meta:
   from: localhost/rocky-base:{{ .parent_tag }}
 
 layer:
-  manager: 
+  manager:
     name: dnf
   files: []
   actions:

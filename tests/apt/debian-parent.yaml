@@ -1,6 +1,6 @@
 meta:
   name: ubuntu-parent-basic
-  tags: 
+  tags:
     - "22.04-custom"
   from: docker://ubuntu:22.04
 
