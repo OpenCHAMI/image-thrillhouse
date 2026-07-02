@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2025 OpenCHAMI a Series of LF Projects, LLC
+Copyright (c) 2026 OpenCHAMI a Series of LF Projects, LLC
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
