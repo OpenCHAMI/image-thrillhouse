@@ -1,6 +1,6 @@
 meta:
   name: rocky-scratch-groups
-  tags: 
+  tags:
     - "9.5"
   from: scratch
 
@@ -17,7 +17,7 @@ layer:
       reposdir=/etc/image-thrillhouse/yum.repos.d
     options:
       releasever: "9"
-  repos: 
+  repos:
     - path: /etc/image-thrillhouse/yum.repos.d/rocky-baseos.repo
       content: |
         [rocky-baseos]

@@ -1,12 +1,12 @@
 meta:
   name: bookworm-compute
-  tags: 
+  tags:
     - "{{ .tag }}"
   from: vm-host:5000/bookworm-base:{{ .parent_tag }}
 
 layer:
   manager:
-    name: apt 
+    name: apt
   repos:
     - path: {{ .reposdir }}/debian.list
       content: |

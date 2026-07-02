@@ -43,20 +43,21 @@ func WriteRPMMacros(ctx context.Context, c container.Container, log *slog.Logger
 // leading % character.
 //
 // Example:
-//   customMacros := map[string]string{
-//       "_dbpath": "/var/lib/rpm",
-//       "_dbpath_trans": "/var/lib/rpm",
-//   }
-//   content := BuildRPMMacros(customMacros)
+//
+//	customMacros := map[string]string{
+//	    "_dbpath": "/var/lib/rpm",
+//	    "_dbpath_trans": "/var/lib/rpm",
+//	}
+//	content := BuildRPMMacros(customMacros)
 func BuildRPMMacros(customMacros map[string]string) string {
 	// Default macros as a map for easy override
 	defaults := map[string]string{
-		"_netsharedpath":                  "/sys:/proc:/dev",
-		"_install_langs":                  "C:en:en_US:en_US.UTF-8",
-		"__brp_mangle_shebangs":           "%{nil}",
+		"_netsharedpath":                     "/sys:/proc:/dev",
+		"_install_langs":                     "C:en:en_US:en_US.UTF-8",
+		"__brp_mangle_shebangs":              "%{nil}",
 		"_missing_build_ids_terminate_build": "0",
-		"_file_context_file":              "%{nil}",
-		"__brp_ldconfig":                  "%{nil}",
+		"_file_context_file":                 "%{nil}",
+		"__brp_ldconfig":                     "%{nil}",
 	}
 
 	// Merge custom macros into defaults (custom macros override defaults)
@@ -107,16 +108,17 @@ const RPMMacros = `%_netsharedpath /sys:/proc:/dev
 // format is "macro.<macro_name>" and the value is the macro definition.
 //
 // Example options:
-//   "macro._dbpath": "/var/lib/rpm"
-//   "macro._dbpath_trans": "/var/lib/rpm"
-//   "macro._netsharedpath": "/sys:/proc"  // Override default
+//
+//	"macro._dbpath": "/var/lib/rpm"
+//	"macro._dbpath_trans": "/var/lib/rpm"
+//	"macro._netsharedpath": "/sys:/proc"  // Override default
 //
 // Returns a map where keys are macro names (without "macro." prefix or leading %)
 // and values are macro definitions.
 func ExtractMacroOptions(options map[string]string) map[string]string {
 	macros := make(map[string]string)
 	const prefix = "macro."
-	
+
 	for key, value := range options {
 		if strings.HasPrefix(key, prefix) {
 			macroName := strings.TrimPrefix(key, prefix)
@@ -125,6 +127,6 @@ func ExtractMacroOptions(options map[string]string) map[string]string {
 			}
 		}
 	}
-	
+
 	return macros
 }

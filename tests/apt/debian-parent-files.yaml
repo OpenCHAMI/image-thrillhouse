@@ -1,6 +1,6 @@
 meta:
   name: ubuntu-parent-files
-  tags: 
+  tags:
     - "22.04-files"
   from: docker://ubuntu:22.04
 

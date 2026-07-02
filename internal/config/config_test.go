@@ -153,7 +153,7 @@ func TestRenderConfig_MissingKeyZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderConfig should not error on missing keys: %v", err)
 	}
-	
+
 	// Missing key should render as empty string (zero value)
 	if !strings.Contains(out, "name: test") {
 		t.Errorf("expected 'name: test' in output, got:\n%s", out)
@@ -251,7 +251,7 @@ layer:
 	// The packages list should contain placeholders for the template vars
 	// and range blocks, plus the static package
 	if len(cfg.Layer.Actions.Install.Packages) < 1 {
-		t.Errorf("expected at least 1 package after placeholder replacement, got %d", 
+		t.Errorf("expected at least 1 package after placeholder replacement, got %d",
 			len(cfg.Layer.Actions.Install.Packages))
 	}
 }

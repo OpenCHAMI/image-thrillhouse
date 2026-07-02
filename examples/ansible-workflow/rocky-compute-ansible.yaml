@@ -6,7 +6,7 @@ meta:
 layer:
   manager:
     name: dnf
-  
+
   # Install Ansible and Python in the container
   # Required for in-container Ansible execution
   actions:
@@ -15,7 +15,7 @@ layer:
         - ansible-core    # Ansible itself
         - python3         # Python interpreter
         - python3-dnf     # Required for Ansible dnf module
-    
+
     # Run Ansible playbook inside the container
     # Playbook and inventory are copied from host to container
     # Localhost is automatically added to the 'compute' group

@@ -1,6 +1,6 @@
 meta:
   name: opensuse-scratch-base
-  tags: 
+  tags:
     - "leap-15.6"
   from: scratch
 

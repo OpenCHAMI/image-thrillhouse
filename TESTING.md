@@ -53,7 +53,7 @@ func TestValidate(t *testing.T) {
         {"valid input", MyType{Field: "value"}, false},
         {"invalid input", MyType{}, true},
     }
-    
+
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
             err := tt.input.Validate()
@@ -128,7 +128,7 @@ func TestNewWithOptions(t *testing.T) {
         {"default options", nil, MyBackend{optionA: false}},
         {"with options", map[string]string{"option-a": "true"}, MyBackend{optionA: true}},
     }
-    
+
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
             got := New(tt.options)

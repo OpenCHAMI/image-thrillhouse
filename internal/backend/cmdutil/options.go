@@ -43,14 +43,14 @@ const (
 // Returns nil on success.
 func ValidateOptionSchema(backendName string, options map[string]string, schema map[string]OptionKind) error {
 	isRPMBackend := backendName == "dnf" || backendName == "zypper"
-	
+
 	for key, value := range options {
 		// Allow macro.* options for RPM-based backends
 		if isRPMBackend && strings.HasPrefix(key, "macro.") {
 			// Treat macro options as OptionAny (any value allowed)
 			continue
 		}
-		
+
 		kind, ok := schema[key]
 		if !ok {
 			return fmt.Errorf("unknown option %q for %s backend", key, backendName)

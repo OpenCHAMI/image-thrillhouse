@@ -1,6 +1,6 @@
 meta:
   name: rocky-parent-files-mode
-  tags: 
+  tags:
     - "9.5-files-mode"
   from: docker://rockylinux/rockylinux:9.5
 

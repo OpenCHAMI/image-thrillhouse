@@ -312,11 +312,11 @@ func TestExtractMacroOptions(t *testing.T) {
 		{
 			name: "multiple macro options",
 			options: map[string]string{
-				"macro._dbpath":         "/var/lib/rpm",
-				"macro._dbpath_trans":   "/var/lib/rpm",
-				"macro._netsharedpath":  "/sys:/proc",
-				"install-weak-deps":     "false",
-				"releasever":            "8",
+				"macro._dbpath":        "/var/lib/rpm",
+				"macro._dbpath_trans":  "/var/lib/rpm",
+				"macro._netsharedpath": "/sys:/proc",
+				"install-weak-deps":    "false",
+				"releasever":           "8",
 			},
 			want: map[string]string{
 				"_dbpath":        "/var/lib/rpm",
@@ -355,9 +355,9 @@ func TestExtractMacroOptions(t *testing.T) {
 
 func TestBuildRPMMacros(t *testing.T) {
 	tests := []struct {
-		name         string
-		customMacros map[string]string
-		mustContain  []string
+		name           string
+		customMacros   map[string]string
+		mustContain    []string
 		mustNotContain []string
 	}{
 		{
@@ -425,12 +425,12 @@ func TestBuildRPMMacros(t *testing.T) {
 
 func TestValidateOptionSchema_MacroPrefix(t *testing.T) {
 	schema := map[string]OptionKind{"releasever": OptionAny}
-	
+
 	// Test that dnf backend accepts macro.* options
 	options := map[string]string{
-		"releasever":      "8",
-		"macro._dbpath":   "/var/lib/rpm",
-		"macro._custom":   "value",
+		"releasever":    "8",
+		"macro._dbpath": "/var/lib/rpm",
+		"macro._custom": "value",
 	}
 	if err := ValidateOptionSchema("dnf", options, schema); err != nil {
 		t.Errorf("dnf backend should accept macro.* options, got: %v", err)

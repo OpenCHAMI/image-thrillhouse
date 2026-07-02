@@ -1,6 +1,6 @@
 meta:
   name: invalid-option
-  tags: 
+  tags:
     - "test"
   from: scratch
 

@@ -1,6 +1,6 @@
 meta:
   name: opensuse-parent-patterns
-  tags: 
+  tags:
     - "leap-15.6-patterns"
   from: docker://opensuse/leap:15.6
 

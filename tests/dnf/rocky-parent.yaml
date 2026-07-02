@@ -1,6 +1,6 @@
 meta:
   name: rocky-parent-basic
-  tags: 
+  tags:
     - "9-custom"
   from: docker://rockylinux:9
 

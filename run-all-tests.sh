@@ -229,7 +229,7 @@ else
     echo "Running all tests sequentially"
     echo "════════════════════════════════════════════════════════════════"
     echo ""
-    
+
     # Run sequentially
     for pkg in "${TESTS[@]}"; do
         run_test "$pkg" "scratch" || true

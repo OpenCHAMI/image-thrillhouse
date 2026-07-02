@@ -1,6 +1,6 @@
 meta:
   name: invalid-no-suite
-  tags: 
+  tags:
     - "test"
   from: scratch
 

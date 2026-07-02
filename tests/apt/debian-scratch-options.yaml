@@ -1,6 +1,6 @@
 meta:
   name: debian-scratch-options
-  tags: 
+  tags:
     - "bookworm"
   from: scratch
 

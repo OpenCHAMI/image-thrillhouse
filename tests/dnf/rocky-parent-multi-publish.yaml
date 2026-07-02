@@ -1,6 +1,6 @@
 meta:
   name: rocky-parent-multi-publish
-  tags: 
+  tags:
     - "9-multi"
   from: docker://rockylinux:9-minimal
 
