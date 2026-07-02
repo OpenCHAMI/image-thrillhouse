@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Test doubles for the container.Container and publisher.Publisher
 // interfaces, used by the builder unit tests. Kept tiny on purpose — each
 // stub returns zero values or records the call. Tests that need behaviour

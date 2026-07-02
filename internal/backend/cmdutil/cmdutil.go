@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package cmdutil holds small command-builders shared between package-manager
 // backends. The goal is to keep "rpm does X" and "dpkg does X" knowledge in
 // one place instead of duplicated across dnf/zypper and apt/mmdebstrap.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package registry provides a publisher that pushes images to OCI container registries.
 // It supports any Docker-compatible registry (Docker Hub, Harbor, Quay, etc.).
 package registry

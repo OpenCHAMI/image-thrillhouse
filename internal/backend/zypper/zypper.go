@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package zypper implements the Zypper package manager backend for openSUSE and SLES.
 // Zypper is the command-line package manager for SUSE-based distributions.
 // It supports both scratch builds (--installroot) and parent image builds.

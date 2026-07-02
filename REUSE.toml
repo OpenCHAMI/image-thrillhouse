@@ -1,0 +1,32 @@
+version = 1
+SPDX-PackageName = "image-thrillhouse"
+SPDX-PackageSupplier = "OpenCHAMI <info@openchami.org>"
+SPDX-PackageDownloadLocation = "https://github.com/travisbcotton/image-thrillhouse"
+
+# Documentation and Markdown files (no clean comment syntax for inline headers).
+[[annotations]]
+path = ["*.md", "**/*.md", "docs/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "© 2025 OpenCHAMI a Series of LF Projects, LLC"
+SPDX-License-Identifier = "MIT"
+
+# Go module metadata and repository config.
+[[annotations]]
+path = ["go.mod", "go.sum", ".gitignore"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "© 2025 OpenCHAMI a Series of LF Projects, LLC"
+SPDX-License-Identifier = "MIT"
+
+# Test fixtures and manifests (generated / data files).
+[[annotations]]
+path = ["tests/**", "examples/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "© 2025 OpenCHAMI a Series of LF Projects, LLC"
+SPDX-License-Identifier = "MIT"
+
+# Debian packaging metadata.
+[[annotations]]
+path = "debian/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "© 2025 OpenCHAMI a Series of LF Projects, LLC"
+SPDX-License-Identifier = "MIT"

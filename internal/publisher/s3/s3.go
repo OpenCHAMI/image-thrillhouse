@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package s3 provides a publisher for uploading boot images to S3-compatible storage.
 // This publisher creates SquashFS images and extracts kernel/initramfs for network booting.
 package s3

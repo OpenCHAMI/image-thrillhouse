@@ -156,7 +156,13 @@ Issues and PRs are welcome. Areas of interest include additional package manager
 
 ## License
 
-See [LICENSE](LICENSE).
+This project is licensed under the [MIT License](LICENSES/MIT.txt).
+
+It is [REUSE](https://reuse.software/) compliant: every file carries an SPDX
+license header (or is covered by [`REUSE.toml`](REUSE.toml)), and compliance is
+checked in CI via the [REUSE Compliance Check](.github/workflows/REUSE.yaml)
+workflow. To check locally, install the [`reuse`](https://github.com/fsfe/reuse-tool)
+tool and run `reuse lint`.
 
 ## LLM use acknowledgement
 

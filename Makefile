@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+#
+# SPDX-License-Identifier: MIT
+
 .PHONY: all build clean install test deb rpm
 
 # Build variables

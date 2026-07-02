@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+#
+# SPDX-License-Identifier: MIT
 # Regenerate debian/changelog and the %changelog section in the RPM spec
 # from git tag history. Annotated-tag metadata is preferred; lightweight
 # tags fall back to commit author + GITHUB_ACTOR + auto-generated body

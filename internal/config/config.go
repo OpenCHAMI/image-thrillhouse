@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package config provides structures and functions for parsing and validating
 // image-thrillhouse YAML configuration files.
 package config

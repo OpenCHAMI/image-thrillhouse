@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package backend defines the interface for package manager backends.
 // Each backend implements package manager-specific logic for installing
 // packages, groups, and modules.

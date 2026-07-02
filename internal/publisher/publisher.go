@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package publisher defines the interface for image publishing destinations.
 // Publishers determine where built images are stored or uploaded after the build completes.
 package publisher

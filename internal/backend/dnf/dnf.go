@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package dnf provides a backend for DNF package manager.
 // DNF (Dandified Yum) is used by Red Hat, Rocky Linux, AlmaLinux, Fedora, and related distributions.
 // It supports both scratch builds (--installroot) and parent image builds.

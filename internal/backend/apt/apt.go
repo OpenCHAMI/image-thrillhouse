@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package apt implements the APT package manager backend for Debian and Ubuntu systems.
 // This backend only supports parent image builds (from != "scratch").
 // For scratch builds, use the mmdebstrap backend instead.

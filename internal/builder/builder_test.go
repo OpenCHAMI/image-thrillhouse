@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Tier 2 builder tests — methods with a small Container or Publisher mock
 // surface. These exercise the "fan out a config slice into c.WriteFile calls"
 // shape that several builder methods share, plus the publisher iteration in

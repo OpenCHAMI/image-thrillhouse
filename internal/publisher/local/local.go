@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package local provides a publisher that commits images to local container storage.
 // This publisher uses buildah commit to store images in the local podman/buildah registry.
 package local

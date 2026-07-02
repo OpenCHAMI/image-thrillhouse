@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Tests for classifyAnsibleLine — the regex-heavy classifier that maps
 // Ansible callback output lines to (slog.Level, attrs). High value to test
 // because the regex patterns are easy to misregress and there's no way to

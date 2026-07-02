@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: © 2025 OpenCHAMI a Series of LF Projects, LLC
+//
+// SPDX-License-Identifier: MIT
+
 // Package main is the entry point for the image-thrillhouse CLI tool.
 // It provides commands for building container images using various package managers
 // and publishing them to different destinations.
