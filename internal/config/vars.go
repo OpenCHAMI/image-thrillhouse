@@ -38,8 +38,27 @@ func LoadVars(varFiles []string, cliVars []string) (map[string]interface{}, erro
 	return merged, nil
 }
 
+// MergeVars returns a new map holding base with override merged on top
+// (override wins on conflicts; nested maps merge recursively). Neither
+// argument is mutated — both are deep-copied first, so callers can safely
+// reuse the inputs (e.g. the same CLI vars map across multiple layers).
 func MergeVars(base, override map[string]interface{}) map[string]interface{} {
-	return deepMerge(base, override)
+	return deepMerge(deepCopyMap(base), deepCopyMap(override))
+}
+
+// deepCopyMap returns a copy of m where every nested map[string]interface{}
+// is also copied. Non-map values (scalars, slices) are shared — deepMerge
+// never mutates those, only map entries.
+func deepCopyMap(m map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		if vm, ok := v.(map[string]interface{}); ok {
+			out[k] = deepCopyMap(vm)
+		} else {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func loadVarFile(path string) (map[string]interface{}, error) {
@@ -66,6 +85,9 @@ func loadVarFile(path string) (map[string]interface{}, error) {
 	return vars, nil
 }
 
+// deepMerge merges src into dst IN PLACE and returns dst. Internal helper:
+// callers that must not mutate their inputs go through MergeVars, which
+// copies first.
 func deepMerge(dst, src map[string]interface{}) map[string]interface{} {
 	for k, v := range src {
 		if existing, ok := dst[k]; ok {

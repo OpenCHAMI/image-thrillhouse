@@ -140,6 +140,67 @@ func TestCompute_MissingConfigFile(t *testing.T) {
 	}
 }
 
+// TestCompute_TemplatedSrcDoesNotError guards the fix for templated src
+// paths: a `src: "{{ .dir }}/foo"` parses as "__placeholder__/foo" in the
+// raw config, which used to make Compute fail with "no such file". The
+// template text is hashed instead — so Compute succeeds, and configs whose
+// templated src expressions differ still hash differently.
+func TestCompute_TemplatedSrcDoesNotError(t *testing.T) {
+	dir := t.TempDir()
+	templatedCfg := func(name, srcExpr string) string {
+		return writeFile(t, dir, name, `meta:
+  name: test
+  tags: ["1"]
+layer:
+  manager:
+    name: dnf
+  files:
+    - path: /etc/foo
+      src: "`+srcExpr+`"
+`)
+	}
+
+	cfg := templatedCfg("layer.yaml", "{{ .payload_dir }}/foo")
+	h1, err := Compute(LayerInput{ConfigPath: cfg}, nil)
+	if err != nil {
+		t.Fatalf("Compute with templated src errored: %v", err)
+	}
+
+	other := templatedCfg("other.yaml", "{{ .payload_dir }}/bar")
+	h2, err := Compute(LayerInput{ConfigPath: other}, nil)
+	if err != nil {
+		t.Fatalf("Compute other: %v", err)
+	}
+	if h1 == h2 {
+		t.Errorf("different templated src expressions produced the same hash: %s", h1)
+	}
+}
+
+// TestCompute_VarOverridesChangeHash locks in that LayerInput.VarOverrides
+// participate in the hash (order-independently).
+func TestCompute_VarOverridesChangeHash(t *testing.T) {
+	dir := t.TempDir()
+	cfg := writeFile(t, dir, "layer.yaml", minimalConfig)
+
+	plain, err := Compute(LayerInput{ConfigPath: cfg}, nil)
+	if err != nil {
+		t.Fatalf("plain: %v", err)
+	}
+	withVars, err := Compute(LayerInput{ConfigPath: cfg, VarOverrides: []string{"k=v"}}, nil)
+	if err != nil {
+		t.Fatalf("with vars: %v", err)
+	}
+	if plain == withVars {
+		t.Error("VarOverrides did not change the hash")
+	}
+
+	ab, _ := Compute(LayerInput{ConfigPath: cfg, VarOverrides: []string{"a=1", "b=2"}}, nil)
+	ba, _ := Compute(LayerInput{ConfigPath: cfg, VarOverrides: []string{"b=2", "a=1"}}, nil)
+	if ab != ba {
+		t.Errorf("VarOverrides order changed the hash: %s != %s", ab, ba)
+	}
+}
+
 // TestCompute_DirectoryContentChange: editing a file under a layer.directories
 // src must change the layer hash. This is the core cache-correctness contract
 // — without it, a stale image would happily be reused after a host-side edit.

@@ -122,6 +122,12 @@ type Container interface {
 	// excludes, contents-only vs subdir).
 	CopyDirectory(ctx context.Context, srcDir, destDir string, opts CopyDirectoryOptions) error
 
+	// SetLabels applies OCI image labels to the container's image config so
+	// that every subsequent commit — local or direct-to-registry — carries
+	// them. The builder calls this once before the publish loop; publishers
+	// must not rely on each other to have applied labels.
+	SetLabels(labels map[string]string)
+
 	// Commit commits the container to local storage with the given name and tag
 	Commit(ctx context.Context, name, tag string) (string, error)
 

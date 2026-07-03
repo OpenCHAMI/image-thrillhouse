@@ -151,12 +151,20 @@ var renderCmd = &cobra.Command{
 	RunE:  runRender,
 }
 
+// version is the release version stamped at build time via
+//
+//	go build -ldflags "-X main.version=<version>"
+//
+// (see the Makefile, which passes its VERSION variable through). The default
+// here only shows up for plain `go build` / `go run` invocations.
+var version = "dev"
+
 // versionCmd prints the version information for the image-thrillhouse tool.
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("image-thrillhouse v0.1.0")
+		fmt.Printf("image-thrillhouse %s\n", version)
 	},
 }
 
@@ -382,9 +390,12 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	// Validate mutually-exclusive flag combinations. Either a single config
 	// file is provided, or a manifest + layer pair driving a manifest-based
-	// build — never both.
+	// build — never both, and never neither.
 	if err := validateManifestFlags(); err != nil {
 		return err
+	}
+	if manifestPath == "" && cfgPath == "" {
+		return fmt.Errorf("either --config or --manifest is required")
 	}
 
 	// Always load vars (possibly empty). Templating is supported in both
@@ -428,7 +439,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("publishers: %w", err)
 	}
 
-	bldr := builder.New(ctx, cfg, cfgPath, b, p)
+	bldr := builder.New(cfg, cfgPath, b, p)
 	bldr.SetSkipIfExists(skipIfExists)
 	return bldr.Build(ctx)
 }
@@ -489,7 +500,7 @@ func buildLayer(
 		return fmt.Errorf("publishers: %w", err)
 	}
 
-	bldr := builder.New(ctx, cfg, configPath, b, p)
+	bldr := builder.New(cfg, configPath, b, p)
 	bldr.SetSkipIfExists(skipIfExists)
 	return bldr.Build(ctx)
 }
@@ -520,8 +531,10 @@ func prepareLayerRender(
 	mergedVars := config.MergeVars(layerVars, cliVars)
 
 	// Inject computed tags (this layer + direct parents) so templates can
-	// reference parent images by their deterministic tags.
-	buildVars, err := manifest.ComputeBuildVars(dag, layerName, globalVarFiles)
+	// reference parent images by their deterministic tags. The raw --var
+	// overrides participate in the hash: they change the rendered config,
+	// so two builds differing only in --var must not share a tag.
+	buildVars, err := manifest.ComputeBuildVars(dag, layerName, globalVarFiles, vars...)
 	if err != nil {
 		return "", nil, fmt.Errorf("compute build vars: %w", err)
 	}

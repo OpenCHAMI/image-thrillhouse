@@ -34,6 +34,13 @@ type Backend interface {
 	// The builder only calls Bootstrap for scratch builds.
 	Bootstrap(ctx context.Context, c container.Container, rootPath string) error
 
+	// RequiresEmptyRoot indicates that this backend's InstallRootCommands
+	// refuse to run against a non-empty scratch root (today: mmdebstrap,
+	// which errors when its target directory has any content). The builder
+	// uses this to defer file/repo/GPG-key writes until *after* the install
+	// step for such backends, instead of the usual write-then-install order.
+	RequiresEmptyRoot() bool
+
 	// SupportsInstallRoot indicates if this backend can bootstrap a scratch filesystem.
 	// This is used for building images from scratch using --installroot or equivalent.
 	// Returns true for: dnf, zypper, mmdebstrap

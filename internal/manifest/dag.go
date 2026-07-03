@@ -39,7 +39,13 @@ func (d *DAG) checkCycle(name string, visiting, visited map[string]bool) error {
 		return nil
 	}
 	visiting[name] = true
-	layer := d.layers[name]
+	layer, ok := d.layers[name]
+	if !ok {
+		// Manifest.Load validates depends_on targets, but NewDAG is public —
+		// a hand-built Manifest can reference a layer that doesn't exist.
+		// Error instead of dereferencing nil.
+		return fmt.Errorf("layer depends on unknown layer %s", name)
+	}
 	for _, dep := range layer.DependsOn {
 		if err := d.checkCycle(dep, visiting, visited); err != nil {
 			return err
@@ -203,7 +209,11 @@ func (d *DAG) Resolve(layerName, arch string) (string, error) {
 // VarFiles are appended internally — callers must NOT pre-mix layer-specific
 // var files into globalVarFiles, otherwise those files would be hashed twice
 // for the layer they belong to and would leak into the hash of every ancestor.
-func (d *DAG) ComputeTag(name string, globalVarFiles []string) (string, error) {
+//
+// varOverrides are CLI-level "key=value" overrides (--var). Like
+// globalVarFiles they apply to every layer, and they are folded into the
+// hash so that builds differing only in --var get distinct tags.
+func (d *DAG) ComputeTag(name string, globalVarFiles []string, varOverrides ...string) (string, error) {
 	ancestors, err := d.Ancestors(name)
 	if err != nil {
 		return "", err
@@ -217,14 +227,16 @@ func (d *DAG) ComputeTag(name string, globalVarFiles []string) (string, error) {
 	ancestorInputs := make([]tag.LayerInput, len(ancestors))
 	for i, a := range ancestors {
 		ancestorInputs[i] = tag.LayerInput{
-			ConfigPath: a.Config,
-			VarFiles:   combineVarFiles(globalVarFiles, a.VarFiles),
+			ConfigPath:   a.Config,
+			VarFiles:     combineVarFiles(globalVarFiles, a.VarFiles),
+			VarOverrides: varOverrides,
 		}
 	}
 
 	layerInput := tag.LayerInput{
-		ConfigPath: layer.Config,
-		VarFiles:   combineVarFiles(globalVarFiles, layer.VarFiles),
+		ConfigPath:   layer.Config,
+		VarFiles:     combineVarFiles(globalVarFiles, layer.VarFiles),
+		VarOverrides: varOverrides,
 	}
 
 	return tag.Compute(layerInput, ancestorInputs)
@@ -269,8 +281,9 @@ func combineVarFiles(globals, layerSpecific []string) []string {
 // value.
 //
 // globalVarFiles must be only the CLI-level globals; layer var files are
-// applied inside ComputeTag.
-func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string) (map[string]interface{}, error) {
+// applied inside ComputeTag. varOverrides are CLI-level --var "key=value"
+// overrides, forwarded to ComputeTag so they participate in every hash.
+func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string, varOverrides ...string) (map[string]interface{}, error) {
 	log := slog.With("component", "manifest")
 	layer, err := dag.Get(layerName)
 	if err != nil {
@@ -279,7 +292,7 @@ func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string) (map[
 
 	vars := make(map[string]interface{})
 
-	layerTag, err := dag.ComputeTag(layerName, globalVarFiles)
+	layerTag, err := dag.ComputeTag(layerName, globalVarFiles, varOverrides...)
 	if err != nil {
 		return nil, fmt.Errorf("compute tag for %s: %w", layerName, err)
 	}
@@ -291,7 +304,7 @@ func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string) (map[
 	}
 
 	for _, depName := range layer.DependsOn {
-		depTag, err := dag.ComputeTag(depName, globalVarFiles)
+		depTag, err := dag.ComputeTag(depName, globalVarFiles, varOverrides...)
 		if err != nil {
 			return nil, fmt.Errorf("compute tag for parent %s: %w", depName, err)
 		}

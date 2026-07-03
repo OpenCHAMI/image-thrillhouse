@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Tests for the pure helpers in the builder package — extractExitCode,
-// firstNonEmpty, absPath, resolveConfigPath. These don't need any container/
+// firstNonEmpty, absPath. These don't need any container/
 // backend mocks; they're string/error/path massagers exercising specific
 // branches that have bitten us before (the "exit status N" string-parse
 // fallback in extractExitCode in particular).
@@ -132,29 +132,6 @@ func TestAbsPath_Relative(t *testing.T) {
 	}
 }
 
-func TestResolveConfigPath_AbsoluteUnchanged(t *testing.T) {
-	b := &Builder{cfgPath: "/configs/foo.yaml"}
-	got := b.resolveConfigPath("/etc/ansible/playbook.yaml")
-	if got != "/etc/ansible/playbook.yaml" {
-		t.Errorf("absolute paths must not be rewritten, got %q", got)
-	}
-}
-
-func TestResolveConfigPath_RelativeUnchanged(t *testing.T) {
-	// Relative paths are now returned as-is and resolve relative to CWD
-	b := &Builder{cfgPath: "/configs/sub/foo.yaml"}
-	got := b.resolveConfigPath("roles")
-	want := "roles"
-	if got != want {
-		t.Errorf("resolveConfigPath = %q, want %q", got, want)
-	}
-}
-
-func TestResolveConfigPath_AlwaysUsesCWD(t *testing.T) {
-	// All relative paths resolve relative to CWD, regardless of cfgPath
-	b := &Builder{cfgPath: ""}
-	got := b.resolveConfigPath("playbook.yaml")
-	if got != "playbook.yaml" {
-		t.Errorf("relative path should be unchanged, got %q", got)
-	}
-}
+// Note: resolveConfigPath was removed — it returned its input unchanged in
+// every branch. Config paths resolve relative to CWD by construction; absPath
+// (tested above) handles the conversion bind mounts need.

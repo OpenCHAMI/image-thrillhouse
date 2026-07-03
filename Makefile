@@ -9,6 +9,9 @@ BINARY_NAME=image-thrillhouse
 VERSION=0.1.0
 GO=go
 GOFLAGS=-v
+# Stamp the version into the binary so `image-thrillhouse version` reports
+# the same value as this Makefile — the single source of truth for VERSION.
+LDFLAGS=-ldflags "-X main.version=v$(VERSION)"
 BUILD_DIR=.
 INSTALL_DIR=/usr/local/bin
 RPMBUILD_DIR=$(HOME)/rpmbuild
@@ -18,7 +21,7 @@ all: build
 
 # Build the binary
 build:
-	$(GO) build $(GOFLAGS) -o $(BINARY_NAME) ./cmd/image-thrillhouse
+	$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_NAME) ./cmd/image-thrillhouse
 
 # Clean build artifacts
 clean:

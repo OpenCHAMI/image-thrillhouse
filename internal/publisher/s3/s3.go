@@ -228,22 +228,9 @@ func (s *S3Publisher) detectOS(mountPath string) (string, error) {
 
 // createS3Client creates an AWS SDK v2 S3 client with custom endpoint support
 func (s *S3Publisher) createS3Client(ctx context.Context) (*s3.Client, error) {
-	// Create custom endpoint resolver for non-AWS S3 endpoints
-	customResolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-		if service == s3.ServiceID {
-			return aws.Endpoint{
-				URL:               s.endpoint,
-				HostnameImmutable: true,
-				Source:            aws.EndpointSourceCustom,
-			}, nil
-		}
-		return aws.Endpoint{}, &aws.EndpointNotFoundError{}
-	})
-
 	// Load default config with custom credentials
 	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion("us-east-1"), // Default region, not critical for custom endpoints
-		config.WithEndpointResolverWithOptions(customResolver),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			s.accessKey,
 			s.secretKey,
@@ -254,8 +241,11 @@ func (s *S3Publisher) createS3Client(ctx context.Context) (*s3.Client, error) {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	// Create S3 client with path-style addressing for S3-compatible services
+	// Point the client at the configured (possibly non-AWS) endpoint and use
+	// path-style addressing for S3-compatible services. BaseEndpoint replaces
+	// the deprecated aws.EndpointResolverWithOptions mechanism.
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(s.endpoint)
 		o.UsePathStyle = true
 	})
 

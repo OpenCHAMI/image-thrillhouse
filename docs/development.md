@@ -19,6 +19,15 @@ sudo mv image-thrillhouse /usr/local/bin/
 
 On macOS the cgo deps are not available, so the binary builds and the tests in `internal/buildah` only work on Linux. The pure-Go packages test fine anywhere.
 
+**Tip — compiling and testing without gpgme:** the `containers_image_openpgp` build tag swaps containers/image's gpgme signature backend for a pure-Go one, which removes the `pkg-config`/`libgpgme-dev` requirement entirely. On machines without the cgo deps (macOS, minimal CI runners) the *entire* module compiles and tests with:
+
+```bash
+go build -tags containers_image_openpgp ./...
+go test  -tags containers_image_openpgp ./...
+```
+
+**Version stamping:** `image-thrillhouse version` reports the value injected at build time via `-ldflags "-X main.version=…"`. `make build`, the RPM spec, and `debian/rules` all pass their own version through; a bare `go build` produces a binary that reports `dev`.
+
 ### Build a local container
 
 ```bash
@@ -35,17 +44,20 @@ go test -cover ./...      # With coverage
 
 See [`TESTING.md`](../TESTING.md) for the full unit-testing guide.
 
-**Caveat.** `internal/buildah` depends transitively on cgo bindings (gpgme, btrfs, devicemapper) via `containers/storage`. On systems without those libraries — notably macOS — `go test ./...` will fail to build that package.
+**Caveat.** `internal/buildah` depends transitively on cgo bindings (gpgme, btrfs, devicemapper) via `containers/storage`. On systems without those libraries — notably macOS — `go test ./...` will fail to build that package. Add `-tags containers_image_openpgp` (see the build tip above) to run the full suite anyway.
 
 ### Unit test coverage
 
-- ✅ `internal/config` — YAML parsing, schema validation
+- ✅ `internal/config` — YAML parsing, schema validation, var merging
 - ✅ `internal/labels` — OCI label generation
 - ✅ `internal/backend/apt`
 - ✅ `internal/backend/dnf`
-- ✅ `internal/backend/zypper` (including informational exit codes 102/103/107)
+- ✅ `internal/backend/zypper` (including informational exit codes 102/103/107 and global-vs-subcommand flag placement)
 - ✅ `internal/backend/mmdebstrap`
-- ⚠️ `internal/buildah`, `internal/builder`, `internal/container`, `internal/fetch`, `internal/publisher/*` — covered only by the integration suite below
+- ✅ `internal/builder` — helpers plus fake-container tests (label application before publish, empty-root install ordering)
+- ✅ `internal/manifest`, `internal/tag` — DAG resolution, deterministic tag hashing (incl. `--var` overrides)
+- ✅ `internal/container`, `internal/fetch`, `internal/oscap`, `internal/publisher/*`
+- ⚠️ `internal/buildah` — covered only by the integration suite below
 
 ## Integration tests
 

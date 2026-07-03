@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 
 	"go.podman.io/storage/pkg/fileutils"
@@ -23,6 +25,13 @@ import (
 type LayerInput struct {
 	ConfigPath string
 	VarFiles   []string
+
+	// VarOverrides are CLI-level "key=value" variable overrides (--var).
+	// They change the rendered config just like var-file contents do, so
+	// they must be part of the hash — otherwise two builds differing only
+	// in --var would share a tag and skip-if-exists could silently reuse
+	// the wrong image. Hashed sorted for determinism.
+	VarOverrides []string
 }
 
 func Compute(layer LayerInput, ancestors []LayerInput) (string, error) {
@@ -59,6 +68,17 @@ func hashLayer(h io.Writer, layer LayerInput) error {
 		}
 	}
 
+	// CLI --var overrides - sorted for determinism, length-prefixed so
+	// adjacent entries can't collide by concatenation.
+	overrides := make([]string, len(layer.VarOverrides))
+	copy(overrides, layer.VarOverrides)
+	sort.Strings(overrides)
+	for _, ov := range overrides {
+		if err := writeLengthPrefixedString(h, ov); err != nil {
+			return fmt.Errorf("hash var override: %w", err)
+		}
+	}
+
 	// src files and URLs from config
 	cfg, err := config.LoadConfigRaw(layer.ConfigPath)
 	if err != nil {
@@ -67,23 +87,30 @@ func hashLayer(h io.Writer, layer LayerInput) error {
 
 	for _, f := range cfg.Layer.Files {
 		if f.Src != "" {
-			if err := hashFile(h, f.Src); err != nil {
-				return fmt.Errorf("hash src %s: %w", f.Src, err)
+			if err := hashSrcPath(h, layer.ConfigPath, "file src", f.Src); err != nil {
+				return err
 			}
 		}
 		if f.URL != "" {
-			io.WriteString(h, f.URL)
+			// Length-prefixed for the same reason hashFile prefixes file
+			// bytes: without a boundary, adjacent URLs (or a URL/src swap)
+			// could concatenate to identical hash input.
+			if err := writeLengthPrefixedString(h, f.URL); err != nil {
+				return fmt.Errorf("hash url %s: %w", f.URL, err)
+			}
 		}
 	}
 
 	for _, r := range cfg.Layer.Repos {
 		if r.Src != "" {
-			if err := hashFile(h, r.Src); err != nil {
-				return fmt.Errorf("hash repo src %s: %w", r.Src, err)
+			if err := hashSrcPath(h, layer.ConfigPath, "repo src", r.Src); err != nil {
+				return err
 			}
 		}
 		if r.URL != "" {
-			io.WriteString(h, r.URL)
+			if err := writeLengthPrefixedString(h, r.URL); err != nil {
+				return fmt.Errorf("hash repo url %s: %w", r.URL, err)
+			}
 		}
 	}
 
@@ -93,12 +120,52 @@ func hashLayer(h io.Writer, layer LayerInput) error {
 	// that the YAML can't see, plus the metadata that survives into the
 	// resulting layer.
 	for _, d := range cfg.Layer.Directories {
+		if isTemplated(d.Src) {
+			// See hashSrcPath — the real directory is only known after
+			// rendering, so hash the template text and skip the walk.
+			warnTemplatedSrc(layer.ConfigPath, "directory src", d.Src)
+			if err := writeLengthPrefixedString(h, d.Src); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := hashDirectory(h, d); err != nil {
 			return fmt.Errorf("hash directory %s: %w", d.Src, err)
 		}
 	}
 
 	return nil
+}
+
+// isTemplated reports whether a value from the raw (unrendered) config was a
+// template expression — LoadConfigRaw substitutes config.TemplatePlaceholder
+// for every {{ ... }} directive before the YAML is parsed.
+func isTemplated(s string) bool {
+	return strings.Contains(s, config.TemplatePlaceholder)
+}
+
+// hashSrcPath folds a src path from the raw config into the hash. Literal
+// paths are content-hashed via hashFile. Templated paths (the real value is
+// only known after rendering) can't be opened here, so the template text
+// itself is hashed instead — the config bytes already cover it, but hashing
+// it again keeps this site self-contained. The trade-off is that changes to
+// the *contents* of a templated src file do NOT invalidate the tag; we log a
+// warning so users relying on tag-based caching know about the blind spot.
+func hashSrcPath(h io.Writer, configPath, label, src string) error {
+	if isTemplated(src) {
+		warnTemplatedSrc(configPath, label, src)
+		return writeLengthPrefixedString(h, src)
+	}
+	if err := hashFile(h, src); err != nil {
+		return fmt.Errorf("hash %s %s: %w", label, src, err)
+	}
+	return nil
+}
+
+func warnTemplatedSrc(configPath, label, src string) {
+	slog.With("component", "tag").Warn(
+		"templated src path: contents not included in tag hash; edits to the referenced file will not change the computed tag",
+		"config", configPath, "field", label, "src", src)
 }
 
 // hashDirectory walks dir.Src (filtered by dir.Excludes using buildah's own

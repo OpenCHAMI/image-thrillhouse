@@ -16,7 +16,15 @@ meta:
     - "latest"
   from: scratch            # Base: 'scratch' or 'registry.io/image:tag'
   from-tls-verify: true    # Optional: verify TLS when pulling base (default: true)
+  labels:                  # Optional: custom OCI image labels
+    org.example.team: hpc
 ```
+
+### Image labels
+
+Every build automatically stamps `org.openchami.image.*` labels into the image (name, package manager, parent image, tags, build date, repo/package/group lists). Custom `meta.labels` entries are merged on top and **override** an auto-generated label with the same key.
+
+Labels are applied to the container once, before publishing, so every publish destination that produces an OCI image (local storage, registry) carries them — including registry-only publishes. SquashFS and S3 outputs are filesystem images and have no label metadata.
 
 ## `layer`
 
@@ -221,7 +229,10 @@ Security compliance scanning and vulnerability assessment.
 ```yaml
 layer:
   openscap:
-    install_scap: true          # Install openscap-utils, scap-security-guide, bzip2
+    install_scap: true          # Install the oscap scanner + SCAP Security Guide content + bzip2.
+                                # RPM distros: openscap-utils, scap-security-guide, bzip2.
+                                # Debian/Ubuntu: openscap-utils, bzip2, ssg-base, ssg-debian, ssg-debderived
+                                # (Debian splits the SSG content into ssg-* packages).
 
     scap_benchmark: true        # Run XCCDF security benchmark scan
     profile: "xccdf_org.ssgproject.content_profile_stig"
@@ -276,7 +287,11 @@ S3 publishing reads credentials from the `S3_ACCESS` and `S3_SECRET` environment
 
 ## Manifests
 
-A **manifest** is a YAML file that describes a DAG of layers. Each layer references a config file (of the shape above) and declares which other layers it depends on. `image-thrillhouse` computes a deterministic hash tag for each layer from its config + var files + ancestors, so a child layer's `from:` can pin the exact parent it was built against via `{{ .parent_tag }}` — no manual tag bookkeeping.
+A **manifest** is a YAML file that describes a DAG of layers. Each layer references a config file (of the shape above) and declares which other layers it depends on. `image-thrillhouse` computes a deterministic hash tag for each layer from its config + var files + CLI `--var` overrides + ancestors, so a child layer's `from:` can pin the exact parent it was built against via `{{ .parent_tag }}` — no manual tag bookkeeping.
+
+Hash inputs, in full: the raw config template bytes, every applicable var file (CLI `--var-file` + the layer's `var_files`), every CLI `--var key=value` override, the contents of any `src:` files/repos and `directories` trees the config references, referenced URLs, and the same inputs for every ancestor layer. Changing any of these produces a new tag; two builds differing only in `--var` therefore get distinct tags (important with `--skip-if-exists`).
+
+**Templated `src:` caveat:** when a `files`/`repos`/`directories` entry's `src:` contains a template expression (e.g. `src: "{{ .payload_dir }}/foo"`), the real path is only known after rendering, so the hash covers the template text but **not** the referenced file's contents. Edits to that file won't change the computed tag — a warning is logged when this applies. Prefer literal `src:` paths when you rely on tag-based caching.
 
 Manifests replace the pattern of hand-writing one config per (distro × arch) with a single template plus per-arch var files.
 

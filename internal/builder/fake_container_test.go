@@ -27,6 +27,8 @@ type fakeContainer struct {
 	RunModes           []container.RunMode
 	RunScriptCalls     []string
 	CopyDirectoryCalls []copyDirectoryCall
+	SetLabelsCalls     []map[string]string
+	Events             []string // interleaved call log ("run:<argv0>", "write:<path>", "setlabels") for ordering assertions
 	WriteFileErr       error
 	RunErr             error
 	RunScriptErr       error
@@ -46,6 +48,9 @@ type copyDirectoryCall struct {
 func (f *fakeContainer) Run(ctx context.Context, cmd []string, mode container.RunMode, out container.OutputWriter, opts ...container.RunOption) error {
 	f.RunCalls = append(f.RunCalls, cmd)
 	f.RunModes = append(f.RunModes, mode)
+	if len(cmd) > 0 {
+		f.Events = append(f.Events, "run:"+cmd[0])
+	}
 	return f.RunErr
 }
 
@@ -56,6 +61,7 @@ func (f *fakeContainer) RunScript(ctx context.Context, script string, out contai
 
 func (f *fakeContainer) WriteFile(ctx context.Context, file config.File) error {
 	f.WriteFileCalls = append(f.WriteFileCalls, file)
+	f.Events = append(f.Events, "write:"+file.Path)
 	return f.WriteFileErr
 }
 
@@ -78,6 +84,11 @@ func (f *fakeContainer) CommitWithLabels(ctx context.Context, name, tag string, 
 
 func (f *fakeContainer) CommitWithLabelsTags(ctx context.Context, name string, tags []string, labels map[string]string) (string, error) {
 	return "fake-id", nil
+}
+
+func (f *fakeContainer) SetLabels(labels map[string]string) {
+	f.SetLabelsCalls = append(f.SetLabelsCalls, labels)
+	f.Events = append(f.Events, "setlabels")
 }
 
 func (f *fakeContainer) GetID() string                                                    { return "fake-id" }
@@ -134,6 +145,7 @@ func (fakeBackendBase) Bootstrap(ctx context.Context, c container.Container, roo
 	return nil
 }
 func (fakeBackendBase) SupportsInstallRoot() bool                       { return true }
+func (fakeBackendBase) RequiresEmptyRoot() bool                         { return false }
 func (fakeBackendBase) SupportsParentInstall() bool                     { return true }
 func (fakeBackendBase) ValidateOptions(options map[string]string) error { return nil }
 func (fakeBackendBase) ConfigFilePath() string                          { return "" }

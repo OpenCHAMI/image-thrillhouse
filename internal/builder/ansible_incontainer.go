@@ -262,10 +262,10 @@ func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, 
 	log.Debug("staged ansible payload", "host_dir", stageDir, "container_dir", stageEtcPath)
 
 	// Step 3: Resolve optional user-provided roles and inventory paths. Both
-	// are bind-mounted directly from their host locations (no copy). OCI bind
-	// mount sources must be absolute, so we run filepath.Abs on whatever
-	// resolveConfigPath produced.
-	rolesHost, err := absPath(b.resolveConfigPath(firstNonEmpty(ansible.Roles, "roles")))
+	// are bind-mounted directly from their host locations (no copy). Relative
+	// paths resolve against the current working directory; OCI bind mount
+	// sources must be absolute, so absPath converts them.
+	rolesHost, err := absPath(firstNonEmpty(ansible.Roles, "roles"))
 	if err != nil {
 		return fmt.Errorf("resolve roles path: %w", err)
 	}
@@ -278,7 +278,7 @@ func (b *Builder) runAnsibleCommand(ctx context.Context, c container.Container, 
 
 	var inventoryHost string
 	if ansible.Inventory != "" {
-		inventoryHost, err = absPath(b.resolveConfigPath(ansible.Inventory))
+		inventoryHost, err = absPath(ansible.Inventory)
 		if err != nil {
 			return fmt.Errorf("resolve inventory path: %w", err)
 		}
@@ -308,17 +308,6 @@ func (b *Builder) verifyAnsibleInstalled(ctx context.Context, c container.Contai
 	return nil
 }
 
-// resolveConfigPath resolves a path from the config file (e.g.
-// ansible.playbook, ansible.inventory, ansible.roles) relative to the current
-// working directory. Absolute paths are returned unchanged. Relative paths
-// always resolve relative to CWD, regardless of where the config file is located.
-func (b *Builder) resolveConfigPath(path string) string {
-	if filepath.IsAbs(path) {
-		return path
-	}
-	return path
-}
-
 // stageAnsiblePayload creates a host-side temp directory and populates it with
 // the generated ansible.cfg, the generated localhost inventory, and a copy of
 // the user's playbook. Returns the absolute path of the staging directory and
@@ -328,7 +317,9 @@ func (b *Builder) resolveConfigPath(path string) string {
 // user's roles directory, not the host path — so the rendered file is only
 // useful when the bind mount is in place.
 func (b *Builder) stageAnsiblePayload(ansible *config.AnsibleCommand) (string, string, error) {
-	playbookHost := b.resolveConfigPath(ansible.Playbook)
+	// Relative playbook paths resolve against the current working directory,
+	// regardless of where the config file itself lives.
+	playbookHost := ansible.Playbook
 	info, err := os.Stat(playbookHost)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -474,8 +465,8 @@ func firstNonEmpty(a, b string) string {
 }
 
 // absPath returns the absolute form of path. OCI bind mounts require absolute
-// source paths; resolveConfigPath returns relative paths as-is (they resolve
-// relative to CWD), so this function converts them to absolute paths.
+// source paths; config-supplied paths may be relative (they resolve relative
+// to CWD), so this function converts them to absolute paths.
 func absPath(path string) (string, error) {
 	if filepath.IsAbs(path) {
 		return path, nil

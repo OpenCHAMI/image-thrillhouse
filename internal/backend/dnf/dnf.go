@@ -147,8 +147,21 @@ func moduleSpec(mod config.Module) string {
 // This is how we bootstrap a new filesystem from nothing.
 //
 // The commands are similar to InstallCommands but include --installroot flag.
+// Module operations run first, matching InstallCommands — a module enable/
+// disable is usually meant to influence which streams the subsequent package
+// and group installs resolve against.
 func (d *DnfBackend) InstallRootCommands(install config.Install, rootPath string) [][]string {
 	var cmds [][]string
+
+	// Handle module operations for the root path (before installs so enabled
+	// streams take effect for the package/group commands below)
+	for _, mod := range install.Modules {
+		cmd := make([]string, 0, 14)
+		cmd = append(cmd, "dnf", "-q")
+		cmd = d.addOptionFlags(cmd)
+		cmd = append(cmd, "--installroot", rootPath, "module", "-y", mod.Action, moduleSpec(mod))
+		cmds = append(cmds, cmd)
+	}
 
 	// Install individual packages into the root path
 	if len(install.Packages) > 0 {
@@ -162,22 +175,16 @@ func (d *DnfBackend) InstallRootCommands(install config.Install, rootPath string
 		cmds = append(cmds, cmd)
 	}
 
-	// Install package groups into the root path
+	// Install package groups into the root path. Same tsflags workaround as
+	// the package command — group installs unpack the same RPMs and hit the
+	// same overlay-filesystem issues.
 	if len(install.Groups) > 0 {
 		cmd := make([]string, 0, 12+len(install.Groups))
 		cmd = append(cmd, "dnf", "-q")
 		cmd = d.addOptionFlags(cmd)
+		cmd = append(cmd, "--setopt=tsflags=nodocs")
 		cmd = append(cmd, "--installroot", rootPath, "groupinstall", "-y")
 		cmd = append(cmd, install.Groups...)
-		cmds = append(cmds, cmd)
-	}
-
-	// Handle module operations for the root path
-	for _, mod := range install.Modules {
-		cmd := make([]string, 0, 14)
-		cmd = append(cmd, "dnf", "-q")
-		cmd = d.addOptionFlags(cmd)
-		cmd = append(cmd, "--installroot", rootPath, "module", "-y", mod.Action, moduleSpec(mod))
 		cmds = append(cmds, cmd)
 	}
 
@@ -288,6 +295,12 @@ func (d *DnfBackend) Bootstrap(ctx context.Context, c container.Container, rootP
 // SupportsInstallRoot indicates that DNF supports scratch builds using --installroot.
 func (d *DnfBackend) SupportsInstallRoot() bool {
 	return true
+}
+
+// RequiresEmptyRoot returns false: dnf --installroot happily installs into a
+// root that already holds repo files, GPG keys, and the pre-created skeleton.
+func (d *DnfBackend) RequiresEmptyRoot() bool {
+	return false
 }
 
 // SupportsParentInstall indicates that DNF can install into existing containers.

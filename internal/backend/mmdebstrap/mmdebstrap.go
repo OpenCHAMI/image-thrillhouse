@@ -138,6 +138,14 @@ func (m *MmdebstrapBackend) SupportsInstallRoot() bool {
 	return true
 }
 
+// RequiresEmptyRoot returns true: mmdebstrap refuses to bootstrap into a
+// target directory that already has content. The builder therefore defers
+// repo/file/directory/GPG-key writes until after the bootstrap for this
+// backend (see Builder.Build), instead of the usual write-then-install order.
+func (m *MmdebstrapBackend) RequiresEmptyRoot() bool {
+	return true
+}
+
 // SupportsParentInstall returns false because mmdebstrap can only bootstrap
 // a new filesystem; it cannot install into an existing image.
 // Use the apt backend for parent image builds.
