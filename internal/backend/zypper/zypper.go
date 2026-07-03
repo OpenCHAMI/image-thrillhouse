@@ -102,8 +102,9 @@ func (z *ZypperBackend) InstallCommands(install config.Install) [][]string {
 	if len(install.Packages) > 0 {
 		cmd := make([]string, 0, 10+len(install.Packages))
 		cmd = append(cmd, "zypper", "-q")
-		cmd = z.addOptionFlags(cmd)
+		cmd = z.addGlobalFlags(cmd)
 		cmd = append(cmd, "install", "-y")
+		cmd = z.addInstallFlags(cmd)
 		cmd = append(cmd, install.Packages...)
 		cmds = append(cmds, cmd)
 	}
@@ -111,8 +112,9 @@ func (z *ZypperBackend) InstallCommands(install config.Install) [][]string {
 	if len(install.Groups) > 0 {
 		cmd := make([]string, 0, 10+len(install.Groups))
 		cmd = append(cmd, "zypper", "-q")
-		cmd = z.addOptionFlags(cmd)
+		cmd = z.addGlobalFlags(cmd)
 		cmd = append(cmd, "install", "-y", "-t", "pattern")
+		cmd = z.addInstallFlags(cmd)
 		cmd = append(cmd, install.Groups...)
 		cmds = append(cmds, cmd)
 	}
@@ -145,32 +147,16 @@ func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath str
 	// Note: refresh doesn't accept --no-recommends flag, only --no-gpg-checks
 	refreshCmd := make([]string, 0, 8)
 	refreshCmd = append(refreshCmd, "zypper", "--root", rootPath)
-	// Only add GPG check flags for refresh
-	if z.noGpgChecks {
-		refreshCmd = append(refreshCmd, "--no-gpg-checks")
-	} else {
-		refreshCmd = append(refreshCmd, "--gpg-auto-import-keys")
-	}
+	refreshCmd = z.addGlobalFlags(refreshCmd)
 	refreshCmd = append(refreshCmd, "refresh")
 	cmds = append(cmds, refreshCmd)
 
 	if len(install.Packages) > 0 {
 		cmd := make([]string, 0, 12+len(install.Packages))
 		cmd = append(cmd, "zypper", "--root", rootPath)
-		// Add global options before subcommand
-		if z.noGpgChecks {
-			cmd = append(cmd, "--no-gpg-checks")
-		} else {
-			cmd = append(cmd, "--gpg-auto-import-keys")
-		}
+		cmd = z.addGlobalFlags(cmd)
 		cmd = append(cmd, "install", "-y")
-		// Add subcommand-specific options
-		if z.noRecommends {
-			cmd = append(cmd, "--no-recommends")
-		}
-		if z.forceResolution {
-			cmd = append(cmd, "--force-resolution")
-		}
+		cmd = z.addInstallFlags(cmd)
 		cmd = append(cmd, install.Packages...)
 		cmds = append(cmds, cmd)
 	}
@@ -178,20 +164,9 @@ func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath str
 	if len(install.Groups) > 0 {
 		cmd := make([]string, 0, 12+len(install.Groups))
 		cmd = append(cmd, "zypper", "--root", rootPath)
-		// Add global options before subcommand
-		if z.noGpgChecks {
-			cmd = append(cmd, "--no-gpg-checks")
-		} else {
-			cmd = append(cmd, "--gpg-auto-import-keys")
-		}
+		cmd = z.addGlobalFlags(cmd)
 		cmd = append(cmd, "install", "-y", "-t", "pattern")
-		// Add subcommand-specific options
-		if z.noRecommends {
-			cmd = append(cmd, "--no-recommends")
-		}
-		if z.forceResolution {
-			cmd = append(cmd, "--force-resolution")
-		}
+		cmd = z.addInstallFlags(cmd)
 		cmd = append(cmd, install.Groups...)
 		cmds = append(cmds, cmd)
 	}
@@ -218,16 +193,26 @@ func (z *ZypperBackend) ValidateOptions(options map[string]string) error {
 	return cmdutil.ValidateOptionSchema("zypper", options, schema)
 }
 
-// addOptionFlags adds Zypper option flags to a command based on configured options.
-// This is a helper method to avoid duplicating flag logic.
-func (z *ZypperBackend) addOptionFlags(cmd []string) []string {
-	if z.noRecommends {
-		cmd = append(cmd, "--no-recommends")
-	}
+// addGlobalFlags appends zypper GLOBAL options — those must appear before
+// the subcommand (zypper [global] install [command-opts] …). Only the GPG
+// handling flags are global; --no-recommends and --force-resolution are
+// install-command options and belong in addInstallFlags. Mixing the two up
+// produces an "unknown option" error from zypper, which is exactly the bug
+// this split exists to prevent.
+func (z *ZypperBackend) addGlobalFlags(cmd []string) []string {
 	if z.noGpgChecks {
 		cmd = append(cmd, "--no-gpg-checks")
 	} else {
 		cmd = append(cmd, "--gpg-auto-import-keys")
+	}
+	return cmd
+}
+
+// addInstallFlags appends options specific to the `install` subcommand.
+// These must appear after `install`, never in the global position.
+func (z *ZypperBackend) addInstallFlags(cmd []string) []string {
+	if z.noRecommends {
+		cmd = append(cmd, "--no-recommends")
 	}
 	if z.forceResolution {
 		cmd = append(cmd, "--force-resolution")
@@ -272,6 +257,12 @@ func (z *ZypperBackend) SupportsInstallRoot() bool {
 	return true
 }
 
+// RequiresEmptyRoot returns false: zypper --root installs into a root that
+// already holds repo files and the pre-created skeleton.
+func (z *ZypperBackend) RequiresEmptyRoot() bool {
+	return false
+}
+
 // SupportsParentInstall returns true because Zypper can install into existing containers.
 func (z *ZypperBackend) SupportsParentInstall() bool {
 	return true
@@ -300,10 +291,11 @@ func (z *ZypperBackend) OutputWriter() container.OutputWriter {
 //     dbus) failed in the --root chroot. The on-disk state is correct; the
 //     scriptlets will re-run at first boot.
 //
-// Exit code 8 (ZYPPER_EXIT_ERR_COMMIT) is a real error in general, but in
-// older zypper versions it was also returned for post-install scriptlet
-// failures. We keep the existing output-sniffing heuristic for that case
-// for backward compatibility.
+// Exit code 8 (ZYPPER_EXIT_ERR_COMMIT) is a real error and is NOT tolerated.
+// Older zypper versions also returned it for post-install scriptlet
+// failures; an output-sniffing heuristic for that case existed once but was
+// removed (commit 28f1e00) until a concrete case requires it again. If that
+// happens, the `output` parameter is the hook to reintroduce it.
 func (z *ZypperBackend) IsAcceptableExitCode(exitCode int, output string) bool {
 	switch exitCode {
 	case 102, 103, 107:

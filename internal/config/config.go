@@ -287,6 +287,12 @@ func (m *Meta) TLSVerify() bool {
 	return true // default to verify
 }
 
+// TemplatePlaceholder is the string substituted for {{ ... }} template
+// directives by LoadConfigRaw so the unrendered template parses as YAML.
+// Exported so consumers of LoadConfigRaw (today: the tag hasher) can detect
+// fields whose real value is only known after rendering.
+const TemplatePlaceholder = "__placeholder__"
+
 func replaceTemplatePlaceholders(data []byte) []byte {
 	// Handle template control flow blocks (range/if/with/else) that span multiple lines.
 	// These need special handling because simply replacing {{ ... }} breaks YAML structure
@@ -298,17 +304,17 @@ func replaceTemplatePlaceholders(data []byte) []byte {
 	cleaned := reRangeBlock.ReplaceAllFunc(data, func(match []byte) []byte {
 		// Check if this range contains simple list items: lines with "- {{ ... }}"
 		if regexp.MustCompile(`(?m)^\s*-\s+\{\{`).Match(match) {
-			return []byte("- __placeholder__")
+			return []byte("- " + TemplatePlaceholder)
 		}
 		// Check if this range contains structured list items: "- key: {{ ... }}"
 		if regexp.MustCompile(`(?m)^\s*-\s+\w+:`).Match(match) {
-			return []byte("- __placeholder__: __placeholder__")
+			return []byte("- " + TemplatePlaceholder + ": " + TemplatePlaceholder)
 		}
 		// Otherwise just use a simple placeholder
-		return []byte("__placeholder__")
+		return []byte(TemplatePlaceholder)
 	})
 
 	// Replace remaining inline template expressions {{ .var }}
 	reInline := regexp.MustCompile(`\{\{[^}]*\}\}`)
-	return reInline.ReplaceAll(cleaned, []byte("__placeholder__"))
+	return reInline.ReplaceAll(cleaned, []byte(TemplatePlaceholder))
 }

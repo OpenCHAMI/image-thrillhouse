@@ -51,8 +51,9 @@ func New(url string, tlsVerify bool) *RegistryPublisher {
 // For example, with url="registry.io/myrepo", name="rocky-base", tag="9.5":
 // The image is pushed to: registry.io/myrepo/rocky-base:9.5
 //
-// Labels should be applied to the container before calling this method.
-// This publisher doesn't apply labels itself; it pushes what's already in the container.
+// Labels are applied to the container by the builder (Container.SetLabels)
+// before any publisher runs, so this method pushes what's already in the
+// container config and ignores the labels parameter.
 func (r *RegistryPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
 	log := slog.With("component", "publisher.registry")
 	for _, t := range tags {

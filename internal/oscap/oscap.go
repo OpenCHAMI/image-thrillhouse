@@ -35,22 +35,26 @@ func New(cfg *config.OpenSCAP) *Scanner {
 	}
 }
 
-// InstallSCAP installs OpenSCAP utilities into the container.
-// It installs: openscap-utils, scap-security-guide, bzip2
-// These packages are required for running security scans and handling OVAL files.
+// InstallSCAP installs OpenSCAP utilities into the container: the oscap
+// scanner (openscap-utils), the SCAP Security Guide content, and bzip2 for
+// OVAL archives. The SCAP Security Guide package name differs per ecosystem:
+// RPM distros ship "scap-security-guide", while Debian/Ubuntu split the same
+// content into ssg-* packages.
 func (s *Scanner) InstallSCAP(ctx context.Context, c container.Container, pkgManager string) error {
 	s.log.Info("installing openscap packages")
 
-	packages := []string{"openscap-utils", "scap-security-guide", "bzip2"}
+	rpmPackages := []string{"openscap-utils", "scap-security-guide", "bzip2"}
 
 	var cmd []string
 	switch pkgManager {
 	case "dnf":
 		cmd = []string{"dnf", "install", "-y", "--nogpgcheck"}
-		cmd = append(cmd, packages...)
+		cmd = append(cmd, rpmPackages...)
 	case "zypper":
-		cmd = []string{"zypper", "install", "-y", "--no-gpg-checks"}
-		cmd = append(cmd, packages...)
+		// --no-gpg-checks is a zypper GLOBAL option and must precede the
+		// `install` subcommand; zypper rejects it in the command position.
+		cmd = []string{"zypper", "--no-gpg-checks", "install", "-y"}
+		cmd = append(cmd, rpmPackages...)
 	case "apt":
 		// Update package list first for APT, matching the builder's style.
 		updateCmd := []string{"apt-get", "update", "-q"}
@@ -58,7 +62,11 @@ func (s *Scanner) InstallSCAP(ctx context.Context, c container.Container, pkgMan
 			s.log.Warn("failed to update apt cache", "error", err)
 		}
 		cmd = []string{"apt-get", "install", "-y", "-q", "--no-install-recommends"}
-		cmd = append(cmd, packages...)
+		// Debian/Ubuntu have no "scap-security-guide" package; the SSG
+		// content lives in ssg-base (shared) + ssg-debian / ssg-debderived
+		// (Debian and Ubuntu profiles respectively; both are small
+		// arch-independent content packages, so install both).
+		cmd = append(cmd, "openscap-utils", "bzip2", "ssg-base", "ssg-debian", "ssg-debderived")
 	default:
 		return fmt.Errorf("unsupported package manager for OpenSCAP: %s", pkgManager)
 	}

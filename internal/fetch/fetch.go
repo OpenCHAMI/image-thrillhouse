@@ -63,6 +63,10 @@ func Get(ctx context.Context, url string) ([]byte, error) {
 	return b, nil
 }
 
+// client is shared by every GetStream call so connections are pooled instead
+// of re-dialed per fetch. The Timeout bounds each request individually.
+var client = &http.Client{Timeout: DefaultTimeout}
+
 // GetStream is the streaming variant of Get. The caller must Close the
 // returned io.ReadCloser.
 func GetStream(ctx context.Context, url string) (io.ReadCloser, error) {
@@ -70,7 +74,6 @@ func GetStream(ctx context.Context, url string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: build request: %w", url, err)
 	}
-	client := &http.Client{Timeout: DefaultTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", url, err)

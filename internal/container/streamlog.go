@@ -124,7 +124,7 @@ func LogStreamBlock(level slog.Level, msg, raw string, attrs ...any) {
 		return
 	}
 	attrs = append(attrs, slog.Any("lines", lines))
-	slog.Log(nil, level, msg, attrs...)
+	slog.Log(context.Background(), level, msg, attrs...)
 }
 
 // normalizeStreamLines splits raw into lines, folds CR-progress redraws,
@@ -146,6 +146,12 @@ func normalizeStreamLines(raw string) []string {
 		}
 		line = ansiRe.ReplaceAllString(line, "")
 		out = append(out, line)
+	}
+	if err := sc.Err(); err != nil {
+		// A single line over the scanner's 4 MiB cap (or any other scan
+		// error) stops the loop early. Say so instead of silently dropping
+		// the remainder of the buffer.
+		out = append(out, fmt.Sprintf("[output truncated: %v]", err))
 	}
 	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
 		out = out[:len(out)-1]

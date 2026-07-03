@@ -34,7 +34,7 @@ Features:
 %setup -q -n %{name}-%{version}
 
 %build
-go build -v -tags "exclude_graphdriver_btrfs exclude_graphdriver_devicemapper" -o %{name} ./cmd/image-thrillhouse
+go build -v -tags "exclude_graphdriver_btrfs exclude_graphdriver_devicemapper" -ldflags "-X main.version=v%{version}" -o %{name} ./cmd/image-thrillhouse
 
 %install
 install -D -m 0755 %{name} %{buildroot}%{_bindir}/%{name}

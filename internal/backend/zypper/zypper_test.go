@@ -144,27 +144,72 @@ func TestInstallRootCommands(t *testing.T) {
 
 	cmds := backend.InstallRootCommands(install, rootPath)
 
-	if len(cmds) != 1 {
-		t.Fatalf("Expected 1 command, got %d", len(cmds))
+	// Scratch builds always start with a repository refresh, then install.
+	if len(cmds) != 2 {
+		t.Fatalf("Expected 2 commands (refresh + install), got %d", len(cmds))
 	}
 
-	cmd := cmds[0]
+	refresh := cmds[0]
+	if refresh[len(refresh)-1] != "refresh" {
+		t.Errorf("Expected first command to end with 'refresh', got %v", refresh)
+	}
 
-	// Check for --installroot flag (not --root)
-	hasInstallRoot := false
+	cmd := cmds[1]
+
+	// Check for --root flag pointing at the scratch root
+	hasRoot := false
 	for i, arg := range cmd {
-		if arg == "--installroot" {
-			hasInstallRoot = true
-			if i+1 < len(cmd) && cmd[i+1] == rootPath {
-				// Path is correct
-			} else {
-				t.Errorf("Expected --installroot to be followed by %s", rootPath)
+		if arg == "--root" {
+			hasRoot = true
+			if i+1 >= len(cmd) || cmd[i+1] != rootPath {
+				t.Errorf("Expected --root to be followed by %s, got %v", rootPath, cmd)
 			}
 			break
 		}
 	}
-	if !hasInstallRoot {
-		t.Error("Expected --installroot flag for scratch builds")
+	if !hasRoot {
+		t.Error("Expected --root flag for scratch builds")
+	}
+}
+
+// TestInstallCommands_SubcommandFlagPlacement locks in the global-vs-command
+// option split: --no-recommends and --force-resolution are `install`
+// subcommand options and must appear AFTER "install"; the GPG flags are
+// global and must appear BEFORE it. Zypper rejects them in the wrong slot.
+func TestInstallCommands_SubcommandFlagPlacement(t *testing.T) {
+	backend := New(map[string]string{
+		"no-recommends":    "true",
+		"force-resolution": "true",
+	})
+
+	cmds := backend.InstallCommands(config.Install{Packages: []string{"vim"}})
+	if len(cmds) != 1 {
+		t.Fatalf("Expected 1 command, got %d", len(cmds))
+	}
+	cmd := cmds[0]
+
+	pos := map[string]int{}
+	for i, arg := range cmd {
+		pos[arg] = i
+	}
+	installIdx, ok := pos["install"]
+	if !ok {
+		t.Fatalf("no install subcommand in %v", cmd)
+	}
+	for _, global := range []string{"--gpg-auto-import-keys"} {
+		if i, ok := pos[global]; ok && i > installIdx {
+			t.Errorf("global option %s must precede 'install': %v", global, cmd)
+		}
+	}
+	for _, sub := range []string{"--no-recommends", "--force-resolution"} {
+		i, ok := pos[sub]
+		if !ok {
+			t.Errorf("expected %s in command: %v", sub, cmd)
+			continue
+		}
+		if i < installIdx {
+			t.Errorf("subcommand option %s must follow 'install': %v", sub, cmd)
+		}
 	}
 }
 
@@ -197,8 +242,12 @@ func TestIsAcceptableExitCode(t *testing.T) {
 	}{
 		{"zero exit not consulted but should not be acceptable here", 0, "", false},
 		{"unrelated failure", 1, "Installing: bash", false},
-		{"err_commit with install evidence", 8, "Installing: bash-5.1", true},
-		{"err_commit with NEW packages evidence", 8, "The following NEW packages are going to be installed:\n  bash", true},
+		// Exit code 8 (ZYPPER_EXIT_ERR_COMMIT) is a real error. The old
+		// output-sniffing heuristic that tolerated it when install evidence
+		// appeared in the output was removed in commit 28f1e00; these cases
+		// lock in that it stays an error regardless of output.
+		{"err_commit with install evidence stays an error", 8, "Installing: bash-5.1", false},
+		{"err_commit with NEW packages evidence stays an error", 8, "The following NEW packages are going to be installed:\n  bash", false},
 		{"err_commit without evidence", 8, "some unrelated zypper error", false},
 		{"reboot needed (102) is informational", 102, "", true},
 		{"restart needed (103) is informational", 103, "", true},

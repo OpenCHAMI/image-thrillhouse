@@ -37,6 +37,8 @@ type Publisher interface {
 
 	// Exists reports whether an image with the given name and tags is already
 	// present at the publish destination. Implementations may return false
-	// when the destination has no notion of "exists" (e.g., local storage).
+	// when existence can't be determined up-front (e.g., the s3 publisher,
+	// whose object key depends on the built filesystem) — false means
+	// "rebuild", which is the conservative direction for skip-if-exists.
 	Exists(ctx context.Context, name string, tags []string) (bool, error)
 }

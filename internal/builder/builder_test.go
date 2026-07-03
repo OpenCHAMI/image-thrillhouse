@@ -14,7 +14,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/travisbcotton/image-thrillhouse/internal/backend"
 	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/container"
 	"github.com/travisbcotton/image-thrillhouse/internal/publisher"
 )
 
@@ -288,5 +290,114 @@ func TestAllExist_PropagatesError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "registry timeout") {
 		t.Errorf("error should mention underlying failure, got: %v", err)
+	}
+}
+
+// orderRecordingPublisher captures the state of the container's SetLabels
+// call log at Publish time, so tests can assert labels were applied BEFORE
+// any publisher ran (the registry publisher pushes whatever is already in
+// the container config and ignores its labels parameter).
+type orderRecordingPublisher struct {
+	fc                  *fakeContainer
+	labelCallsAtPublish int
+	labelsParam         map[string]string
+}
+
+func (p *orderRecordingPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
+	p.labelCallsAtPublish = len(p.fc.SetLabelsCalls)
+	p.labelsParam = labels
+	return nil
+}
+
+func (p *orderRecordingPublisher) Exists(ctx context.Context, name string, tags []string) (bool, error) {
+	return false, nil
+}
+
+// buildableBuilder wires a Builder whose newContainer returns the given fake,
+// mirroring what New does but with test doubles in every slot.
+func buildableBuilder(cfg *config.Config, fc *fakeContainer, be backend.Backend, pubs []publisher.Publisher) *Builder {
+	return &Builder{
+		cfg:     cfg,
+		backend: be,
+		newContainer: func(ctx context.Context, from string, tlsverify bool) (container.Container, error) {
+			return fc, nil
+		},
+		publishers: pubs,
+	}
+}
+
+// TestBuild_AppliesLabelsBeforePublish is the regression guard for the
+// registry-only label bug: Build must call c.SetLabels before the publish
+// loop so a direct-to-registry push carries the labels even when no local
+// publisher runs first.
+func TestBuild_AppliesLabelsBeforePublish(t *testing.T) {
+	fc := &fakeContainer{}
+	pub := &orderRecordingPublisher{fc: fc}
+	cfg := &config.Config{
+		Meta:  config.Meta{Name: "test", Tags: []string{"1"}, From: "docker.io/library/alpine"},
+		Layer: config.Layer{Manager: config.Manager{Name: "dnf"}},
+	}
+	b := buildableBuilder(cfg, fc, fakeBackendBase{}, []publisher.Publisher{pub})
+
+	if err := b.Build(context.Background()); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(fc.SetLabelsCalls) == 0 {
+		t.Fatal("Build never called SetLabels on the container")
+	}
+	if pub.labelCallsAtPublish == 0 {
+		t.Error("SetLabels must be called BEFORE the publish loop, not after")
+	}
+	if pub.labelsParam["org.openchami.image.name"] != "test" {
+		t.Errorf("publisher did not receive generated labels, got %v", pub.labelsParam)
+	}
+}
+
+// fakeBackendEmptyRoot simulates mmdebstrap: scratch-only, refuses a
+// non-empty root, and bootstraps via a single install command.
+type fakeBackendEmptyRoot struct{ fakeBackendBase }
+
+func (fakeBackendEmptyRoot) RequiresEmptyRoot() bool { return true }
+func (fakeBackendEmptyRoot) InstallRootCommands(install config.Install, rootPath string) [][]string {
+	return [][]string{{"mmdebstrap", "bookworm", rootPath}}
+}
+
+// TestBuild_EmptyRootBackendInstallsBeforeWrites is the regression guard for
+// the mmdebstrap ordering bug: for a backend that refuses a non-empty scratch
+// root, the install (bootstrap) must run before any repo/file writes.
+func TestBuild_EmptyRootBackendInstallsBeforeWrites(t *testing.T) {
+	fc := &fakeContainer{MountPathReturn: "/mnt/fake"}
+	cfg := &config.Config{
+		Meta: config.Meta{Name: "test", Tags: []string{"1"}, From: "scratch"},
+		Layer: config.Layer{
+			Manager: config.Manager{Name: "mmdebstrap"},
+			Repos: []config.Repo{
+				{Path: "/etc/apt/sources.list.d/extra.list", Content: "deb http://example.invalid stable main"},
+			},
+		},
+	}
+	b := buildableBuilder(cfg, fc, fakeBackendEmptyRoot{}, []publisher.Publisher{&fakePublisher{}})
+
+	if err := b.Build(context.Background()); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	installIdx, writeIdx := -1, -1
+	for i, ev := range fc.Events {
+		switch {
+		case ev == "run:mmdebstrap" && installIdx == -1:
+			installIdx = i
+		case strings.HasPrefix(ev, "write:/etc/apt/") && writeIdx == -1:
+			writeIdx = i
+		}
+	}
+	if installIdx == -1 {
+		t.Fatalf("install command never ran; events: %v", fc.Events)
+	}
+	if writeIdx == -1 {
+		t.Fatalf("repo write never happened; events: %v", fc.Events)
+	}
+	if installIdx > writeIdx {
+		t.Errorf("install must run before repo writes for empty-root backends; events: %v", fc.Events)
 	}
 }

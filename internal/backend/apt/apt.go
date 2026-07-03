@@ -82,6 +82,10 @@ func (a *AptBackend) Bootstrap(ctx context.Context, c container.Container, rootP
 // Use the mmdebstrap backend for scratch builds on Debian/Ubuntu systems.
 func (a *AptBackend) SupportsInstallRoot() bool { return false }
 
+// RequiresEmptyRoot returns false; apt never runs against a scratch root at
+// all (SupportsInstallRoot is false), so the flag is moot for this backend.
+func (a *AptBackend) RequiresEmptyRoot() bool { return false }
+
 // SupportsParentInstall returns true because APT can install packages into existing images.
 func (a *AptBackend) SupportsParentInstall() bool { return true }
 

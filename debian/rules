@@ -8,7 +8,9 @@
 	dh $@
 
 override_dh_auto_build:
-	go build -v -tags "exclude_graphdriver_btrfs exclude_graphdriver_devicemapper" -o image-thrillhouse ./cmd/image-thrillhouse
+	go build -v -tags "exclude_graphdriver_btrfs exclude_graphdriver_devicemapper" \
+		-ldflags "-X main.version=v$(shell dpkg-parsechangelog -SVersion)" \
+		-o image-thrillhouse ./cmd/image-thrillhouse
 
 override_dh_auto_install:
 	install -D -m 0755 image-thrillhouse debian/image-thrillhouse/usr/bin/image-thrillhouse

@@ -354,6 +354,54 @@ func TestComputeTag_Deterministic(t *testing.T) {
 	}
 }
 
+// TestComputeTag_VarOverridesAffectTag guards the fix for a stale-cache bug:
+// CLI --var overrides change the rendered config, so they must change the
+// computed tag too — otherwise skip-if-exists could reuse an image built
+// with different variable values. Order of the overrides must NOT matter
+// (they're sorted before hashing).
+func TestComputeTag_VarOverridesAffectTag(t *testing.T) {
+	dir := t.TempDir()
+	cfg := writeConfig(t, dir, "base.yaml", minimalConfig)
+
+	m := &Manifest{Layers: []Layer{{Name: "base", Config: cfg}}}
+	dag, err := NewDAG(m)
+	if err != nil {
+		t.Fatalf("dag: %v", err)
+	}
+
+	plain, err := dag.ComputeTag("base", nil)
+	if err != nil {
+		t.Fatalf("plain: %v", err)
+	}
+	withVar, err := dag.ComputeTag("base", nil, "release=9.5")
+	if err != nil {
+		t.Fatalf("with var: %v", err)
+	}
+	if plain == withVar {
+		t.Errorf("--var override did not change the tag: %s", plain)
+	}
+
+	otherValue, err := dag.ComputeTag("base", nil, "release=9.6")
+	if err != nil {
+		t.Fatalf("other value: %v", err)
+	}
+	if withVar == otherValue {
+		t.Errorf("different --var values produced the same tag: %s", withVar)
+	}
+
+	ab, err := dag.ComputeTag("base", nil, "a=1", "b=2")
+	if err != nil {
+		t.Fatalf("ab: %v", err)
+	}
+	ba, err := dag.ComputeTag("base", nil, "b=2", "a=1")
+	if err != nil {
+		t.Fatalf("ba: %v", err)
+	}
+	if ab != ba {
+		t.Errorf("override order changed the tag: %s != %s", ab, ba)
+	}
+}
+
 func TestComputeTag_ChangesWithContent(t *testing.T) {
 	dir := t.TempDir()
 	baseCfg := writeConfig(t, dir, "base.yaml", minimalConfig)

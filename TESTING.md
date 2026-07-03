@@ -76,22 +76,24 @@ func TestWithFile(t *testing.T) {
 
 ## Current Test Coverage
 
-Pure-Go packages (run with `go test ./...`):
+Unit-tested packages (run with `go test ./...`, or add `-tags containers_image_openpgp` on systems without the gpgme cgo headers to compile everything):
 
-- `internal/config` - Config loading and validation
+- `internal/config` - Config loading, validation, var merging
 - `internal/labels` - Label generation
 - `internal/backend/apt` - APT backend (option parsing, command generation)
 - `internal/backend/dnf` - DNF backend (option parsing, modules, command generation)
-- `internal/backend/zypper` - Zypper backend (option parsing, command generation, `IsAcceptableExitCode` for informational codes 8/102/103/107)
+- `internal/backend/zypper` - Zypper backend (option parsing, command generation, global-vs-subcommand flag placement, `IsAcceptableExitCode` for informational codes 102/103/107 — exit code 8 is treated as a real error)
 - `internal/backend/mmdebstrap` - mmdebstrap backend
+- `internal/builder` - helpers plus fake-container tests (label application before publish, empty-root install ordering, ansible staging)
+- `internal/manifest` / `internal/tag` - DAG resolution and deterministic tag hashing (including `--var` overrides)
+- `internal/container` - stream log writers and handlers
+- `internal/fetch` - HTTP fetch with ctx + timeout + size caps
+- `internal/oscap` - OVAL fetch/decompress caps
+- `internal/publisher/*` - naming/existence logic with fakes
 
 Not unit-tested (covered by the integration scripts under `tests/` instead):
 
-- `internal/buildah` - cgo-dependent, requires Linux + gpgme/btrfs/devicemapper headers
-- `internal/builder` - depends on the buildah container
-- `internal/container` - logwriters are exercised indirectly
-- `internal/fetch` - HTTP fetch with ctx + timeout
-- `internal/publisher/*` - depend on either buildah, the filesystem, or external services (S3, a registry)
+- `internal/buildah` - real buildah/storage operations require Linux + a container runtime
 
 ## Best Practices
 

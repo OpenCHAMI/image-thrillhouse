@@ -37,7 +37,7 @@ type Builder struct {
 	cfg          *config.Config
 	cfgPath      string // path to the config file; stored for reference but not used for path resolution (paths resolve relative to CWD)
 	backend      backend.Backend
-	newContainer func(context.Context, string, string, bool) (container.Container, error)
+	newContainer func(context.Context, string, bool) (container.Container, error)
 	publishers   []publisher.Publisher
 	skipIfExists bool
 }
@@ -47,13 +47,13 @@ type Builder struct {
 // ansible.inventory) are resolved relative to the current working directory,
 // not relative to the config file's location. Pass "" if there is no source
 // path (e.g. an in-memory config).
-func New(ctx context.Context, cfg *config.Config, cfgPath string, b backend.Backend, p []publisher.Publisher) *Builder {
+func New(cfg *config.Config, cfgPath string, b backend.Backend, p []publisher.Publisher) *Builder {
 	return &Builder{
 		cfg:     cfg,
 		cfgPath: cfgPath,
 		backend: b,
-		newContainer: func(ctx context.Context, name string, from string, tlsverify bool) (container.Container, error) {
-			return ibuildah.NewContainer(ctx, name, from, tlsverify)
+		newContainer: func(ctx context.Context, from string, tlsverify bool) (container.Container, error) {
+			return ibuildah.NewContainer(ctx, from, tlsverify)
 		},
 		publishers: p,
 	}
@@ -76,8 +76,13 @@ func (b *Builder) SetSkipIfExists(v bool) {
 //  4. Write custom files
 //  5. Run package installations
 //  6. Run custom commands
-//  7. Publish to all configured destinations
+//  7. Apply image labels and publish to all configured destinations
 //  8. Clean up the container
+//
+// One ordering exception: backends whose scratch bootstrap refuses a
+// non-empty root (Backend.RequiresEmptyRoot, today mmdebstrap) run the
+// install step FIRST — writing repos/files/keys beforehand would make the
+// bootstrap fail. The write steps then run after the root exists.
 //
 // Returns an error if any step fails. The container is automatically
 // cleaned up via defer, even if the build fails.
@@ -107,13 +112,27 @@ func (b *Builder) Build(ctx context.Context) error {
 		}
 	}
 
-	c, err := b.newContainer(ctx, b.cfg.Meta.Name, b.cfg.Meta.From, b.cfg.Meta.TLSVerify())
+	c, err := b.newContainer(ctx, b.cfg.Meta.From, b.cfg.Meta.TLSVerify())
 	if err != nil {
 		return fmt.Errorf("create container: %w", err)
 	}
 	defer c.Delete() // Always clean up the container when done
 
 	log.Debug("created container", "id", c.GetID(), "name", c.GetName(), "from", c.GetParent())
+
+	isScratch := b.cfg.Meta.From == "scratch"
+
+	// Backends like mmdebstrap refuse to bootstrap into a non-empty root,
+	// so every write step must wait until after the install for them.
+	installFirst := isScratch && b.backend.RequiresEmptyRoot()
+	if installFirst {
+		if err := b.backend.Bootstrap(ctx, c, c.MountPath()); err != nil {
+			return fmt.Errorf("bootstrap %s: %w", b.cfg.Layer.Manager.Name, err)
+		}
+		if err := b.runInstall(ctx, c); err != nil {
+			return fmt.Errorf("install: %w", err)
+		}
+	}
 
 	// Apply package manager configuration (e.g., dnf.conf)
 	if err := b.applyManagerConfig(ctx, c); err != nil {
@@ -123,8 +142,8 @@ func (b *Builder) Build(ctx context.Context) error {
 	// Backend-specific scratch preparation (creating /etc/rpm, writing
 	// macros, pre-creating the filesystem skeleton, rpm --initdb, etc.)
 	// lives in each backend's Bootstrap; the builder only decides whether
-	// to call it.
-	if b.cfg.Meta.From == "scratch" {
+	// (and when) to call it.
+	if isScratch && !installFirst {
 		if err := b.backend.Bootstrap(ctx, c, c.MountPath()); err != nil {
 			return fmt.Errorf("bootstrap %s: %w", b.cfg.Layer.Manager.Name, err)
 		}
@@ -150,9 +169,12 @@ func (b *Builder) Build(ctx context.Context) error {
 		return fmt.Errorf("write directories: %w", err)
 	}
 
-	// Install packages, groups, and modules
-	if err := b.runInstall(ctx, c); err != nil {
-		return fmt.Errorf("install: %w", err)
+	// Install packages, groups, and modules (unless the backend already
+	// installed up front to satisfy its empty-root requirement)
+	if !installFirst {
+		if err := b.runInstall(ctx, c); err != nil {
+			return fmt.Errorf("install: %w", err)
+		}
 	}
 
 	// Run custom commands
@@ -170,11 +192,16 @@ func (b *Builder) Build(ctx context.Context) error {
 		return fmt.Errorf("OpenSCAP scanning: %w", err)
 	}
 
-	// Generate image labels
+	// Generate image labels and apply them to the container BEFORE the
+	// publish loop, so every destination (local commit, direct registry
+	// push, …) carries them. Publishers previously depended on the local
+	// publisher having run first to set labels — a registry-only publish
+	// silently produced unlabeled images.
 	log.Debug("generating image labels")
 	labelGen := labels.New(b.cfg)
 	imageLabels := labelGen.Generate()
-	log.Debug("generated labels", "count", len(imageLabels))
+	c.SetLabels(imageLabels)
+	log.Debug("applied labels", "count", len(imageLabels))
 
 	// Publish to all configured destinations
 	for _, p := range b.publishers {
@@ -312,10 +339,10 @@ func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) erro
 //   - scratch: a *host* temp file. The import command runs on the host with
 //     --root, so the key must be host-readable. cleanup removes the temp file.
 //   - parent:  a path *inside* the container, placed via c.WriteFile. The
-//     import command runs inside the container. cleanup is a no-op because
-//     the file lives inside the (ephemeral) container; it would normally
-//     be removed by the user's own commands or simply not matter once the
-//     image is committed.
+//     import command runs inside the container. cleanup removes the key file
+//     from the container so it doesn't get committed into the image layer —
+//     removal is best-effort (logged at WARN on failure) because a leftover
+//     public key is cosmetic, not a build failure.
 func (b *Builder) placeGPGKey(ctx context.Context, c container.Container, isScratch bool, rootPath string, idx int, keyBytes []byte) (string, func(), error) {
 	if isScratch {
 		f, err := os.CreateTemp("", "image-thrillhouse-gpg-key-*.bin")
@@ -340,7 +367,13 @@ func (b *Builder) placeGPGKey(ctx context.Context, c container.Container, isScra
 	}); err != nil {
 		return "", func() {}, fmt.Errorf("write key into container: %w", err)
 	}
-	return inContainer, func() {}, nil
+	cleanup := func() {
+		if err := container.RunCmd(ctx, c, "builder", []string{"rm", "-f", inContainer}, container.RunModeContainer); err != nil {
+			slog.With("component", "builder").Warn("failed to remove gpg key from container (continuing)",
+				"path", inContainer, "error", err)
+		}
+	}
+	return inContainer, cleanup, nil
 }
 
 // writeFiles writes all custom files to the container.
@@ -517,35 +550,10 @@ func (b *Builder) runInstallCommands(
 func (b *Builder) resolveEnv(layerEnv, cmdEnv *config.EnvConfig) ([]string, error) {
 	envMap := make(map[string]string)
 
-	// Process layer-level env first
-	if layerEnv != nil {
-		// Handle "pass" - variables from host environment
-		for _, key := range layerEnv.Pass {
-			value, exists := os.LookupEnv(key)
-			if !exists {
-				return nil, fmt.Errorf("required environment variable %q not found on host", key)
-			}
-			envMap[key] = value
-		}
-
-		// Handle "set" - explicit values
-		for key, value := range layerEnv.Set {
-			envMap[key] = value
-		}
-	}
-
-	// Process command-level env (overrides layer-level)
-	if cmdEnv != nil {
-		for _, key := range cmdEnv.Pass {
-			value, exists := os.LookupEnv(key)
-			if !exists {
-				return nil, fmt.Errorf("required environment variable %q not found on host", key)
-			}
-			envMap[key] = value
-		}
-
-		for key, value := range cmdEnv.Set {
-			envMap[key] = value
+	// Layer-level env first, then command-level so the latter overrides.
+	for _, e := range []*config.EnvConfig{layerEnv, cmdEnv} {
+		if err := applyEnvConfig(envMap, e); err != nil {
+			return nil, err
 		}
 	}
 
@@ -556,6 +564,26 @@ func (b *Builder) resolveEnv(layerEnv, cmdEnv *config.EnvConfig) ([]string, erro
 	}
 
 	return result, nil
+}
+
+// applyEnvConfig folds one EnvConfig into envMap: "pass" keys are read from
+// the host environment (and must exist there), then "set" keys apply their
+// explicit values. A nil config is a no-op.
+func applyEnvConfig(envMap map[string]string, e *config.EnvConfig) error {
+	if e == nil {
+		return nil
+	}
+	for _, key := range e.Pass {
+		value, exists := os.LookupEnv(key)
+		if !exists {
+			return fmt.Errorf("required environment variable %q not found on host", key)
+		}
+		envMap[key] = value
+	}
+	for key, value := range e.Set {
+		envMap[key] = value
+	}
+	return nil
 }
 
 // runCommands executes all custom commands specified in the configuration.
@@ -717,13 +745,17 @@ func extractExitCode(err error) int {
 	// This handles cases where buildah or other wrappers convert
 	// the ExitError to a string before wrapping it
 	errMsg := err.Error()
-	if strings.Contains(errMsg, "exit status ") {
-		// Find "exit status N" pattern
-		parts := strings.Split(errMsg, "exit status ")
-		if len(parts) >= 2 {
-			// Extract the number after "exit status "
-			codeStr := strings.Fields(parts[1])[0]
-			if code, parseErr := strconv.Atoi(codeStr); parseErr == nil {
+	if parts := strings.Split(errMsg, "exit status "); len(parts) >= 2 {
+		// Take the leading digit run after "exit status " — the code may be
+		// followed by punctuation ("exit status 42: …") or nothing at all,
+		// so neither Fields-splitting nor a bare Atoi of the remainder works.
+		rest := parts[1]
+		end := 0
+		for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+			end++
+		}
+		if end > 0 {
+			if code, parseErr := strconv.Atoi(rest[:end]); parseErr == nil {
 				return code
 			}
 		}
