@@ -298,21 +298,37 @@ func replaceTemplatePlaceholders(data []byte) []byte {
 	// These need special handling because simply replacing {{ ... }} breaks YAML structure
 	// when the block contains list items or other structural elements.
 
-	// First, replace range blocks: {{- range .items }} ... {{- end }}
-	// The (?ms) flags enable multiline and dotall mode so .* crosses newlines.
-	reRangeBlock := regexp.MustCompile(`(?ms)\{\{-?\s*range\s+[^}]*\}\}.*?\{\{-?\s*end\s*-?\}\}`)
-	cleaned := reRangeBlock.ReplaceAllFunc(data, func(match []byte) []byte {
-		// Check if this range contains simple list items: lines with "- {{ ... }}"
+	// Helper function to process a control flow block (range, if, with, etc.)
+	processBlock := func(match []byte) []byte {
+		// Check if this block contains simple list items: lines with "- {{ ... }}"
 		if regexp.MustCompile(`(?m)^\s*-\s+\{\{`).Match(match) {
 			return []byte("- " + TemplatePlaceholder)
 		}
-		// Check if this range contains structured list items: "- key: {{ ... }}"
+		// Check if this block contains structured list items: "- key: {{ ... }}"
 		if regexp.MustCompile(`(?m)^\s*-\s+\w+:`).Match(match) {
 			return []byte("- " + TemplatePlaceholder + ": " + TemplatePlaceholder)
 		}
+		// Check if block contains just list items (no template in the item itself)
+		// This handles: {{- if .var }}\n  - item\n  {{- end }}
+		if regexp.MustCompile(`(?m)^\s*-\s+\w+`).Match(match) {
+			return []byte("- " + TemplatePlaceholder)
+		}
 		// Otherwise just use a simple placeholder
 		return []byte(TemplatePlaceholder)
-	})
+	}
+
+	// The (?ms) flags enable multiline and dotall mode so .* crosses newlines.
+	// Replace range blocks: {{- range .items }} ... {{- end }}
+	reRangeBlock := regexp.MustCompile(`(?ms)\{\{-?\s*range\s+[^}]*\}\}.*?\{\{-?\s*end\s*-?\}\}`)
+	cleaned := reRangeBlock.ReplaceAllFunc(data, processBlock)
+
+	// Replace if blocks: {{- if .condition }} ... {{- end }}
+	reIfBlock := regexp.MustCompile(`(?ms)\{\{-?\s*if\s+[^}]*\}\}.*?\{\{-?\s*end\s*-?\}\}`)
+	cleaned = reIfBlock.ReplaceAllFunc(cleaned, processBlock)
+
+	// Replace with blocks: {{- with .var }} ... {{- end }}
+	reWithBlock := regexp.MustCompile(`(?ms)\{\{-?\s*with\s+[^}]*\}\}.*?\{\{-?\s*end\s*-?\}\}`)
+	cleaned = reWithBlock.ReplaceAllFunc(cleaned, processBlock)
 
 	// Replace remaining inline template expressions {{ .var }}
 	reInline := regexp.MustCompile(`\{\{[^}]*\}\}`)
