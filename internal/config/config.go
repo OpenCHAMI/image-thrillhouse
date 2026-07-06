@@ -315,9 +315,22 @@ func replaceTemplatePlaceholders(data []byte) []byte {
 	reControlBlock := regexp.MustCompile(`(?ms)\{\{-?\s*(if|range|with|define|block|template)\s+[^}]*\}\}.*?\{\{-?\s*end\s*-?\}\}`)
 	
 	cleaned := reControlBlock.ReplaceAllFunc(data, func(match []byte) []byte {
-		// If the block contains YAML list items (lines starting with -), replace
-		// the entire block with a single placeholder list item to maintain structure.
+		// If the block contains YAML list items (lines starting with -), we need to
+		// figure out what kind of placeholder to use based on the structure.
 		if regexp.MustCompile(`(?m)^\s*-\s+`).Match(match) {
+			// Check if the list item has structured fields (e.g., "- run:", "- path:", "- src:")
+			// These need to be replaced with a placeholder object, not just a string.
+			if regexp.MustCompile(`(?m)^\s*-\s+\w+:`).Match(match) {
+				// Extract the first field name to create a minimal valid object
+				// For example: "- run: cmd" -> "- run: __placeholder__"
+				//              "- path: /foo\n  src: bar" -> "- path: __placeholder__"
+				fieldMatch := regexp.MustCompile(`(?m)^\s*-\s+(\w+):`).FindSubmatch(match)
+				if fieldMatch != nil {
+					fieldName := string(fieldMatch[1])
+					return []byte("- " + fieldName + ": " + TemplatePlaceholder)
+				}
+			}
+			// Simple list item (like "- package-name"), use string placeholder
 			return []byte("- " + TemplatePlaceholder)
 		}
 		// Otherwise, replace the entire block with a simple placeholder.

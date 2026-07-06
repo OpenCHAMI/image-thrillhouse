@@ -308,6 +308,82 @@ publish:
 	}
 }
 
+// TestLoadConfigRaw_WithStructuredLists tests that LoadConfigRaw can parse
+// configs with if blocks containing structured list items (Command, File, etc.)
+func TestLoadConfigRaw_WithStructuredLists(t *testing.T) {
+	input := `meta:
+  name: test
+  from: docker://base
+  tags: ["1.0"]
+
+layer:
+  manager:
+    name: zypper
+  actions:
+    install:
+      packages:
+      - base-pkg
+    commands:
+    - run: echo hello
+    {{- if .include_falcon }}
+    - run: systemctl enable falcon-config
+    {{- end }}
+    - run: echo world
+
+  files:
+  - path: /usr/bin/test
+    src: files/test
+  {{- if .include_falcon }}
+  - path: /usr/lib/systemd/system/falcon.service
+    src: files/falcon.service
+  {{- end }}
+  - path: /etc/config
+    src: files/config
+
+publish:
+  - type: local`
+
+	// Write to temp file
+	tmpFile := t.TempDir() + "/config.yaml"
+	if err := writeFile(tmpFile, []byte(input)); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+
+	// LoadConfigRaw should parse successfully
+	cfg, err := LoadConfigRaw(tmpFile)
+	if err != nil {
+		t.Fatalf("LoadConfigRaw failed with structured lists: %v", err)
+	}
+
+	// Verify commands were parsed correctly
+	if len(cfg.Layer.Actions.Commands) != 3 {
+		t.Errorf("expected 3 commands, got %d", len(cfg.Layer.Actions.Commands))
+	}
+	if cfg.Layer.Actions.Commands[0].Run != "echo hello" {
+		t.Errorf("expected first command to be 'echo hello', got %q", cfg.Layer.Actions.Commands[0].Run)
+	}
+	if cfg.Layer.Actions.Commands[1].Run != TemplatePlaceholder {
+		t.Errorf("expected second command to be placeholder, got %q", cfg.Layer.Actions.Commands[1].Run)
+	}
+	if cfg.Layer.Actions.Commands[2].Run != "echo world" {
+		t.Errorf("expected third command to be 'echo world', got %q", cfg.Layer.Actions.Commands[2].Run)
+	}
+
+	// Verify files were parsed correctly
+	if len(cfg.Layer.Files) != 3 {
+		t.Errorf("expected 3 files, got %d", len(cfg.Layer.Files))
+	}
+	if cfg.Layer.Files[0].Path != "/usr/bin/test" {
+		t.Errorf("expected first file path to be '/usr/bin/test', got %q", cfg.Layer.Files[0].Path)
+	}
+	if cfg.Layer.Files[1].Path != TemplatePlaceholder {
+		t.Errorf("expected second file path to be placeholder, got %q", cfg.Layer.Files[1].Path)
+	}
+	if cfg.Layer.Files[2].Path != "/etc/config" {
+		t.Errorf("expected third file path to be '/etc/config', got %q", cfg.Layer.Files[2].Path)
+	}
+}
+
 func writeFile(path string, data []byte) error {
 	// Use os.WriteFile for the actual write
 	return os.WriteFile(path, data, 0o644)
