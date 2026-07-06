@@ -294,43 +294,37 @@ func (m *Meta) TLSVerify() bool {
 const TemplatePlaceholder = "__placeholder__"
 
 func replaceTemplatePlaceholders(data []byte) []byte {
-	// Handle template control flow blocks (range/if/with/else) that span multiple lines.
-	// These need special handling because simply replacing {{ ... }} breaks YAML structure
-	// when the block contains list items or other structural elements.
-
-	// Helper function to process a control flow block (range, if, with, etc.)
-	processBlock := func(match []byte) []byte {
-		// Check if this block contains simple list items: lines with "- {{ ... }}"
-		if regexp.MustCompile(`(?m)^\s*-\s+\{\{`).Match(match) {
+	// Handle template control flow blocks that span multiple lines. These need
+	// special handling because simply replacing {{ ... }} with placeholders
+	// breaks YAML structure when the block contains list items or other elements.
+	//
+	// This regex matches any Go template control flow block: if, range, with,
+	// define, block, or template. The pattern matches:
+	//   {{- <keyword> <args> }} ... {{- end }}
+	// including variations with/without whitespace trimming (the - modifier).
+	//
+	// The (?ms) flags enable multiline and dotall modes so .* matches across newlines.
+	// The alternation (if|range|with|define|block|template) covers all control
+	// structures that require {{end}}. To support future Go template keywords,
+	// simply add them to the alternation pattern.
+	//
+	// Note: This approach works well for conditionals around YAML structures (the
+	// common case in image configs), but may not produce valid YAML for some
+	// advanced template patterns like `define` or `with` that don't wrap YAML
+	// structures. In practice, image configs primarily use `if` and `range`.
+	reControlBlock := regexp.MustCompile(`(?ms)\{\{-?\s*(if|range|with|define|block|template)\s+[^}]*\}\}.*?\{\{-?\s*end\s*-?\}\}`)
+	
+	cleaned := reControlBlock.ReplaceAllFunc(data, func(match []byte) []byte {
+		// If the block contains YAML list items (lines starting with -), replace
+		// the entire block with a single placeholder list item to maintain structure.
+		if regexp.MustCompile(`(?m)^\s*-\s+`).Match(match) {
 			return []byte("- " + TemplatePlaceholder)
 		}
-		// Check if this block contains structured list items: "- key: {{ ... }}"
-		if regexp.MustCompile(`(?m)^\s*-\s+\w+:`).Match(match) {
-			return []byte("- " + TemplatePlaceholder + ": " + TemplatePlaceholder)
-		}
-		// Check if block contains just list items (no template in the item itself)
-		// This handles: {{- if .var }}\n  - item\n  {{- end }}
-		if regexp.MustCompile(`(?m)^\s*-\s+\w+`).Match(match) {
-			return []byte("- " + TemplatePlaceholder)
-		}
-		// Otherwise just use a simple placeholder
+		// Otherwise, replace the entire block with a simple placeholder.
 		return []byte(TemplatePlaceholder)
-	}
+	})
 
-	// The (?ms) flags enable multiline and dotall mode so .* crosses newlines.
-	// Replace range blocks: {{- range .items }} ... {{- end }}
-	reRangeBlock := regexp.MustCompile(`(?ms)\{\{-?\s*range\s+[^}]*\}\}.*?\{\{-?\s*end\s*-?\}\}`)
-	cleaned := reRangeBlock.ReplaceAllFunc(data, processBlock)
-
-	// Replace if blocks: {{- if .condition }} ... {{- end }}
-	reIfBlock := regexp.MustCompile(`(?ms)\{\{-?\s*if\s+[^}]*\}\}.*?\{\{-?\s*end\s*-?\}\}`)
-	cleaned = reIfBlock.ReplaceAllFunc(cleaned, processBlock)
-
-	// Replace with blocks: {{- with .var }} ... {{- end }}
-	reWithBlock := regexp.MustCompile(`(?ms)\{\{-?\s*with\s+[^}]*\}\}.*?\{\{-?\s*end\s*-?\}\}`)
-	cleaned = reWithBlock.ReplaceAllFunc(cleaned, processBlock)
-
-	// Replace remaining inline template expressions {{ .var }}
+	// Replace any remaining inline template expressions {{ .var }}, {{ .fn }}, etc.
 	reInline := regexp.MustCompile(`\{\{[^}]*\}\}`)
 	return reInline.ReplaceAll(cleaned, []byte(TemplatePlaceholder))
 }
