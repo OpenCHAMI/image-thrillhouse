@@ -434,6 +434,8 @@ When rendering a manifest layer, values from multiple sources are merged — hig
 
 This lets a shared template default arch values in `architectures[].var_files`, override for a specific layer in `layers[].var_files`, and pin ad-hoc values at the CLI without editing the manifest.
 
+**Undefined variables are a hard error.** Rendering fails loudly if a template references a key that none of the sources above provides — a missing variable silently rendering to nothing (e.g. an empty repo `baseurl`) would ship a broken image. Every `{{ .foo }}` a template uses must be defined somewhere. For a genuinely optional list, declare it as an empty list (`foo: []`) and guard it with `{{ range .foo }}…{{ else }}…{{ end }}`; to branch on optional presence without a hard field access, use `{{ if index . "foo" }}`.
+
 ### Example manifests
 
 - [`tests/manifests/rocky.yaml`](../tests/manifests/rocky.yaml) — minimal single-arch DAG (dnf).

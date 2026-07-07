@@ -257,8 +257,10 @@ publish:
 	}
 }
 
-// TestRenderConfig_RangeWithElse tests that {{ range }} ... {{ else }} works
-// correctly with optional/missing variables when using missingkey=zero
+// TestRenderConfig_RangeWithElse tests that {{ range }} ... {{ else }} takes
+// the else branch when the ranged var is defined but empty. Under
+// missingkey=error an optional list must be declared (as an empty list) rather
+// than omitted — ranging over a truly-absent key is a hard error.
 func TestRenderConfig_RangeWithElse(t *testing.T) {
 	tmpl := filepath.Join(t.TempDir(), "tmpl.yaml")
 	body := `meta:
@@ -284,10 +286,12 @@ layer:
 		t.Fatal(err)
 	}
 
-	// Test with undefined optional_packages variable
-	out, err := RenderConfig(tmpl, map[string]interface{}{})
+	// Optional list declared but empty -> range takes the else branch.
+	out, err := RenderConfig(tmpl, map[string]interface{}{
+		"optional_packages": []interface{}{},
+	})
 	if err != nil {
-		t.Fatalf("RenderConfig with undefined variable in range-else failed: %v", err)
+		t.Fatalf("RenderConfig with empty range-else var failed: %v", err)
 	}
 
 	// Should execute the else branch
@@ -340,18 +344,19 @@ layer:
 		t.Fatal(err)
 	}
 
-	// Test x86_64 build - base_aarch64_only_packages is missing
+	// x86_64 build: the aarch64-only list is declared empty (the else branch
+	// fires) rather than omitted, which under missingkey=error would error.
 	varsX86 := map[string]interface{}{
-		"arch":                      "x86_64",
-		"kernel_package":            "kernel-default",
-		"base_shared_packages":      []interface{}{"systemd", "vim"},
-		"base_x86_64_only_packages": []interface{}{"grub2-x86_64-efi"},
-		// base_aarch64_only_packages is intentionally missing
+		"arch":                       "x86_64",
+		"kernel_package":             "kernel-default",
+		"base_shared_packages":       []interface{}{"systemd", "vim"},
+		"base_x86_64_only_packages":  []interface{}{"grub2-x86_64-efi"},
+		"base_aarch64_only_packages": []interface{}{},
 	}
 
 	outX86, err := RenderConfig(tmpl, varsX86)
 	if err != nil {
-		t.Fatalf("RenderConfig for x86_64 with missing aarch64 vars failed: %v", err)
+		t.Fatalf("RenderConfig for x86_64 with empty aarch64 list failed: %v", err)
 	}
 
 	// Should contain x86_64 packages
@@ -369,18 +374,18 @@ layer:
 		t.Errorf("should not contain x86_64 else comment, got:\n%s", outX86)
 	}
 
-	// Test aarch64 build - base_x86_64_only_packages is missing
+	// aarch64 build: the x86_64-only list is declared empty.
 	varsARM := map[string]interface{}{
 		"arch":                       "aarch64",
 		"kernel_package":             "kernel-default",
 		"base_shared_packages":       []interface{}{"systemd", "vim"},
 		"base_aarch64_only_packages": []interface{}{"grub2-arm64-efi"},
-		// base_x86_64_only_packages is intentionally missing
+		"base_x86_64_only_packages":  []interface{}{},
 	}
 
 	outARM, err := RenderConfig(tmpl, varsARM)
 	if err != nil {
-		t.Fatalf("RenderConfig for aarch64 with missing x86_64 vars failed: %v", err)
+		t.Fatalf("RenderConfig for aarch64 with empty x86_64 list failed: %v", err)
 	}
 
 	// Should contain aarch64 packages

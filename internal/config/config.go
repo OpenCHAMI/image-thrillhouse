@@ -224,16 +224,19 @@ func ParseAndValidate(rendered, name string) (*Config, error) {
 }
 
 // RenderConfig reads the file at path and renders it as a Go text/template
-// using the provided vars (arbitrary YAML/JSON-shaped data). Missing keys are
-// treated as zero values (empty string, nil slice, etc.) to allow optional
-// variables and conditional rendering with {{ range }} ... {{ else }} or {{ if }}.
+// using the provided vars (arbitrary YAML/JSON-shaped data). Referencing a
+// key that isn't present in vars is a hard error (missingkey=error): a missing
+// variable silently rendering to nothing produces broken configs (e.g. an
+// empty repo baseurl), so we fail loudly instead. A template that wants an
+// optional value must define it (a var file default, or `{{ if index . "x" }}`
+// to test presence without a direct field access).
 func RenderConfig(path string, vars map[string]interface{}) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
 
-	t, err := template.New("config").Option("missingkey=zero").Parse(string(raw))
+	t, err := template.New("config").Option("missingkey=error").Parse(string(raw))
 	if err != nil {
 		return "", fmt.Errorf("parse template: %w", err)
 	}

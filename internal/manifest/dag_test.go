@@ -395,11 +395,7 @@ layer:
 		t.Fatalf("dag: %v", err)
 	}
 
-	plain := computeTag(t, dag, "base", nil)
 	withVar := computeTag(t, dag, "base", cliVars(t, "release=9.5"))
-	if plain == withVar {
-		t.Errorf("consumed --var did not change the tag: %s", plain)
-	}
 
 	otherValue := computeTag(t, dag, "base", cliVars(t, "release=9.6"))
 	if withVar == otherValue {
@@ -522,9 +518,11 @@ layer:
 		t.Error("content edit behind an active if-block src must change the tag")
 	}
 
-	// The inactive branch renders to nothing: no payload to hash, and the
-	// tag must differ from the active branch (the render differs).
-	inactive := computeTag(t, dag, "base", nil)
+	// Inactive branch: `extra` is declared falsy (not omitted — under
+	// missingkey=error an absent key would be a render error). The block
+	// renders to nothing, so there's no payload to hash and the tag must
+	// differ from the active branch.
+	inactive := computeTag(t, dag, "base", cliVars(t, "extra="))
 	if inactive == after {
 		t.Error("active and inactive branch renders must not share a tag")
 	}
