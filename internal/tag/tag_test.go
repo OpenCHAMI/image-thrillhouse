@@ -8,13 +8,24 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
 )
 
-// dirCfg writes a config file that references a layer.directories entry
-// pointing at root, optionally with excludes and option fields.
-func dirCfg(t *testing.T, cfgPath, srcRoot, optionLines string) {
+// input parses rendered config YAML into a LayerInput ready for Compute.
+func input(t *testing.T, rendered string) LayerInput {
 	t.Helper()
-	body := `meta:
+	cfg, err := config.ParseAndValidate(rendered, "test.yaml")
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	return LayerInput{ConfigPath: "test.yaml", Rendered: rendered, Cfg: cfg}
+}
+
+// dirCfg returns a rendered config whose layer.directories entry points at
+// srcRoot, optionally with extra option lines.
+func dirCfg(srcRoot, optionLines string) string {
+	return `meta:
   name: test
   tags: ["1"]
 layer:
@@ -24,15 +35,8 @@ layer:
     - path: /opt/app
       src: ` + srcRoot + `
 ` + optionLines
-	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
-		t.Fatalf("write cfg: %v", err)
-	}
 }
 
-// minimalConfig is the smallest yaml that LoadConfigRaw will parse without
-// complaint. We don't care about its contents — only that the file exists
-// and parses — because hashing reads the bytes raw and then walks the
-// (parsed) Files/Repos lists.
 const minimalConfig = `meta:
   name: test
   tags: ["1"]
@@ -51,10 +55,7 @@ func writeFile(t *testing.T, dir, name, content string) string {
 }
 
 func TestCompute_Deterministic(t *testing.T) {
-	dir := t.TempDir()
-	cfg := writeFile(t, dir, "layer.yaml", minimalConfig)
-
-	layer := LayerInput{ConfigPath: cfg}
+	layer := input(t, minimalConfig)
 	h1, err := Compute(layer, nil)
 	if err != nil {
 		t.Fatalf("Compute 1: %v", err)
@@ -66,89 +67,47 @@ func TestCompute_Deterministic(t *testing.T) {
 	if h1 != h2 {
 		t.Errorf("hash not deterministic: %s vs %s", h1, h2)
 	}
-	if len(h1) != 32 {
-		t.Errorf("expected 32-char md5 hex, got %d-char %q", len(h1), h1)
+	if len(h1) != TagHexLen {
+		t.Errorf("expected %d-char hex tag, got %d-char %q", TagHexLen, len(h1), h1)
 	}
 }
 
-func TestCompute_ConfigChangeChangesHash(t *testing.T) {
-	dir := t.TempDir()
-	cfgA := writeFile(t, dir, "a.yaml", minimalConfig)
-	cfgB := writeFile(t, dir, "b.yaml", minimalConfig+"# trailing comment\n")
-
-	hA, _ := Compute(LayerInput{ConfigPath: cfgA}, nil)
-	hB, _ := Compute(LayerInput{ConfigPath: cfgB}, nil)
+func TestCompute_RenderedChangeChangesHash(t *testing.T) {
+	hA, _ := Compute(input(t, minimalConfig), nil)
+	hB, _ := Compute(input(t, minimalConfig+"# trailing comment\n"), nil)
 	if hA == hB {
-		t.Errorf("expected different hashes for different configs, both = %s", hA)
+		t.Errorf("expected different hashes for different rendered configs, both = %s", hA)
 	}
 }
 
-func TestCompute_VarFilesChangeHash(t *testing.T) {
-	dir := t.TempDir()
-	cfg := writeFile(t, dir, "layer.yaml", minimalConfig)
-	vfA := writeFile(t, dir, "vars-a.yaml", "version: 1\n")
-	vfB := writeFile(t, dir, "vars-b.yaml", "version: 2\n")
+func TestCompute_ParentTagsChangeHash(t *testing.T) {
+	layer := input(t, minimalConfig)
 
-	noVars, _ := Compute(LayerInput{ConfigPath: cfg}, nil)
-	withA, _ := Compute(LayerInput{ConfigPath: cfg, VarFiles: []string{vfA}}, nil)
-	withB, _ := Compute(LayerInput{ConfigPath: cfg, VarFiles: []string{vfB}}, nil)
-
-	if noVars == withA {
-		t.Error("adding a var file should change the hash")
+	solo, _ := Compute(layer, nil)
+	withParent, _ := Compute(layer, []string{"aaaa"})
+	if solo == withParent {
+		t.Error("adding a parent tag should change the hash")
 	}
-	if withA == withB {
-		t.Error("different var file contents should produce different hashes")
+
+	otherParent, _ := Compute(layer, []string{"bbbb"})
+	if withParent == otherParent {
+		t.Error("different parent tags should produce different hashes")
 	}
 }
 
-func TestCompute_VarFileOrderIndependent(t *testing.T) {
-	// hashLayer sorts var files internally to keep the hash stable regardless
-	// of declaration order — confirm that contract holds.
-	dir := t.TempDir()
-	cfg := writeFile(t, dir, "layer.yaml", minimalConfig)
-	vf1 := writeFile(t, dir, "1.yaml", "a: 1\n")
-	vf2 := writeFile(t, dir, "2.yaml", "b: 2\n")
-
-	hAsc, _ := Compute(LayerInput{ConfigPath: cfg, VarFiles: []string{vf1, vf2}}, nil)
-	hDesc, _ := Compute(LayerInput{ConfigPath: cfg, VarFiles: []string{vf2, vf1}}, nil)
-	if hAsc != hDesc {
-		t.Errorf("var file order must not affect hash: %s vs %s", hAsc, hDesc)
-	}
-}
-
-func TestCompute_AncestorOrderMatters(t *testing.T) {
-	// Ancestors are hashed in slice order (parent-of-parent first), so
-	// reversing them must change the hash. This is intentional: the tag
-	// represents a fully-ordered lineage.
-	dir := t.TempDir()
-	leaf := writeFile(t, dir, "leaf.yaml", minimalConfig)
-	a1 := writeFile(t, dir, "a1.yaml", minimalConfig+"# a1\n")
-	a2 := writeFile(t, dir, "a2.yaml", minimalConfig+"# a2\n")
-
-	leafIn := LayerInput{ConfigPath: leaf}
-	forward, _ := Compute(leafIn, []LayerInput{{ConfigPath: a1}, {ConfigPath: a2}})
-	reverse, _ := Compute(leafIn, []LayerInput{{ConfigPath: a2}, {ConfigPath: a1}})
+func TestCompute_ParentTagOrderMatters(t *testing.T) {
+	// Parent tags are folded in DependsOn order — the tag represents a
+	// fully-ordered lineage, so reversing them must change the hash.
+	layer := input(t, minimalConfig)
+	forward, _ := Compute(layer, []string{"aaaa", "bbbb"})
+	reverse, _ := Compute(layer, []string{"bbbb", "aaaa"})
 	if forward == reverse {
-		t.Errorf("ancestor order should affect hash: %s == %s", forward, reverse)
+		t.Errorf("parent tag order should affect hash: %s == %s", forward, reverse)
 	}
 }
 
-func TestCompute_MissingConfigFile(t *testing.T) {
-	_, err := Compute(LayerInput{ConfigPath: "/nonexistent/path.yaml"}, nil)
-	if err == nil {
-		t.Fatal("expected error for missing config file")
-	}
-}
-
-// TestCompute_TemplatedSrcDoesNotError guards the fix for templated src
-// paths: a `src: "{{ .dir }}/foo"` parses as "__placeholder__/foo" in the
-// raw config, which used to make Compute fail with "no such file". The
-// template text is hashed instead — so Compute succeeds, and configs whose
-// templated src expressions differ still hash differently.
-func TestCompute_TemplatedSrcDoesNotError(t *testing.T) {
-	dir := t.TempDir()
-	templatedCfg := func(name, srcExpr string) string {
-		return writeFile(t, dir, name, `meta:
+func TestCompute_MissingSrcFile(t *testing.T) {
+	rendered := `meta:
   name: test
   tags: ["1"]
 layer:
@@ -156,48 +115,11 @@ layer:
     name: dnf
   files:
     - path: /etc/foo
-      src: "`+srcExpr+`"
-`)
-	}
-
-	cfg := templatedCfg("layer.yaml", "{{ .payload_dir }}/foo")
-	h1, err := Compute(LayerInput{ConfigPath: cfg}, nil)
-	if err != nil {
-		t.Fatalf("Compute with templated src errored: %v", err)
-	}
-
-	other := templatedCfg("other.yaml", "{{ .payload_dir }}/bar")
-	h2, err := Compute(LayerInput{ConfigPath: other}, nil)
-	if err != nil {
-		t.Fatalf("Compute other: %v", err)
-	}
-	if h1 == h2 {
-		t.Errorf("different templated src expressions produced the same hash: %s", h1)
-	}
-}
-
-// TestCompute_VarOverridesChangeHash locks in that LayerInput.VarOverrides
-// participate in the hash (order-independently).
-func TestCompute_VarOverridesChangeHash(t *testing.T) {
-	dir := t.TempDir()
-	cfg := writeFile(t, dir, "layer.yaml", minimalConfig)
-
-	plain, err := Compute(LayerInput{ConfigPath: cfg}, nil)
-	if err != nil {
-		t.Fatalf("plain: %v", err)
-	}
-	withVars, err := Compute(LayerInput{ConfigPath: cfg, VarOverrides: []string{"k=v"}}, nil)
-	if err != nil {
-		t.Fatalf("with vars: %v", err)
-	}
-	if plain == withVars {
-		t.Error("VarOverrides did not change the hash")
-	}
-
-	ab, _ := Compute(LayerInput{ConfigPath: cfg, VarOverrides: []string{"a=1", "b=2"}}, nil)
-	ba, _ := Compute(LayerInput{ConfigPath: cfg, VarOverrides: []string{"b=2", "a=1"}}, nil)
-	if ab != ba {
-		t.Errorf("VarOverrides order changed the hash: %s != %s", ab, ba)
+      src: /nonexistent/payload.txt
+`
+	_, err := Compute(input(t, rendered), nil)
+	if err == nil {
+		t.Fatal("expected error for missing src file")
 	}
 }
 
@@ -215,10 +137,9 @@ func TestCompute_DirectoryContentChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := filepath.Join(dir, "layer.yaml")
-	dirCfg(t, cfg, srcRoot, "")
+	layer := input(t, dirCfg(srcRoot, ""))
 
-	h1, err := Compute(LayerInput{ConfigPath: cfg}, nil)
+	h1, err := Compute(layer, nil)
 	if err != nil {
 		t.Fatalf("Compute 1: %v", err)
 	}
@@ -226,7 +147,7 @@ func TestCompute_DirectoryContentChange(t *testing.T) {
 	if err := os.WriteFile(payload, []byte("v2\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h2, err := Compute(LayerInput{ConfigPath: cfg}, nil)
+	h2, err := Compute(layer, nil)
 	if err != nil {
 		t.Fatalf("Compute 2: %v", err)
 	}
@@ -247,15 +168,14 @@ func TestCompute_DirectoryAddRemoveFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(srcRoot, "a.txt"), []byte("a\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg := filepath.Join(dir, "layer.yaml")
-	dirCfg(t, cfg, srcRoot, "")
+	layer := input(t, dirCfg(srcRoot, ""))
 
-	h1, _ := Compute(LayerInput{ConfigPath: cfg}, nil)
+	h1, _ := Compute(layer, nil)
 
 	if err := os.WriteFile(filepath.Join(srcRoot, "b.txt"), []byte("b\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h2, _ := Compute(LayerInput{ConfigPath: cfg}, nil)
+	h2, _ := Compute(layer, nil)
 	if h1 == h2 {
 		t.Error("adding a file under directories.src must change the hash")
 	}
@@ -263,7 +183,7 @@ func TestCompute_DirectoryAddRemoveFile(t *testing.T) {
 	if err := os.Remove(filepath.Join(srcRoot, "b.txt")); err != nil {
 		t.Fatal(err)
 	}
-	h3, _ := Compute(LayerInput{ConfigPath: cfg}, nil)
+	h3, _ := Compute(layer, nil)
 	if h1 != h3 {
 		t.Errorf("removing a previously-added file should restore the hash: %s vs %s", h1, h3)
 	}
@@ -283,16 +203,15 @@ func TestCompute_DirectoryExcludesDropContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := filepath.Join(dir, "layer.yaml")
-	dirCfg(t, cfg, srcRoot, "      excludes:\n        - cache\n")
+	layer := input(t, dirCfg(srcRoot, "      excludes:\n        - cache\n"))
 
-	h1, _ := Compute(LayerInput{ConfigPath: cfg}, nil)
+	h1, _ := Compute(layer, nil)
 
 	// Drop a file under the excluded subdir; hash must not move.
 	if err := os.WriteFile(filepath.Join(srcRoot, "cache", "garbage.bin"), []byte("noise\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h2, _ := Compute(LayerInput{ConfigPath: cfg}, nil)
+	h2, _ := Compute(layer, nil)
 	if h1 != h2 {
 		t.Errorf("excluded file must not change the hash: %s vs %s", h1, h2)
 	}
@@ -301,7 +220,7 @@ func TestCompute_DirectoryExcludesDropContent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(srcRoot, "keep.txt"), []byte("changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h3, _ := Compute(LayerInput{ConfigPath: cfg}, nil)
+	h3, _ := Compute(layer, nil)
 	if h1 == h3 {
 		t.Error("edit to a non-excluded file should move the hash")
 	}
@@ -323,35 +242,33 @@ func TestCompute_DirectoryHostModeChange(t *testing.T) {
 	}
 
 	// Case A: no mode set in YAML → host modes preserved → chmod must move hash.
-	cfgA := filepath.Join(dir, "preserve.yaml")
-	dirCfg(t, cfgA, srcRoot, "")
-	hA1, _ := Compute(LayerInput{ConfigPath: cfgA}, nil)
+	layerA := input(t, dirCfg(srcRoot, ""))
+	hA1, _ := Compute(layerA, nil)
 	if err := os.Chmod(file, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	hA2, _ := Compute(LayerInput{ConfigPath: cfgA}, nil)
+	hA2, _ := Compute(layerA, nil)
 	if hA1 == hA2 {
 		t.Error("with no mode set, host chmod must move the hash (modes flow into the layer)")
 	}
 
 	// Case B: mode forced in YAML → host modes ignored → chmod must NOT move hash.
-	cfgB := filepath.Join(dir, "forced.yaml")
-	dirCfg(t, cfgB, srcRoot, "      mode: \"0644\"\n")
-	hB1, _ := Compute(LayerInput{ConfigPath: cfgB}, nil)
+	layerB := input(t, dirCfg(srcRoot, "      mode: \"0644\"\n"))
+	hB1, _ := Compute(layerB, nil)
 	if err := os.Chmod(file, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	hB2, _ := Compute(LayerInput{ConfigPath: cfgB}, nil)
+	hB2, _ := Compute(layerB, nil)
 	if hB1 != hB2 {
 		t.Errorf("with forced mode, host chmod must NOT move the hash: %s vs %s", hB1, hB2)
 	}
 }
 
 // TestCompute_DirectoryConfigOptionsAffectHash: the config-level option fields
-// (mode, owner, preserve_ownership, contents_only, excludes) live in the YAML,
-// so flipping them must change the hash via the config-bytes path. This isn't
-// a feature of hashDirectory itself — it's an end-to-end guarantee — but it
-// matters enough to lock down with a test.
+// (mode, owner, preserve_ownership, contents_only, excludes) live in the
+// rendered YAML, so flipping them must change the hash via the rendered-bytes
+// path. This isn't a feature of hashDirectory itself — it's an end-to-end
+// guarantee — but it matters enough to lock down with a test.
 func TestCompute_DirectoryConfigOptionsAffectHash(t *testing.T) {
 	dir := t.TempDir()
 	srcRoot := filepath.Join(dir, "tree")
@@ -362,19 +279,10 @@ func TestCompute_DirectoryConfigOptionsAffectHash(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfgPlain := filepath.Join(dir, "plain.yaml")
-	dirCfg(t, cfgPlain, srcRoot, "")
-	cfgMode := filepath.Join(dir, "mode.yaml")
-	dirCfg(t, cfgMode, srcRoot, "      mode: \"0644\"\n")
-	cfgOwner := filepath.Join(dir, "owner.yaml")
-	dirCfg(t, cfgOwner, srcRoot, "      owner: \"1000:1000\"\n")
-	cfgSubdir := filepath.Join(dir, "subdir.yaml")
-	dirCfg(t, cfgSubdir, srcRoot, "      contents_only: false\n")
-
-	hPlain, _ := Compute(LayerInput{ConfigPath: cfgPlain}, nil)
-	hMode, _ := Compute(LayerInput{ConfigPath: cfgMode}, nil)
-	hOwner, _ := Compute(LayerInput{ConfigPath: cfgOwner}, nil)
-	hSubdir, _ := Compute(LayerInput{ConfigPath: cfgSubdir}, nil)
+	hPlain, _ := Compute(input(t, dirCfg(srcRoot, "")), nil)
+	hMode, _ := Compute(input(t, dirCfg(srcRoot, "      mode: \"0644\"\n")), nil)
+	hOwner, _ := Compute(input(t, dirCfg(srcRoot, "      owner: \"1000:1000\"\n")), nil)
+	hSubdir, _ := Compute(input(t, dirCfg(srcRoot, "      contents_only: false\n")), nil)
 
 	hashes := map[string]string{
 		"plain":  hPlain,
@@ -396,7 +304,7 @@ func TestCompute_HashesSrcFilesAndURLs(t *testing.T) {
 	// src bytes in the hash, and URLs must be included as strings.
 	dir := t.TempDir()
 	src := writeFile(t, dir, "payload.txt", "hello\n")
-	cfgSrc := writeFile(t, dir, "with-src.yaml", `meta:
+	layerSrc := input(t, `meta:
   name: test
   tags: ["1"]
 layer:
@@ -406,7 +314,7 @@ layer:
     - path: /etc/foo
       src: `+src+`
 `)
-	cfgURL := writeFile(t, dir, "with-url.yaml", `meta:
+	layerURL := input(t, `meta:
   name: test
   tags: ["1"]
 layer:
@@ -417,11 +325,11 @@ layer:
       url: https://example.com/foo
 `)
 
-	hSrc, err := Compute(LayerInput{ConfigPath: cfgSrc}, nil)
+	hSrc, err := Compute(layerSrc, nil)
 	if err != nil {
 		t.Fatalf("Compute src: %v", err)
 	}
-	hURL, err := Compute(LayerInput{ConfigPath: cfgURL}, nil)
+	hURL, err := Compute(layerURL, nil)
 	if err != nil {
 		t.Fatalf("Compute url: %v", err)
 	}
@@ -433,7 +341,7 @@ layer:
 	if err := os.WriteFile(src, []byte("changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	hSrc2, _ := Compute(LayerInput{ConfigPath: cfgSrc}, nil)
+	hSrc2, _ := Compute(layerSrc, nil)
 	if hSrc == hSrc2 {
 		t.Error("src file content change should change hash")
 	}

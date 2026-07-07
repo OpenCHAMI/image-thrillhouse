@@ -287,11 +287,18 @@ S3 publishing reads credentials from the `S3_ACCESS` and `S3_SECRET` environment
 
 ## Manifests
 
-A **manifest** is a YAML file that describes a DAG of layers. Each layer references a config file (of the shape above) and declares which other layers it depends on. `image-thrillhouse` computes a deterministic hash tag for each layer from its config + var files + CLI `--var` overrides + ancestors, so a child layer's `from:` can pin the exact parent it was built against via `{{ .parent_tag }}` — no manual tag bookkeeping.
+A **manifest** is a YAML file that describes a DAG of layers. Each layer references a config file (of the shape above) and declares which other layers it depends on. `image-thrillhouse` computes a deterministic hash tag for each layer, so a child layer's `from:` can pin the exact parent it was built against via `{{ .parent_tag }}` — no manual tag bookkeeping.
 
-Hash inputs, in full: the raw config template bytes, every applicable var file (CLI `--var-file` + the layer's `var_files`), every CLI `--var key=value` override, the contents of any `src:` files/repos and `directories` trees the config references, referenced URLs, and the same inputs for every ancestor layer. Changing any of these produces a new tag; two builds differing only in `--var` therefore get distinct tags (important with `--skip-if-exists`).
+The tag is a truncated (128-bit) sha256 over the layer's **rendered** config — the template after applying var files, CLI `--var` overrides, and computed vars — plus the contents of any `src:` files/repos and `directories` trees the rendered config references, referenced URLs, and the tags of the layer's direct parents (which chain the full ancestry, so any change in an ancestor produces a new tag for every descendant).
 
-**Templated `src:` caveat:** when a `files`/`repos`/`directories` entry's `src:` contains a template expression (e.g. `src: "{{ .payload_dir }}/foo"`), the real path is only known after rendering, so the hash covers the template text but **not** the referenced file's contents. Edits to that file won't change the computed tag — a warning is logged when this applies. Prefer literal `src:` paths when you rely on tag-based caching.
+Because the hash covers the render's *output*, a variable participates in a layer's tag exactly when the layer's rendered config consumes it:
+
+- Editing a var file key (or comment) that no template references does **not** change any tag — no spurious rebuilds when a shared var file changes for someone else's layer.
+- Two builds differing in a `--var` the template consumes get distinct tags (important with `--skip-if-exists`); a `--var` nothing references leaves tags unchanged, which is correct — the images are identical.
+- Templated `src:` paths (e.g. `src: "{{ .payload_dir }}/foo"`) resolve before hashing, so edits to the referenced file's contents change the tag like any literal `src:`.
+- `src:` entries inside an active `{{ if }}`/`{{ range }}` block are resolved and content-hashed like any other. A branch that renders to nothing contributes nothing to the hash — flipping the condition changes the rendered output, and therefore the tag.
+
+Since `{{ .tag }}` is the layer's own hash, it can't feed its own computation: the hash-input render binds it to a fixed sentinel, and the real value is substituted for the actual build render. It's the only variable the two renders differ on.
 
 Manifests replace the pattern of hand-writing one config per (distro × arch) with a single template plus per-arch var files.
 

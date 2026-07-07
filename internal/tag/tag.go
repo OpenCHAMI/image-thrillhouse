@@ -5,16 +5,14 @@
 package tag
 
 import (
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"syscall"
 
 	"go.podman.io/storage/pkg/fileutils"
@@ -22,73 +20,60 @@ import (
 	"github.com/travisbcotton/image-thrillhouse/internal/config"
 )
 
-type LayerInput struct {
-	ConfigPath string
-	VarFiles   []string
+// SelfTagSentinel is the value bound to {{ .tag }} when a config is rendered
+// for hashing: a layer's tag cannot participate in its own hash, so the
+// hash-input render substitutes this fixed string. The build render uses the
+// real computed tag; it is the only variable the two renders differ on.
+const SelfTagSentinel = "__self_tag__"
 
-	// VarOverrides are CLI-level "key=value" variable overrides (--var).
-	// They change the rendered config just like var-file contents do, so
-	// they must be part of the hash — otherwise two builds differing only
-	// in --var would share a tag and skip-if-exists could silently reuse
-	// the wrong image. Hashed sorted for determinism.
-	VarOverrides []string
+// TagHexLen is the length of a computed tag: sha256 truncated to 128 bits
+// (32 hex chars), keeping tags short enough to compose into registry tags.
+const TagHexLen = 32
+
+// LayerInput is one fully rendered layer to hash. Rendered is the config text
+// after template execution with {{ .tag }} bound to SelfTagSentinel and all
+// other variables (var files, --var, parent tags, arch) bound to their real
+// values. Cfg is the parse of Rendered — used to locate the src files, URLs,
+// and directories whose content participates in the hash. Relative src paths
+// resolve against the process working directory, same as the build itself.
+type LayerInput struct {
+	ConfigPath string // used in error messages only
+	Rendered   string
+	Cfg        *config.Config
 }
 
-func Compute(layer LayerInput, ancestors []LayerInput) (string, error) {
-	h := md5.New()
+// Compute returns the layer's deterministic tag. Ancestry is chained
+// Merkle-style: each parent's already-computed tag is folded in (in
+// DependsOn order), so any change anywhere in the ancestry propagates to
+// every descendant without re-hashing ancestor content here.
+func Compute(layer LayerInput, parentTags []string) (string, error) {
+	h := sha256.New()
 
-	// hash ancestors first in order
-	for _, ancestor := range ancestors {
-		if err := hashLayer(h, ancestor); err != nil {
-			return "", fmt.Errorf("hash ancestor %s: %w", ancestor.ConfigPath, err)
+	for _, pt := range parentTags {
+		if err := writeLengthPrefixedString(h, pt); err != nil {
+			return "", fmt.Errorf("hash parent tag: %w", err)
 		}
 	}
 
-	// hash this layer
 	if err := hashLayer(h, layer); err != nil {
 		return "", fmt.Errorf("hash layer %s: %w", layer.ConfigPath, err)
 	}
 
-	return fmt.Sprintf("%x", h.Sum(nil)), nil
+	return fmt.Sprintf("%x", h.Sum(nil))[:TagHexLen], nil
 }
 
 func hashLayer(h io.Writer, layer LayerInput) error {
-	// config file
-	if err := hashFile(h, layer.ConfigPath); err != nil {
-		return fmt.Errorf("hash config: %w", err)
+	if err := writeLengthPrefixedString(h, layer.Rendered); err != nil {
+		return fmt.Errorf("hash rendered config: %w", err)
 	}
 
-	// var files - sorted for determinism
-	sorted := make([]string, len(layer.VarFiles))
-	copy(sorted, layer.VarFiles)
-	sort.Strings(sorted)
-	for _, vf := range sorted {
-		if err := hashFile(h, vf); err != nil {
-			return fmt.Errorf("hash var file %s: %w", vf, err)
-		}
-	}
-
-	// CLI --var overrides - sorted for determinism, length-prefixed so
-	// adjacent entries can't collide by concatenation.
-	overrides := make([]string, len(layer.VarOverrides))
-	copy(overrides, layer.VarOverrides)
-	sort.Strings(overrides)
-	for _, ov := range overrides {
-		if err := writeLengthPrefixedString(h, ov); err != nil {
-			return fmt.Errorf("hash var override: %w", err)
-		}
-	}
-
-	// src files and URLs from config
-	cfg, err := config.LoadConfigRaw(layer.ConfigPath)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-
-	for _, f := range cfg.Layer.Files {
+	// Host-side content the rendered config references. The config text
+	// itself (paths, URLs, option fields) is already covered by hashing
+	// Rendered above; this captures the file bytes the YAML can't see.
+	for _, f := range layer.Cfg.Layer.Files {
 		if f.Src != "" {
-			if err := hashSrcPath(h, layer.ConfigPath, "file src", f.Src); err != nil {
-				return err
+			if err := hashFile(h, f.Src); err != nil {
+				return fmt.Errorf("hash file src %s: %w", f.Src, err)
 			}
 		}
 		if f.URL != "" {
@@ -101,10 +86,10 @@ func hashLayer(h io.Writer, layer LayerInput) error {
 		}
 	}
 
-	for _, r := range cfg.Layer.Repos {
+	for _, r := range layer.Cfg.Layer.Repos {
 		if r.Src != "" {
-			if err := hashSrcPath(h, layer.ConfigPath, "repo src", r.Src); err != nil {
-				return err
+			if err := hashFile(h, r.Src); err != nil {
+				return fmt.Errorf("hash repo src %s: %w", r.Src, err)
 			}
 		}
 		if r.URL != "" {
@@ -114,58 +99,13 @@ func hashLayer(h io.Writer, layer LayerInput) error {
 		}
 	}
 
-	// Directory contents. Config-level option strings (Mode, Owner, Excludes,
-	// PreserveOwnership, ContentsOnly) are already covered by hashing the
-	// raw config bytes above — we only need to capture the host-side state
-	// that the YAML can't see, plus the metadata that survives into the
-	// resulting layer.
-	for _, d := range cfg.Layer.Directories {
-		if isTemplated(d.Src) {
-			// See hashSrcPath — the real directory is only known after
-			// rendering, so hash the template text and skip the walk.
-			warnTemplatedSrc(layer.ConfigPath, "directory src", d.Src)
-			if err := writeLengthPrefixedString(h, d.Src); err != nil {
-				return err
-			}
-			continue
-		}
+	for _, d := range layer.Cfg.Layer.Directories {
 		if err := hashDirectory(h, d); err != nil {
 			return fmt.Errorf("hash directory %s: %w", d.Src, err)
 		}
 	}
 
 	return nil
-}
-
-// isTemplated reports whether a value from the raw (unrendered) config was a
-// template expression — LoadConfigRaw substitutes config.TemplatePlaceholder
-// for every {{ ... }} directive before the YAML is parsed.
-func isTemplated(s string) bool {
-	return strings.Contains(s, config.TemplatePlaceholder)
-}
-
-// hashSrcPath folds a src path from the raw config into the hash. Literal
-// paths are content-hashed via hashFile. Templated paths (the real value is
-// only known after rendering) can't be opened here, so the template text
-// itself is hashed instead — the config bytes already cover it, but hashing
-// it again keeps this site self-contained. The trade-off is that changes to
-// the *contents* of a templated src file do NOT invalidate the tag; we log a
-// warning so users relying on tag-based caching know about the blind spot.
-func hashSrcPath(h io.Writer, configPath, label, src string) error {
-	if isTemplated(src) {
-		warnTemplatedSrc(configPath, label, src)
-		return writeLengthPrefixedString(h, src)
-	}
-	if err := hashFile(h, src); err != nil {
-		return fmt.Errorf("hash %s %s: %w", label, src, err)
-	}
-	return nil
-}
-
-func warnTemplatedSrc(configPath, label, src string) {
-	slog.With("component", "tag").Warn(
-		"templated src path: contents not included in tag hash; edits to the referenced file will not change the computed tag",
-		"config", configPath, "field", label, "src", src)
 }
 
 // hashDirectory walks dir.Src (filtered by dir.Excludes using buildah's own
@@ -331,9 +271,6 @@ func writeLengthPrefixedString(h io.Writer, s string) error {
 // a delimiter, hash(A || B) == hash(A' || B') is possible if A+B == A'+B'
 // even when (A, B) ≠ (A', B'). Length-prefixing makes the byte boundary
 // part of the hashed input so the split is unambiguous.
-//
-// MD5 collisions make this concern academic, but the fix is one writer call
-// and removes the smell.
 func hashFile(h io.Writer, path string) error {
 	f, err := os.Open(path)
 	if err != nil {

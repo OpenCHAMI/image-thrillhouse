@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
 )
 
-// minimalConfig is just enough YAML to satisfy config.LoadConfigRaw used by
-// internal/tag during hashing — meta+layer with a valid manager.
+// minimalConfig is just enough YAML to pass config validation during tag
+// computation — meta+layer with a valid manager.
 const minimalConfig = `meta:
   name: t
   tags: ["x"]
@@ -319,13 +321,33 @@ func TestGet_Unknown(t *testing.T) {
 	}
 }
 
-// The ComputeTag_* tests below use TempDir fixtures instead of static yaml
+// The ComputeTags_* tests below use TempDir fixtures instead of static yaml
 // in tests/, so the suite stays hermetic and survives renames of the test
 // tree (the original paths drifted out of date once dev/templates moved the
 // fixtures around). Each test stamps a known config into a temp dir, builds
 // a tiny DAG over those paths, then asserts a property of the resulting tag.
 
-func TestComputeTag_Deterministic(t *testing.T) {
+// computeTag runs ComputeTags and returns the named layer's tag.
+func computeTag(t *testing.T, d *DAG, name string, cliVars map[string]interface{}) string {
+	t.Helper()
+	tags, err := d.ComputeTags(name, cliVars)
+	if err != nil {
+		t.Fatalf("ComputeTags(%s): %v", name, err)
+	}
+	return tags[name]
+}
+
+// cliVars builds a var map from --var-style key=value strings.
+func cliVars(t *testing.T, kv ...string) map[string]interface{} {
+	t.Helper()
+	m, err := config.LoadVars(nil, kv)
+	if err != nil {
+		t.Fatalf("load vars %v: %v", kv, err)
+	}
+	return m
+}
+
+func TestComputeTags_Deterministic(t *testing.T) {
 	dir := t.TempDir()
 	baseCfg := writeConfig(t, dir, "base.yaml", minimalConfig)
 	computeCfg := writeConfig(t, dir, "compute.yaml", minimalConfig)
@@ -341,27 +363,31 @@ func TestComputeTag_Deterministic(t *testing.T) {
 		t.Fatalf("dag: %v", err)
 	}
 
-	tag1, err := dag.ComputeTag("compute", nil)
-	if err != nil {
-		t.Fatalf("compute1: %v", err)
-	}
-	tag2, err := dag.ComputeTag("compute", nil)
-	if err != nil {
-		t.Fatalf("compute2: %v", err)
-	}
+	tag1 := computeTag(t, dag, "compute", nil)
+	tag2 := computeTag(t, dag, "compute", nil)
 	if tag1 != tag2 {
 		t.Errorf("tags not deterministic: %s != %s", tag1, tag2)
 	}
 }
 
-// TestComputeTag_VarOverridesAffectTag guards the fix for a stale-cache bug:
-// CLI --var overrides change the rendered config, so they must change the
-// computed tag too — otherwise skip-if-exists could reuse an image built
-// with different variable values. Order of the overrides must NOT matter
-// (they're sorted before hashing).
-func TestComputeTag_VarOverridesAffectTag(t *testing.T) {
+// TestComputeTags_VarsAffectTagOnlyWhenRenderChanges is the core contract of
+// render-based hashing: a variable participates in the tag exactly when it
+// changes the rendered config. --var values a template consumes must change
+// the tag (otherwise skip-if-exists could reuse an image built with different
+// values); vars nothing references must NOT change it (no spurious rebuilds).
+func TestComputeTags_VarsAffectTagOnlyWhenRenderChanges(t *testing.T) {
 	dir := t.TempDir()
-	cfg := writeConfig(t, dir, "base.yaml", minimalConfig)
+	cfg := writeConfig(t, dir, "base.yaml", `meta:
+  name: t
+  tags: ["x"]
+  from: scratch
+layer:
+  manager:
+    name: dnf
+  actions:
+    commands:
+      - run: echo {{ .release }}
+`)
 
 	m := &Manifest{Layers: []Layer{{Name: "base", Config: cfg}}}
 	dag, err := NewDAG(m)
@@ -369,40 +395,177 @@ func TestComputeTag_VarOverridesAffectTag(t *testing.T) {
 		t.Fatalf("dag: %v", err)
 	}
 
-	plain, err := dag.ComputeTag("base", nil)
-	if err != nil {
-		t.Fatalf("plain: %v", err)
-	}
-	withVar, err := dag.ComputeTag("base", nil, "release=9.5")
-	if err != nil {
-		t.Fatalf("with var: %v", err)
-	}
+	plain := computeTag(t, dag, "base", nil)
+	withVar := computeTag(t, dag, "base", cliVars(t, "release=9.5"))
 	if plain == withVar {
-		t.Errorf("--var override did not change the tag: %s", plain)
+		t.Errorf("consumed --var did not change the tag: %s", plain)
 	}
 
-	otherValue, err := dag.ComputeTag("base", nil, "release=9.6")
-	if err != nil {
-		t.Fatalf("other value: %v", err)
-	}
+	otherValue := computeTag(t, dag, "base", cliVars(t, "release=9.6"))
 	if withVar == otherValue {
 		t.Errorf("different --var values produced the same tag: %s", withVar)
 	}
 
-	ab, err := dag.ComputeTag("base", nil, "a=1", "b=2")
-	if err != nil {
-		t.Fatalf("ab: %v", err)
-	}
-	ba, err := dag.ComputeTag("base", nil, "b=2", "a=1")
-	if err != nil {
-		t.Fatalf("ba: %v", err)
-	}
-	if ab != ba {
-		t.Errorf("override order changed the tag: %s != %s", ab, ba)
+	unused := computeTag(t, dag, "base", cliVars(t, "release=9.5", "unrelated=1"))
+	if unused != withVar {
+		t.Errorf("a var the template never references must not change the tag: %s != %s", unused, withVar)
 	}
 }
 
-func TestComputeTag_ChangesWithContent(t *testing.T) {
+// TestComputeTags_UnusedVarFileEditKeepsTag: editing a var file only changes
+// the tag when the edit changes the rendered config — a comment or an unused
+// key in a shared var file must not rebuild every layer that includes it.
+func TestComputeTags_UnusedVarFileEditKeepsTag(t *testing.T) {
+	dir := t.TempDir()
+	cfg := writeConfig(t, dir, "base.yaml", `meta:
+  name: t
+  tags: ["x"]
+  from: scratch
+layer:
+  manager:
+    name: dnf
+  actions:
+    commands:
+      - run: echo {{ .release }}
+`)
+	vf := writeConfig(t, dir, "vars.yaml", "release: \"9.5\"\nunused: 1\n")
+
+	m := &Manifest{Layers: []Layer{{Name: "base", Config: cfg, VarFiles: []string{vf}}}}
+	dag, err := NewDAG(m)
+	if err != nil {
+		t.Fatalf("dag: %v", err)
+	}
+
+	before := computeTag(t, dag, "base", nil)
+
+	// Unused key change: tag must hold.
+	writeConfig(t, dir, "vars.yaml", "release: \"9.5\"\nunused: 2\n# comment\n")
+	afterUnused := computeTag(t, dag, "base", nil)
+	if before != afterUnused {
+		t.Errorf("unused var file edit must not change the tag: %s != %s", before, afterUnused)
+	}
+
+	// Consumed key change: tag must move.
+	writeConfig(t, dir, "vars.yaml", "release: \"9.6\"\nunused: 2\n")
+	afterUsed := computeTag(t, dag, "base", nil)
+	if before == afterUsed {
+		t.Error("consumed var file edit must change the tag")
+	}
+}
+
+// TestComputeTags_TemplatedSrcContentAffectsTag guards the headline fix of
+// render-based hashing: a templated src path resolves before hashing, so
+// edits to the referenced file's CONTENT change the tag. Under raw-template
+// hashing this was a silent stale-cache hole with --skip-if-exists.
+func TestComputeTags_TemplatedSrcContentAffectsTag(t *testing.T) {
+	dir := t.TempDir()
+	payload := writeConfig(t, dir, "payload.txt", "v1\n")
+	cfg := writeConfig(t, dir, "base.yaml", `meta:
+  name: t
+  tags: ["x"]
+  from: scratch
+layer:
+  manager:
+    name: dnf
+  files:
+    - path: /etc/payload
+      src: "{{ .payload }}"
+`)
+
+	m := &Manifest{Layers: []Layer{{Name: "base", Config: cfg}}}
+	dag, err := NewDAG(m)
+	if err != nil {
+		t.Fatalf("dag: %v", err)
+	}
+	vars := cliVars(t, "payload="+payload)
+
+	before := computeTag(t, dag, "base", vars)
+	writeConfig(t, dir, "payload.txt", "v2\n")
+	after := computeTag(t, dag, "base", vars)
+	if before == after {
+		t.Error("content edit behind a templated src must change the tag")
+	}
+}
+
+// TestComputeTags_ConditionalBlockSrcHashed: srcs inside an active {{ if }}
+// block are resolved by the render and their content participates in the
+// hash. Under raw-template hashing the whole block collapsed to a
+// placeholder and the content was invisible.
+func TestComputeTags_ConditionalBlockSrcHashed(t *testing.T) {
+	dir := t.TempDir()
+	payload := writeConfig(t, dir, "payload.txt", "v1\n")
+	cfg := writeConfig(t, dir, "base.yaml", `meta:
+  name: t
+  tags: ["x"]
+  from: scratch
+layer:
+  manager:
+    name: dnf
+{{- if .extra }}
+  files:
+    - path: /etc/extra
+      src: "{{ .payload }}"
+{{- end }}
+`)
+
+	m := &Manifest{Layers: []Layer{{Name: "base", Config: cfg}}}
+	dag, err := NewDAG(m)
+	if err != nil {
+		t.Fatalf("dag: %v", err)
+	}
+	vars := cliVars(t, "extra=yes", "payload="+payload)
+
+	before := computeTag(t, dag, "base", vars)
+	writeConfig(t, dir, "payload.txt", "v2\n")
+	after := computeTag(t, dag, "base", vars)
+	if before == after {
+		t.Error("content edit behind an active if-block src must change the tag")
+	}
+
+	// The inactive branch renders to nothing: no payload to hash, and the
+	// tag must differ from the active branch (the render differs).
+	inactive := computeTag(t, dag, "base", nil)
+	if inactive == after {
+		t.Error("active and inactive branch renders must not share a tag")
+	}
+}
+
+// TestComputeTags_SelfTagUsesSentinel: {{ .tag }} is self-referential, so the
+// hash render binds it to a fixed sentinel. Tags stay deterministic and the
+// real tag surfaces through RenderVars for the build render.
+func TestComputeTags_SelfTagUsesSentinel(t *testing.T) {
+	dir := t.TempDir()
+	cfg := writeConfig(t, dir, "base.yaml", `meta:
+  name: t
+  tags: ["{{ .tag }}"]
+  from: scratch
+layer:
+  manager:
+    name: dnf
+`)
+
+	m := &Manifest{Layers: []Layer{{Name: "base", Config: cfg}}}
+	dag, err := NewDAG(m)
+	if err != nil {
+		t.Fatalf("dag: %v", err)
+	}
+
+	tag1 := computeTag(t, dag, "base", nil)
+	tag2 := computeTag(t, dag, "base", nil)
+	if tag1 != tag2 {
+		t.Errorf("self-referencing config not deterministic: %s != %s", tag1, tag2)
+	}
+
+	vars, err := dag.RenderVars("base", nil)
+	if err != nil {
+		t.Fatalf("render vars: %v", err)
+	}
+	if vars["tag"] != tag1 {
+		t.Errorf("RenderVars must expose the real tag: got %v, want %s", vars["tag"], tag1)
+	}
+}
+
+func TestComputeTags_ChangesWithContent(t *testing.T) {
 	dir := t.TempDir()
 	baseCfg := writeConfig(t, dir, "base.yaml", minimalConfig)
 	// Different layer content -> different hash. We use a slightly varied
@@ -425,20 +588,14 @@ layer:
 	}
 	dag, _ := NewDAG(m)
 
-	baseTag, err := dag.ComputeTag("base", nil)
-	if err != nil {
-		t.Fatalf("base: %v", err)
-	}
-	computeTag, err := dag.ComputeTag("compute", nil)
-	if err != nil {
-		t.Fatalf("compute: %v", err)
-	}
-	if baseTag == computeTag {
+	baseTag := computeTag(t, dag, "base", nil)
+	computedTag := computeTag(t, dag, "compute", nil)
+	if baseTag == computedTag {
 		t.Errorf("different layers should have different tags (both = %s)", baseTag)
 	}
 }
 
-func TestComputeTag_ParentAffectsChild(t *testing.T) {
+func TestComputeTags_ParentAffectsChild(t *testing.T) {
 	// Compute's tag must differ depending on whether it has a parent in the
 	// graph — the parent's content is folded into the child's hash.
 	dir := t.TempDir()
@@ -461,31 +618,37 @@ func TestComputeTag_ParentAffectsChild(t *testing.T) {
 		t.Fatalf("chained dag: %v", err)
 	}
 
-	soloTag, err := soloDAG.ComputeTag("compute", nil)
-	if err != nil {
-		t.Fatalf("solo: %v", err)
-	}
-	chainedTag, err := chainedDAG.ComputeTag("compute", nil)
-	if err != nil {
-		t.Fatalf("chained: %v", err)
-	}
+	soloTag := computeTag(t, soloDAG, "compute", nil)
+	chainedTag := computeTag(t, chainedDAG, "compute", nil)
 	if soloTag == chainedTag {
 		t.Errorf("tag should differ when parent is included (both = %s)", soloTag)
 	}
 }
 
-// TestComputeTag_LayerStableAsDep guards against a class of bugs where a
+// TestComputeTags_LayerStableAsDep guards against a class of bugs where a
 // layer's own var files get double-counted into its hash and/or leak into
 // ancestor hashes. The contract is: layer X must produce the same tag when
 // hashed standalone vs. when X happens to be an ancestor of another layer
-// in the same compute call.
-func TestComputeTag_LayerStableAsDep(t *testing.T) {
+// in the same compute call. The var files reference a consumed variable so
+// leakage would actually show up in the render.
+func TestComputeTags_LayerStableAsDep(t *testing.T) {
 	dir := t.TempDir()
-	parentCfg := writeConfig(t, dir, "parent.yaml", minimalConfig)
-	childCfg := writeConfig(t, dir, "child.yaml", minimalConfig)
-	parentVars := writeConfig(t, dir, "parent-vars.yaml", "k: v\n")
+	layerCfg := `meta:
+  name: t
+  tags: ["x"]
+  from: scratch
+layer:
+  manager:
+    name: dnf
+  actions:
+    commands:
+      - run: echo {{ .k }}
+`
+	parentCfg := writeConfig(t, dir, "parent.yaml", layerCfg)
+	childCfg := writeConfig(t, dir, "child.yaml", layerCfg)
+	writeConfig(t, dir, "parent-vars.yaml", "k: v\n")
 	childVars := writeConfig(t, dir, "child-vars.yaml", "k: w\n")
-	globalVars := writeConfig(t, dir, "global.yaml", "g: 1\n")
+	parentVars := filepath.Join(dir, "parent-vars.yaml")
 
 	m := &Manifest{
 		Layers: []Layer{
@@ -498,46 +661,42 @@ func TestComputeTag_LayerStableAsDep(t *testing.T) {
 		t.Fatalf("dag: %v", err)
 	}
 
-	// parent hashed standalone
-	standaloneTag, err := dag.ComputeTag("parent", []string{globalVars})
+	// parent hashed standalone vs. as a dep inside child's computation:
+	// child.VarFiles must NOT leak into parent's render.
+	standaloneTag := computeTag(t, dag, "parent", nil)
+	childTags, err := dag.ComputeTags("child", nil)
 	if err != nil {
-		t.Fatalf("standalone: %v", err)
+		t.Fatalf("child tags: %v", err)
+	}
+	if standaloneTag != childTags["parent"] {
+		t.Errorf("parent tag must be stable regardless of entry point:\n  standalone = %s\n  via-child  = %s",
+			standaloneTag, childTags["parent"])
 	}
 
-	// parent hashed implicitly as part of child's computation: pull out
-	// what ComputeTag would have used for parent here by computing parent
-	// again with the same globals — this exercises the contract that
-	// child.VarFiles are NOT mixed into parent's hash.
-	parentViaChildContext, err := dag.ComputeTag("parent", []string{globalVars})
-	if err != nil {
-		t.Fatalf("via-child: %v", err)
-	}
-
-	if standaloneTag != parentViaChildContext {
-		t.Errorf("parent tag must be stable regardless of who calls ComputeTag:\n  standalone = %s\n  via-child  = %s",
-			standaloneTag, parentViaChildContext)
-	}
-
-	// Stronger: editing child.VarFiles must not change parent's tag.
+	// Stronger: editing child.VarFiles must not change parent's tag, but
+	// must change child's.
 	if err := os.WriteFile(childVars, []byte("k: CHANGED\n"), 0o644); err != nil {
 		t.Fatalf("rewrite child vars: %v", err)
 	}
-	afterEdit, err := dag.ComputeTag("parent", []string{globalVars})
+	afterEdit, err := dag.ComputeTags("child", nil)
 	if err != nil {
 		t.Fatalf("after-edit: %v", err)
 	}
-	if afterEdit != standaloneTag {
+	if afterEdit["parent"] != standaloneTag {
 		t.Errorf("editing child var file must not change parent tag:\n  before = %s\n  after  = %s",
-			standaloneTag, afterEdit)
+			standaloneTag, afterEdit["parent"])
+	}
+	if afterEdit["child"] == childTags["child"] {
+		t.Error("editing a consumed child var must change the child tag")
 	}
 }
 
-// TestComputeBuildVars_DirectParentsOnly locks in the design's "direct
+// TestRenderVars_DirectParentsOnly locks in the design's "direct
 // parents only" rule: a grandchild gets vars for its direct parent (and
 // parent_tag, since there's exactly one), but NOT for any grandparent.
 // Templates that need a grandparent's tag must either list it directly in
 // depends_on or have an intermediate layer forward the value.
-func TestComputeBuildVars_DirectParentsOnly(t *testing.T) {
+func TestRenderVars_DirectParentsOnly(t *testing.T) {
 	dir := t.TempDir()
 	gpCfg := writeConfig(t, dir, "gp.yaml", minimalConfig)
 	pCfg := writeConfig(t, dir, "p.yaml", minimalConfig)
@@ -555,9 +714,9 @@ func TestComputeBuildVars_DirectParentsOnly(t *testing.T) {
 		t.Fatalf("dag: %v", err)
 	}
 
-	vars, err := ComputeBuildVars(dag, "grandchild", nil)
+	vars, err := dag.RenderVars("grandchild", nil)
 	if err != nil {
-		t.Fatalf("compute build vars: %v", err)
+		t.Fatalf("render vars: %v", err)
 	}
 
 	// Present: tag (this layer), parent_tag (single-parent alias), parent_tag-by-name.
@@ -578,11 +737,11 @@ func TestComputeBuildVars_DirectParentsOnly(t *testing.T) {
 	}
 }
 
-// TestComputeBuildVars_ArchInjected checks that expanded (multi-arch)
+// TestRenderVars_ArchInjected checks that expanded (multi-arch)
 // layers get an `arch` template var matching their concrete arch, while
 // non-expanded layers do not — so single-arch manifests keep arch var
 // files as the source of truth.
-func TestComputeBuildVars_ArchInjected(t *testing.T) {
+func TestRenderVars_ArchInjected(t *testing.T) {
 	dir := t.TempDir()
 	base := writeConfig(t, dir, "base.yaml", minimalConfig)
 	m := &Manifest{
@@ -595,14 +754,14 @@ func TestComputeBuildVars_ArchInjected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dag: %v", err)
 	}
-	v, err := ComputeBuildVars(dag, "base-x86_64", nil)
+	v, err := dag.RenderVars("base-x86_64", nil)
 	if err != nil {
 		t.Fatalf("compute: %v", err)
 	}
 	if v["arch"] != "x86_64" {
 		t.Errorf("arch should be x86_64; got %v", v["arch"])
 	}
-	v2, err := ComputeBuildVars(dag, "solo", nil)
+	v2, err := dag.RenderVars("solo", nil)
 	if err != nil {
 		t.Fatalf("solo: %v", err)
 	}
@@ -611,11 +770,11 @@ func TestComputeBuildVars_ArchInjected(t *testing.T) {
 	}
 }
 
-// TestComputeBuildVars_ParentTagUsesLogicalName verifies that after arch
+// TestRenderVars_ParentTagUsesLogicalName verifies that after arch
 // expansion, `<parent>_tag` is keyed by the parent's LOGICAL name (so a
 // template can write `{{ .rocky_base_tag }}` once and have it resolve to
 // the same-arch parent for every arch build).
-func TestComputeBuildVars_ParentTagUsesLogicalName(t *testing.T) {
+func TestRenderVars_ParentTagUsesLogicalName(t *testing.T) {
 	dir := t.TempDir()
 	base := writeConfig(t, dir, "base.yaml", minimalConfig)
 	compute := writeConfig(t, dir, "compute.yaml", minimalConfig)
@@ -633,7 +792,7 @@ func TestComputeBuildVars_ParentTagUsesLogicalName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dag: %v", err)
 	}
-	v, err := ComputeBuildVars(dag, "rocky-compute-x86_64", nil)
+	v, err := dag.RenderVars("rocky-compute-x86_64", nil)
 	if err != nil {
 		t.Fatalf("compute: %v", err)
 	}
@@ -648,12 +807,12 @@ func TestComputeBuildVars_ParentTagUsesLogicalName(t *testing.T) {
 	}
 }
 
-// TestComputeBuildVars_ParentTagSingleParent verifies the singular
+// TestRenderVars_ParentTagSingleParent verifies the singular
 // "parent_tag" alias is injected when (and only when) a layer has exactly
 // one direct parent. This is the convention multi-arch templates rely on:
 // one template instantiated per arch, the parent reference written once as
 // `{{ .parent_tag }}`.
-func TestComputeBuildVars_ParentTagSingleParent(t *testing.T) {
+func TestRenderVars_ParentTagSingleParent(t *testing.T) {
 	dir := t.TempDir()
 	rootCfg := writeConfig(t, dir, "root.yaml", minimalConfig)
 	leftCfg := writeConfig(t, dir, "left.yaml", minimalConfig)
@@ -677,15 +836,12 @@ func TestComputeBuildVars_ParentTagSingleParent(t *testing.T) {
 		t.Fatalf("dag: %v", err)
 	}
 
-	// single-parent case: parent_tag present, equals dag.ComputeTag(parent).
-	leftVars, err := ComputeBuildVars(dag, "left", nil)
+	// single-parent case: parent_tag present, equals root's computed tag.
+	leftVars, err := dag.RenderVars("left", nil)
 	if err != nil {
 		t.Fatalf("left: %v", err)
 	}
-	wantRoot, err := dag.ComputeTag("root", nil)
-	if err != nil {
-		t.Fatalf("compute root: %v", err)
-	}
+	wantRoot := computeTag(t, dag, "root", nil)
 	if got, ok := leftVars["parent_tag"]; !ok {
 		t.Errorf("left: parent_tag not injected for single-parent layer")
 	} else if got != wantRoot {
@@ -693,7 +849,7 @@ func TestComputeBuildVars_ParentTagSingleParent(t *testing.T) {
 	}
 
 	// fork: parent_tag absent (ambiguous which parent it would refer to).
-	joinVars, err := ComputeBuildVars(dag, "join", nil)
+	joinVars, err := dag.RenderVars("join", nil)
 	if err != nil {
 		t.Fatalf("join: %v", err)
 	}
@@ -713,7 +869,7 @@ func TestComputeBuildVars_ParentTagSingleParent(t *testing.T) {
 	}
 
 	// orphan root: parent_tag absent (nothing to alias).
-	loneVars, err := ComputeBuildVars(dag, "lone", nil)
+	loneVars, err := dag.RenderVars("lone", nil)
 	if err != nil {
 		t.Fatalf("lone: %v", err)
 	}

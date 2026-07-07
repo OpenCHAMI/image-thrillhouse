@@ -420,7 +420,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("get layer: %w", err)
 		}
-		return buildLayer(ctx, dag, layer, cliVars, cliGlobalVarFiles(), skipIfExists)
+		return buildLayer(ctx, dag, layer, cliVars, skipIfExists)
 	}
 
 	// Single-config mode: no DAG, no tag injection, just render and build.
@@ -458,15 +458,6 @@ func loadDAG(path string) (*manifest.DAG, error) {
 	return dag, nil
 }
 
-// cliGlobalVarFiles returns the CLI-supplied --var-file as a slice (or empty
-// when the flag wasn't given), in the shape ComputeBuildVars expects.
-func cliGlobalVarFiles() []string {
-	if varFile == "" {
-		return nil
-	}
-	return []string{varFile}
-}
-
 // buildLayer runs the full per-layer pipeline for a single manifest layer:
 // load layer-specific vars, inject computed tags, render+validate config,
 // construct backend and publishers, and run the build. Used by runBuild's
@@ -477,10 +468,9 @@ func buildLayer(
 	dag *manifest.DAG,
 	layer *manifest.Layer,
 	cliVars map[string]interface{},
-	globalVarFiles []string,
 	skipIfExists bool,
 ) error {
-	configPath, mergedVars, err := prepareLayerRender(dag, layer.Name, cliVars, globalVarFiles)
+	configPath, mergedVars, err := prepareLayerRender(dag, layer.Name, cliVars)
 	if err != nil {
 		return err
 	}
@@ -507,8 +497,8 @@ func buildLayer(
 
 // prepareLayerRender resolves the inputs needed to render a manifest layer's
 // template: the config path to feed RenderConfig / LoadConfigWithVars, and
-// the merged variable map containing CLI vars, the layer's own var files,
-// and computed build vars (this layer's tag plus parent/ancestor tags).
+// the merged variable map containing the layer's own var files, CLI vars,
+// and computed build vars (this layer's tag plus direct-parent tags).
 //
 // Used by buildLayer's prelude and by runRender in manifest mode, so the
 // rendered output you preview matches exactly what build will see.
@@ -516,29 +506,16 @@ func prepareLayerRender(
 	dag *manifest.DAG,
 	layerName string,
 	cliVars map[string]interface{},
-	globalVarFiles []string,
 ) (string, map[string]interface{}, error) {
 	layer, err := dag.Get(layerName)
 	if err != nil {
 		return "", nil, fmt.Errorf("get layer: %w", err)
 	}
 
-	// Layer-specific var files have lower priority than CLI vars.
-	layerVars, err := config.LoadVars(layer.VarFiles, nil)
+	mergedVars, err := dag.RenderVars(layerName, cliVars)
 	if err != nil {
-		return "", nil, fmt.Errorf("load layer vars: %w", err)
+		return "", nil, fmt.Errorf("compute render vars: %w", err)
 	}
-	mergedVars := config.MergeVars(layerVars, cliVars)
-
-	// Inject computed tags (this layer + direct parents) so templates can
-	// reference parent images by their deterministic tags. The raw --var
-	// overrides participate in the hash: they change the rendered config,
-	// so two builds differing only in --var must not share a tag.
-	buildVars, err := manifest.ComputeBuildVars(dag, layerName, globalVarFiles, vars...)
-	if err != nil {
-		return "", nil, fmt.Errorf("compute build vars: %w", err)
-	}
-	mergedVars = config.MergeVars(mergedVars, buildVars)
 
 	return layer.Config, mergedVars, nil
 }
@@ -591,9 +568,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		validateConfigPath, mergedVars, err = prepareLayerRender(
-			dag, concreteName, cliVars, cliGlobalVarFiles(),
-		)
+		validateConfigPath, mergedVars, err = prepareLayerRender(dag, concreteName, cliVars)
 		if err != nil {
 			return err
 		}
@@ -665,9 +640,7 @@ func runRender(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		renderConfigPath, mergedVars, err = prepareLayerRender(
-			dag, concreteName, cliVars, cliGlobalVarFiles(),
-		)
+		renderConfigPath, mergedVars, err = prepareLayerRender(dag, concreteName, cliVars)
 		if err != nil {
 			return err
 		}

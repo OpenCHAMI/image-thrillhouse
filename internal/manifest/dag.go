@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/travisbcotton/image-thrillhouse/internal/config"
 	"github.com/travisbcotton/image-thrillhouse/internal/tag"
 )
 
@@ -202,122 +203,128 @@ func (d *DAG) Resolve(layerName, arch string) (string, error) {
 	return concrete, nil
 }
 
-// ComputeTag returns a deterministic md5 hash for the named layer.
+// ComputeTags renders and hashes layerName and every ancestor, bottom-up,
+// and returns each computed tag keyed by concrete layer name.
 //
-// globalVarFiles is the set of var files that apply to *every* layer in the
-// computation (typically the CLI-supplied --var-file). Each layer's own
-// VarFiles are appended internally — callers must NOT pre-mix layer-specific
-// var files into globalVarFiles, otherwise those files would be hashed twice
-// for the layer they belong to and would leak into the hash of every ancestor.
+// Each layer's hash covers its *rendered* config (so a var change only
+// invalidates layers whose rendered output actually changes), the host-side
+// content the rendered config references (src files, URLs, directories), and
+// the tags of its direct parents — which chain the full ancestry Merkle-style.
+// The render binds {{ .tag }} to tag.SelfTagSentinel (a layer's tag cannot
+// feed its own hash); every other variable gets its real value.
 //
-// varOverrides are CLI-level "key=value" overrides (--var). Like
-// globalVarFiles they apply to every layer, and they are folded into the
-// hash so that builds differing only in --var get distinct tags.
-func (d *DAG) ComputeTag(name string, globalVarFiles []string, varOverrides ...string) (string, error) {
-	ancestors, err := d.Ancestors(name)
-	if err != nil {
-		return "", err
-	}
-
-	layer, err := d.Get(name)
-	if err != nil {
-		return "", err
-	}
-
-	ancestorInputs := make([]tag.LayerInput, len(ancestors))
-	for i, a := range ancestors {
-		ancestorInputs[i] = tag.LayerInput{
-			ConfigPath:   a.Config,
-			VarFiles:     combineVarFiles(globalVarFiles, a.VarFiles),
-			VarOverrides: varOverrides,
-		}
-	}
-
-	layerInput := tag.LayerInput{
-		ConfigPath:   layer.Config,
-		VarFiles:     combineVarFiles(globalVarFiles, layer.VarFiles),
-		VarOverrides: varOverrides,
-	}
-
-	return tag.Compute(layerInput, ancestorInputs)
-}
-
-// combineVarFiles returns a fresh slice with globals followed by layer-specific
-// var files. A fresh slice avoids aliasing the caller's globalVarFiles backing
-// array (a naive `append(globals, ...)` can mutate it when there's spare cap).
-func combineVarFiles(globals, layerSpecific []string) []string {
-	out := make([]string, 0, len(globals)+len(layerSpecific))
-	out = append(out, globals...)
-	out = append(out, layerSpecific...)
-	return out
-}
-
-// ComputeBuildVars returns the template variables that should be injected
-// when rendering layerName's config in a manifest build.
-//
-// Always injected:
-//   - "tag" — this layer's computed hash.
-//
-// Injected for every DIRECT parent (entries in layer.DependsOn):
-//   - "<parent>_tag" — that parent's computed hash, keyed by the parent's
-//     logical name (not its arch-suffixed concrete name). So a template
-//     can reference `{{ .rocky_base_tag }}` and it resolves to the tag of
-//     the same-arch parent whether the current build is x86_64 or aarch64.
-//     Hyphens in the logical name are replaced by underscores.
-//
-// Injected when the layer has a single direct parent:
-//   - "parent_tag" — alias for that one parent's hash. Not injected for
-//     forks (>1 parent, ambiguous) or roots (0 parents, nothing to alias).
-//
-// Injected when the layer targets a specific architecture (i.e. was
-// produced by manifest expansion):
-//   - "arch" — the architecture name (e.g. "x86_64", "aarch64"). Not
-//     injected for single-arch manifests where Arch is empty, so arch var
-//     files remain the source of truth in that case.
-//
-// Note: transitive ancestor tags are intentionally NOT injected. A
-// grandchild that needs its grandparent's tag must list the grandparent
-// directly in depends_on, or have an intermediate layer forward the
-// value.
-//
-// globalVarFiles must be only the CLI-level globals; layer var files are
-// applied inside ComputeTag. varOverrides are CLI-level --var "key=value"
-// overrides, forwarded to ComputeTag so they participate in every hash.
-func ComputeBuildVars(dag *DAG, layerName string, globalVarFiles []string, varOverrides ...string) (map[string]interface{}, error) {
+// cliVars is the merged --var-file + --var map; it applies to every layer,
+// layered on top of each layer's own var files.
+func (d *DAG) ComputeTags(layerName string, cliVars map[string]interface{}) (map[string]string, error) {
 	log := slog.With("component", "manifest")
-	layer, err := dag.Get(layerName)
-	if err != nil {
-		return nil, fmt.Errorf("get layer: %w", err)
-	}
+	tags := make(map[string]string)
 
-	vars := make(map[string]interface{})
-
-	layerTag, err := dag.ComputeTag(layerName, globalVarFiles, varOverrides...)
-	if err != nil {
-		return nil, fmt.Errorf("compute tag for %s: %w", layerName, err)
-	}
-	vars["tag"] = layerTag
-	log.Info("computed tag", "layer", layerName, "tag", layerTag)
-
-	if layer.Arch != "" {
-		vars["arch"] = layer.Arch
-	}
-
-	for _, depName := range layer.DependsOn {
-		depTag, err := dag.ComputeTag(depName, globalVarFiles, varOverrides...)
-		if err != nil {
-			return nil, fmt.Errorf("compute tag for parent %s: %w", depName, err)
+	var visit func(name string) error
+	visit = func(name string) error {
+		if _, done := tags[name]; done {
+			return nil
 		}
-		varName := parentVarName(dag, depName) + "_tag"
-		vars[varName] = depTag
-		log.Debug("computed parent tag", "layer", depName, "var", varName, "tag", depTag)
+		layer, err := d.Get(name)
+		if err != nil {
+			return err
+		}
+		for _, dep := range layer.DependsOn {
+			if err := visit(dep); err != nil {
+				return err
+			}
+		}
+
+		vars, err := d.renderVars(layer, cliVars, tags, tag.SelfTagSentinel)
+		if err != nil {
+			return err
+		}
+		rendered, err := config.RenderConfig(layer.Config, vars)
+		if err != nil {
+			return fmt.Errorf("render %s: %w", layer.Config, err)
+		}
+		cfg, err := config.ParseAndValidate(rendered, layer.Config)
+		if err != nil {
+			return fmt.Errorf("layer %s: %w", name, err)
+		}
+
+		parentTags := make([]string, len(layer.DependsOn))
+		for i, dep := range layer.DependsOn {
+			parentTags[i] = tags[dep]
+		}
+
+		t, err := tag.Compute(tag.LayerInput{
+			ConfigPath: layer.Config,
+			Rendered:   rendered,
+			Cfg:        cfg,
+		}, parentTags)
+		if err != nil {
+			return err
+		}
+		tags[name] = t
+		log.Debug("computed tag", "layer", name, "tag", t)
+		return nil
 	}
 
+	if err := visit(layerName); err != nil {
+		return nil, err
+	}
+	return tags, nil
+}
+
+// RenderVars returns the complete variable map for rendering layerName's
+// config in a manifest build: the layer's var files, cliVars on top, then the
+// computed vars on top of both. It is identical to the map used for hashing
+// except {{ .tag }} is bound to the layer's real computed tag instead of the
+// sentinel — keeping the hashed render and the build render provably in sync.
+//
+// Computed vars:
+//   - "tag" — this layer's computed hash.
+//   - "<parent>_tag" — each DIRECT parent's hash, keyed by the parent's
+//     logical name (hyphens → underscores), so templates stay arch-agnostic.
+//   - "parent_tag" — alias for the one parent's hash when the layer has
+//     exactly one direct parent. Not injected for forks or roots.
+//   - "arch" — the architecture name, only for layers produced by multi-arch
+//     expansion, so arch var files stay the source of truth otherwise.
+//
+// Transitive ancestor tags are intentionally NOT injected. A grandchild that
+// needs its grandparent's tag must list the grandparent in depends_on, or
+// have an intermediate layer forward the value.
+func (d *DAG) RenderVars(layerName string, cliVars map[string]interface{}) (map[string]interface{}, error) {
+	tags, err := d.ComputeTags(layerName, cliVars)
+	if err != nil {
+		return nil, err
+	}
+	layer, err := d.Get(layerName)
+	if err != nil {
+		return nil, err
+	}
+	slog.With("component", "manifest").Info("computed tag", "layer", layerName, "tag", tags[layerName])
+	return d.renderVars(layer, cliVars, tags, tags[layerName])
+}
+
+// renderVars merges the full variable map for one layer: var files, then
+// cliVars, then computed vars. selfTag is what {{ .tag }} binds to —
+// tag.SelfTagSentinel on the hash path, the real tag on the build path.
+// tags must already hold every direct parent of layer.
+func (d *DAG) renderVars(layer *Layer, cliVars map[string]interface{}, tags map[string]string, selfTag string) (map[string]interface{}, error) {
+	layerVars, err := config.LoadVars(layer.VarFiles, nil)
+	if err != nil {
+		return nil, fmt.Errorf("load var files for %s: %w", layer.Name, err)
+	}
+	merged := config.MergeVars(layerVars, cliVars)
+
+	computed := map[string]interface{}{"tag": selfTag}
+	if layer.Arch != "" {
+		computed["arch"] = layer.Arch
+	}
+	for _, dep := range layer.DependsOn {
+		computed[parentVarName(d, dep)+"_tag"] = tags[dep]
+	}
 	if len(layer.DependsOn) == 1 {
-		vars["parent_tag"] = vars[parentVarName(dag, layer.DependsOn[0])+"_tag"]
+		computed["parent_tag"] = tags[layer.DependsOn[0]]
 	}
 
-	return vars, nil
+	return config.MergeVars(merged, computed), nil
 }
 
 // parentVarName returns the underscore-normalised key used to build the
