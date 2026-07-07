@@ -67,16 +67,18 @@ case "$HOST_ARCH_RAW" in
         ;;
 esac
 
-BASE_LAYER="rocky-base-${HOST_ARCH}"
-COMPUTE_LAYER="rocky-compute-${HOST_ARCH}"
+# Layers are named by their LOGICAL name; --arch selects the concrete
+# per-arch expansion (multi-arch manifests reject the arch-suffixed name).
+BASE_LAYER="rocky-base"
+COMPUTE_LAYER="rocky-compute"
 MANIFEST="/tests/manifests/rocky-multiarch.yaml"
 
 echo "════════════════════════════════════════════════════════════════"
-echo "Manifests Test: build --manifest --layer (single-layer builds)"
+echo "Manifests Test: build --manifest --layer --arch (single-layer builds)"
 echo "  host arch:      $HOST_ARCH_RAW ($HOST_ARCH)"
 echo "  manifest:       $MANIFEST"
-echo "  base layer:     $BASE_LAYER"
-echo "  compute layer:  $COMPUTE_LAYER"
+echo "  base layer:     $BASE_LAYER --arch $HOST_ARCH"
+echo "  compute layer:  $COMPUTE_LAYER --arch $HOST_ARCH"
 echo "  storage volume: ${STORAGE_VOLUME:-image-thrillhouse-test-storage} (RESET_STORAGE=1 to clear)"
 echo "  squashfs dir:   $SQUASHFS_DIR"
 echo "════════════════════════════════════════════════════════════════"
@@ -191,8 +193,8 @@ echo "════════════════════════�
 echo ""
 
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
-echo "[$TOTAL_TESTS] build --manifest --layer $BASE_LAYER"
-if run_image_build build --manifest "$MANIFEST" --layer "$BASE_LAYER" \
+echo "[$TOTAL_TESTS] build --manifest --layer $BASE_LAYER --arch $HOST_ARCH"
+if run_image_build build --manifest "$MANIFEST" --layer "$BASE_LAYER" --arch "$HOST_ARCH" \
        > "${OUTPUT_DIR}/build-base.log" 2>&1
 then
     if grep -q "computed tag.*${BASE_LAYER}" "${OUTPUT_DIR}/build-base.log"; then
@@ -213,8 +215,8 @@ echo "════════════════════════�
 echo ""
 
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
-echo "[$TOTAL_TESTS] build --manifest --layer $COMPUTE_LAYER"
-if run_image_build build --manifest "$MANIFEST" --layer "$COMPUTE_LAYER" \
+echo "[$TOTAL_TESTS] build --manifest --layer $COMPUTE_LAYER --arch $HOST_ARCH"
+if run_image_build build --manifest "$MANIFEST" --layer "$COMPUTE_LAYER" --arch "$HOST_ARCH" \
        > "${OUTPUT_DIR}/build-compute.log" 2>&1
 then
     # The compute template's `from: localhost/rocky-base:{{ .parent_tag }}`
@@ -258,7 +260,7 @@ echo ""
 
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
 echo "[$TOTAL_TESTS] re-build base with --skip-if-exists is a no-op"
-if run_image_build build --manifest "$MANIFEST" --layer "$BASE_LAYER" \
+if run_image_build build --manifest "$MANIFEST" --layer "$BASE_LAYER" --arch "$HOST_ARCH" \
        --skip-if-exists \
        > "${OUTPUT_DIR}/skip-base.log" 2>&1
 then
@@ -275,7 +277,7 @@ fi
 
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
 echo "[$TOTAL_TESTS] re-build compute with --skip-if-exists is a no-op"
-if run_image_build build --manifest "$MANIFEST" --layer "$COMPUTE_LAYER" \
+if run_image_build build --manifest "$MANIFEST" --layer "$COMPUTE_LAYER" --arch "$HOST_ARCH" \
        --skip-if-exists \
        > "${OUTPUT_DIR}/skip-compute.log" 2>&1
 then

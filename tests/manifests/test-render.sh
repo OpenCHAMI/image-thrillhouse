@@ -167,7 +167,7 @@ echo ""
 
 assert_render_contains "rocky-base-x86_64" \
     --manifest /tests/manifests/rocky-multiarch.yaml \
-    --layer rocky-base-x86_64 \
+    --layer rocky-base --arch x86_64 \
     -- \
     "BaseOS/x86_64/os" \
     "https://dl.rockylinux.org/pub/rocky/9/BaseOS" \
@@ -175,20 +175,20 @@ assert_render_contains "rocky-base-x86_64" \
 
 assert_render_contains "rocky-base-aarch64" \
     --manifest /tests/manifests/rocky-multiarch.yaml \
-    --layer rocky-base-aarch64 \
+    --layer rocky-base --arch aarch64 \
     -- \
     "BaseOS/aarch64/os"
 
 assert_render_contains "suse-base-x86_64" \
     --manifest /tests/manifests/suse-multiarch.yaml \
-    --layer suse-base-x86_64 \
+    --layer suse-base --arch x86_64 \
     -- \
     "openSUSE Leap 15.6" \
     "/etc/zypp/repos.d/opensuse-oss.repo"
 
 assert_render_contains "suse-base-aarch64" \
     --manifest /tests/manifests/suse-multiarch.yaml \
-    --layer suse-base-aarch64 \
+    --layer suse-base --arch aarch64 \
     -- \
     "download.opensuse.org/ports/aarch64"
 
@@ -198,12 +198,12 @@ echo "Phase 2: parent_tag is injected into compute layers"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 
-# rocky-compute-x86_64 templates `from: localhost/rocky-base:{{ .parent_tag }}`,
-# which only resolves if ComputeBuildVars injects parent_tag for the
+# rocky-compute templates `from: localhost/rocky-base:{{ .parent_tag }}`,
+# which only resolves if RenderVars injects parent_tag for the
 # single-direct-parent case. Catches regressions in that path end-to-end.
 assert_render_contains "rocky-compute-x86_64-parent" \
     --manifest /tests/manifests/rocky-multiarch.yaml \
-    --layer rocky-compute-x86_64 \
+    --layer rocky-compute --arch x86_64 \
     -- \
     "from: localhost/rocky-base:"
 
@@ -218,7 +218,7 @@ echo ""
 # override one of the layer's vars on the command line.
 assert_render_contains "rocky-base-cli-override" \
     --manifest /tests/manifests/rocky-multiarch.yaml \
-    --layer rocky-base-x86_64 \
+    --layer rocky-base --arch x86_64 \
     --var "releasever=10" \
     -- \
     "BaseOS/x86_64/os" \
@@ -247,10 +247,17 @@ echo ""
 assert_render_errors "config-and-manifest-conflict" \
     --config /tests/rocky/templates/rocky-base.yaml \
     --manifest /tests/manifests/rocky-multiarch.yaml \
-    --layer rocky-base-x86_64
+    --layer rocky-base --arch x86_64
 
 assert_render_errors "layer-without-manifest" \
-    --layer rocky-base-x86_64
+    --layer rocky-base
+
+# In a multi-arch manifest, --layer takes the LOGICAL name plus --arch;
+# passing the concrete arch-suffixed name must be rejected (with a message
+# pointing at the correct spelling).
+assert_render_errors "concrete-layer-name-rejected" \
+    --manifest /tests/manifests/rocky-multiarch.yaml \
+    --layer rocky-base-x86_64 --arch x86_64
 
 echo ""
 echo "════════════════════════════════════════════════════════════════"

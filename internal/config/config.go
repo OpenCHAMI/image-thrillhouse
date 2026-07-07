@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"regexp"
 	"text/template"
 
 	"gopkg.in/yaml.v3"
@@ -198,28 +197,6 @@ func (c *Command) Type() CommandType {
 	return CommandRun
 }
 
-// LoadConfigRaw reads a YAML configuration file from the given path and
-// unmarshals it without validating it. Before unmarshalling, any Go
-// text/template directives ("{{ ... }}") are replaced with a placeholder
-// string so that the raw template can be parsed as valid YAML — this is used
-// by the manifest layer to hash the unrendered template for deterministic
-// tag computation. Validation only happens in LoadConfigWithVars after
-// rendering.
-func LoadConfigRaw(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	cleaned := replaceTemplatePlaceholders(data)
-
-	var cfg Config
-	if err := yaml.Unmarshal(cleaned, &cfg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	return &cfg, nil
-}
-
 // LoadConfigWithVars reads a YAML config file, renders it as a Go template
 // against the provided variables (arbitrary YAML/JSON-shaped data), then
 // unmarshals and validates the result.
@@ -228,10 +205,15 @@ func LoadConfigWithVars(path string, vars map[string]interface{}) (*Config, erro
 	if err != nil {
 		return nil, err
 	}
+	return ParseAndValidate(rendered, path)
+}
 
+// ParseAndValidate unmarshals rendered config YAML and validates it. name is
+// used in error messages (typically the source file path).
+func ParseAndValidate(rendered, name string) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(rendered), &cfg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+		return nil, fmt.Errorf("parse %s: %w", name, err)
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -242,16 +224,19 @@ func LoadConfigWithVars(path string, vars map[string]interface{}) (*Config, erro
 }
 
 // RenderConfig reads the file at path and renders it as a Go text/template
-// using the provided vars (arbitrary YAML/JSON-shaped data). Missing keys are
-// treated as zero values (empty string, nil slice, etc.) to allow optional
-// variables and conditional rendering with {{ range }} ... {{ else }} or {{ if }}.
+// using the provided vars (arbitrary YAML/JSON-shaped data). Referencing a
+// key that isn't present in vars is a hard error (missingkey=error): a missing
+// variable silently rendering to nothing produces broken configs (e.g. an
+// empty repo baseurl), so we fail loudly instead. A template that wants an
+// optional value must define it (a var file default, or `{{ if index . "x" }}`
+// to test presence without a direct field access).
 func RenderConfig(path string, vars map[string]interface{}) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
 
-	t, err := template.New("config").Option("missingkey=zero").Parse(string(raw))
+	t, err := template.New("config").Option("missingkey=error").Parse(string(raw))
 	if err != nil {
 		return "", fmt.Errorf("parse template: %w", err)
 	}
@@ -285,59 +270,4 @@ func (m *Meta) TLSVerify() bool {
 		return *m.FromTLSVerify
 	}
 	return true // default to verify
-}
-
-// TemplatePlaceholder is the string substituted for {{ ... }} template
-// directives by LoadConfigRaw so the unrendered template parses as YAML.
-// Exported so consumers of LoadConfigRaw (today: the tag hasher) can detect
-// fields whose real value is only known after rendering.
-const TemplatePlaceholder = "__placeholder__"
-
-func replaceTemplatePlaceholders(data []byte) []byte {
-	// Handle template control flow blocks that span multiple lines. These need
-	// special handling because simply replacing {{ ... }} with placeholders
-	// breaks YAML structure when the block contains list items or other elements.
-	//
-	// This regex matches any Go template control flow block: if, range, with,
-	// define, block, or template. The pattern matches:
-	//   {{- <keyword> <args> }} ... {{- end }}
-	// including variations with/without whitespace trimming (the - modifier).
-	//
-	// The (?ms) flags enable multiline and dotall modes so .* matches across newlines.
-	// The alternation (if|range|with|define|block|template) covers all control
-	// structures that require {{end}}. To support future Go template keywords,
-	// simply add them to the alternation pattern.
-	//
-	// Note: This approach works well for conditionals around YAML structures (the
-	// common case in image configs), but may not produce valid YAML for some
-	// advanced template patterns like `define` or `with` that don't wrap YAML
-	// structures. In practice, image configs primarily use `if` and `range`.
-	reControlBlock := regexp.MustCompile(`(?ms)\{\{-?\s*(if|range|with|define|block|template)\s+[^}]*\}\}.*?\{\{-?\s*end\s*-?\}\}`)
-	
-	cleaned := reControlBlock.ReplaceAllFunc(data, func(match []byte) []byte {
-		// If the block contains YAML list items (lines starting with -), we need to
-		// figure out what kind of placeholder to use based on the structure.
-		if regexp.MustCompile(`(?m)^\s*-\s+`).Match(match) {
-			// Check if the list item has structured fields (e.g., "- run:", "- path:", "- src:")
-			// These need to be replaced with a placeholder object, not just a string.
-			if regexp.MustCompile(`(?m)^\s*-\s+\w+:`).Match(match) {
-				// Extract the first field name to create a minimal valid object
-				// For example: "- run: cmd" -> "- run: __placeholder__"
-				//              "- path: /foo\n  src: bar" -> "- path: __placeholder__"
-				fieldMatch := regexp.MustCompile(`(?m)^\s*-\s+(\w+):`).FindSubmatch(match)
-				if fieldMatch != nil {
-					fieldName := string(fieldMatch[1])
-					return []byte("- " + fieldName + ": " + TemplatePlaceholder)
-				}
-			}
-			// Simple list item (like "- package-name"), use string placeholder
-			return []byte("- " + TemplatePlaceholder)
-		}
-		// Otherwise, replace the entire block with a simple placeholder.
-		return []byte(TemplatePlaceholder)
-	})
-
-	// Replace any remaining inline template expressions {{ .var }}, {{ .fn }}, etc.
-	reInline := regexp.MustCompile(`\{\{[^}]*\}\}`)
-	return reInline.ReplaceAll(cleaned, []byte(TemplatePlaceholder))
 }

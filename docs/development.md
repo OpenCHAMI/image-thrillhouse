@@ -55,7 +55,7 @@ See [`TESTING.md`](../TESTING.md) for the full unit-testing guide.
 - ✅ `internal/backend/zypper` (including informational exit codes 102/103/107 and global-vs-subcommand flag placement)
 - ✅ `internal/backend/mmdebstrap`
 - ✅ `internal/builder` — helpers plus fake-container tests (label application before publish, empty-root install ordering)
-- ✅ `internal/manifest`, `internal/tag` — DAG resolution, deterministic tag hashing (incl. `--var` overrides)
+- ✅ `internal/manifest`, `internal/tag` — DAG resolution, render-based deterministic tag hashing
 - ✅ `internal/container`, `internal/fetch`, `internal/oscap`, `internal/publisher/*`
 - ⚠️ `internal/buildah` — covered only by the integration suite below
 

@@ -134,10 +134,10 @@ layer:
 	}
 }
 
-// TestRenderConfig_MissingKeyZero verifies that missing keys are treated as
-// zero values (empty string, nil, etc.) to support optional variables and
-// conditional rendering with {{ if }} or {{ range }} ... {{ else }}.
-func TestRenderConfig_MissingKeyZero(t *testing.T) {
+// TestRenderConfig_MissingKeyErrors verifies that referencing a key absent
+// from vars is a hard error (missingkey=error): a missing variable silently
+// rendering to nothing would ship a broken config, so render must fail loudly.
+func TestRenderConfig_MissingKeyErrors(t *testing.T) {
 	tmpl := filepath.Join(t.TempDir(), "tmpl.yaml")
 	if err := os.WriteFile(tmpl, []byte(`meta:
   name: {{ .name }}
@@ -146,24 +146,15 @@ func TestRenderConfig_MissingKeyZero(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := RenderConfig(tmpl, map[string]interface{}{
+	_, err := RenderConfig(tmpl, map[string]interface{}{
 		"name": "test",
 		// .missing is not provided
 	})
-	if err != nil {
-		t.Fatalf("RenderConfig should not error on missing keys: %v", err)
+	if err == nil {
+		t.Fatal("expected an error for a missing template key, got nil")
 	}
-
-	// Missing key should render as empty string (zero value)
-	if !strings.Contains(out, "name: test") {
-		t.Errorf("expected 'name: test' in output, got:\n%s", out)
-	}
-	if !strings.Contains(out, "optional: ") {
-		t.Errorf("expected 'optional: ' (empty) in output, got:\n%s", out)
-	}
-	// Should NOT contain the template marker
-	if strings.Contains(out, "{{ .missing }}") {
-		t.Errorf("template marker should be replaced, got:\n%s", out)
+	if !strings.Contains(err.Error(), "missing") {
+		t.Errorf("error should name the missing key; got: %v", err)
 	}
 }
 
@@ -173,86 +164,6 @@ func TestRenderConfig_FileNotFound(t *testing.T) {
 	_, err := RenderConfig("/does/not/exist.yaml", nil)
 	if err == nil {
 		t.Error("expected error for missing file, got nil")
-	}
-}
-
-// TestLoadConfigRaw_AcceptsRawTemplate verifies that LoadConfigRaw can
-// parse a template file (with {{ }} markers) without expanding it. This is
-// the contract internal/tag relies on for deterministic hashing of the
-// unrendered config.
-func TestLoadConfigRaw_AcceptsRawTemplate(t *testing.T) {
-	tmpl := filepath.Join(t.TempDir(), "tmpl.yaml")
-	body := `meta:
-  name: {{ .name }}
-  tags: ["{{ .version }}"]
-  from: scratch
-layer:
-  manager:
-    name: dnf
-`
-	if err := os.WriteFile(tmpl, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := LoadConfigRaw(tmpl)
-	if err != nil {
-		t.Fatalf("LoadConfigRaw: %v", err)
-	}
-	// Placeholder substitution should leave us with a parseable Config
-	// whose Manager.Name is the static value from the template (the
-	// template markers in meta.name don't break YAML parsing — they're
-	// replaced by the placeholder string).
-	if cfg.Layer.Manager.Name != "dnf" {
-		t.Errorf("expected manager dnf, got %q", cfg.Layer.Manager.Name)
-	}
-}
-
-// TestLoadConfigRaw_RangeBlocks verifies that LoadConfigRaw can parse
-// template files containing {{ range }} blocks without breaking YAML structure.
-// This is critical for tag computation which must hash the unrendered template.
-func TestLoadConfigRaw_RangeBlocks(t *testing.T) {
-	tmpl := filepath.Join(t.TempDir(), "tmpl.yaml")
-	body := `meta:
-  name: test-{{ .arch }}
-  tags: ["{{ .tag }}"]
-  from: scratch
-layer:
-  manager:
-    name: dnf
-  actions:
-    install:
-      packages:
-        - {{ .kernel_package }}
-        # Shared packages
-        {{- range .base_shared_packages }}
-        - {{ . }}
-        {{- end }}
-        # x86_64-only packages
-        {{- range .base_x86_64_only_packages }}
-        - {{ . }}
-        {{- end }}
-        - static-package
-`
-	if err := os.WriteFile(tmpl, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := LoadConfigRaw(tmpl)
-	if err != nil {
-		t.Fatalf("LoadConfigRaw with range blocks failed: %v", err)
-	}
-
-	// The range blocks should be replaced with placeholder list items,
-	// leaving valid YAML structure that can be parsed
-	if cfg.Layer.Manager.Name != "dnf" {
-		t.Errorf("expected manager dnf, got %q", cfg.Layer.Manager.Name)
-	}
-
-	// The packages list should contain placeholders for the template vars
-	// and range blocks, plus the static package
-	if len(cfg.Layer.Actions.Install.Packages) < 1 {
-		t.Errorf("expected at least 1 package after placeholder replacement, got %d",
-			len(cfg.Layer.Actions.Install.Packages))
 	}
 }
 
