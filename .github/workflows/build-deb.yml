@@ -17,7 +17,7 @@ jobs:
     name: Build Debian Package (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     container:
-      image: debian:bookworm
+      image: debian:bookworm-20260623
     strategy:
       matrix:
         include:
@@ -54,7 +54,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.2'
+          go-version: '1.26.4'
 
       - name: Extract version from tag
         id: version
@@ -146,7 +146,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.2'
+          go-version: '1.26.4'
 
       - name: Extract version from tag
         id: version
