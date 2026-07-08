@@ -96,7 +96,7 @@ jobs:
           echo "name=$DEB_NAME" >> $GITHUB_OUTPUT
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: debian-package-${{ steps.version.outputs.version }}-${{ matrix.arch }}
           path: ./packages/*.deb
@@ -220,7 +220,7 @@ jobs:
           echo "name=$RPM_NAME" >> $GITHUB_OUTPUT
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rpm-package-${{ steps.version.outputs.version }}-${{ matrix.arch }}
           path: ./packages/*.rpm
@@ -241,25 +241,25 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Download Debian packages (amd64)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: debian-package-${{ steps.version.outputs.version }}-amd64
           path: ./packages
 
       - name: Download Debian packages (arm64)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: debian-package-${{ steps.version.outputs.version }}-arm64
           path: ./packages
 
       - name: Download RPM packages (x86_64)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: rpm-package-${{ steps.version.outputs.version }}-x86_64
           path: ./packages
 
       - name: Download RPM packages (aarch64)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: rpm-package-${{ steps.version.outputs.version }}-aarch64
           path: ./packages
