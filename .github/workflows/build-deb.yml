@@ -17,7 +17,7 @@ jobs:
     name: Build Debian Package (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     container:
-      image: debian:bookworm-20260623
+      image: debian:trixie-20260623
     strategy:
       matrix:
         include:
@@ -44,7 +44,7 @@ jobs:
             libgpgme-dev
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -52,7 +52,7 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.26.4'
 
@@ -106,7 +106,7 @@ jobs:
     name: Build RPM Package (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     container:
-      image: rockylinux:8
+      image: rockylinux:9
     strategy:
       matrix:
         include:
@@ -136,7 +136,7 @@ jobs:
             which
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -144,7 +144,7 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.26.4'
 
@@ -269,7 +269,7 @@ jobs:
           ls -lhR ./packages
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ./packages/*
           draft: false
