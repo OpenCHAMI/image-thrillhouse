@@ -22,6 +22,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build-deb:
     name: Build Debian Package (${{ matrix.arch }})
@@ -117,7 +121,7 @@ jobs:
         with:
           name: debian-package-${{ steps.version.outputs.version }}-${{ matrix.arch }}
           path: ./packages/*.deb
-          retention-days: 30
+          retention-days: ${{ github.event_name == 'pull_request' && 3 || 30 }}
 
   build-rpm:
     name: Build RPM Package (${{ matrix.arch }})
@@ -247,7 +251,7 @@ jobs:
         with:
           name: rpm-package-${{ steps.version.outputs.version }}-${{ matrix.arch }}
           path: ./packages/*.rpm
-          retention-days: 30
+          retention-days: ${{ github.event_name == 'pull_request' && 3 || 30 }}
 
   create-release:
     name: Create GitHub Release
