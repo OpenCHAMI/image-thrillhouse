@@ -135,3 +135,34 @@ func TestAbsPath_Relative(t *testing.T) {
 // Note: resolveConfigPath was removed — it returned its input unchanged in
 // every branch. Config paths resolve relative to CWD by construction; absPath
 // (tested above) handles the conversion bind mounts need.
+
+func TestCrashMarker_DetectsRuntimeCrashDump(t *testing.T) {
+	// Trimmed from a real incident: buildah's reexec'd chroot helper (this
+	// binary) hit pthread_create EAGAIN on a runner that had exhausted its
+	// process limit, and the Go runtime dump landed in the captured
+	// "zypper output".
+	dump := `runtime/cgo: pthread_create failed: Resource temporarily unavailable
+SIGABRT: abort
+PC=0x7fdc4963beec m=3 sigcode=18446744073709551610
+
+goroutine 0 gp=0x3fba2a04f0e0 m=3 mp=0x3fba2a127008 [idle]:
+runtime: g 0 gp=0x3fba2a04f0e0: unknown pc 0x7fdc4963beec
+subprocess exited with status 2`
+	if got := crashMarker(dump); got == "" {
+		t.Error("crashMarker should detect a Go runtime crash dump")
+	}
+}
+
+func TestCrashMarker_IgnoresOrdinaryPackageManagerFailure(t *testing.T) {
+	for _, output := range []string{
+		"",
+		"No provider of 'ansible' found.\nProblem retrieving files from repo.",
+		"error: transaction failed\nsubprocess exited with status 8",
+		// A package named like the markers must not trip the detector.
+		"Installing: pthread-devel-1.0 signal-tools-2.1",
+	} {
+		if got := crashMarker(output); got != "" {
+			t.Errorf("crashMarker(%q) = %q, want no match", output, got)
+		}
+	}
+}

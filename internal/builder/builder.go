@@ -519,6 +519,20 @@ func (b *Builder) runInstallCommands(
 			continue
 		}
 
+		// A Go runtime crash in buildah's reexec'd chroot helper (which is
+		// this very binary) writes its panic dump into the command's output
+		// stream and surfaces as a plain exit code — historically then
+		// misread as the package manager's own exit status. Classify it as
+		// an infrastructure failure instead: the exit code is meaningless
+		// for the acceptable-exit-code check (the package manager may never
+		// have run), and treating it as acceptable could commit a broken
+		// image.
+		if marker := crashMarker(out.String()); marker != "" {
+			return fmt.Errorf("%s %v: build helper or command crashed (%q in output), not a package manager failure; "+
+				"the runner is likely out of processes or threads — check for leftover build processes "+
+				"and the RLIMIT_NPROC / cgroup pids.max limits on the runner: %w", errVerb, cmd, marker, err)
+		}
+
 		exitCode := extractExitCode(err)
 		log.Debug("install command exited non-zero",
 			"exit_code", exitCode, "backend", b.cfg.Layer.Manager.Name, "cmd", strings.Join(cmd, " "))
@@ -727,6 +741,30 @@ func (b *Builder) runOpenSCAP(ctx context.Context, c container.Container) error 
 
 	log.Info("openscap security scanning complete")
 	return nil
+}
+
+// crashMarker scans captured command output for signatures of a Go runtime
+// crash and returns the first marker found ("" if none). With chroot
+// isolation, the process that runs the command is a reexec'd copy of this
+// binary; if the runner is out of processes/threads it dies with a runtime
+// abort whose stderr lands in the command's captured output, while the
+// error itself is just "exit status 2". These markers are how we tell that
+// failure apart from the package manager exiting non-zero.
+//
+// The patterns are deliberately narrow — verbatim strings the Go runtime
+// prints on a fatal error — so ordinary package-manager output can't match.
+func crashMarker(output string) string {
+	for _, marker := range []string{
+		"pthread_create failed",  // runtime/cgo thread exhaustion (EAGAIN)
+		"SIGABRT: abort",         // Go runtime fatal-error banner
+		"runtime: g 0",           // runtime traceback of the scheduler goroutine
+		"fatal error: runtime: ", // e.g. "fatal error: runtime: out of memory"
+	} {
+		if strings.Contains(output, marker) {
+			return marker
+		}
+	}
+	return ""
 }
 
 // extractExitCode returns the exit code from an error produced by running a

@@ -31,6 +31,7 @@ type fakeContainer struct {
 	Events             []string // interleaved call log ("run:<argv0>", "write:<path>", "setlabels") for ordering assertions
 	WriteFileErr       error
 	RunErr             error
+	RunOutput          string // written to Run's OutputWriter before returning RunErr
 	RunScriptErr       error
 	CopyDirectoryErr   error
 	MountPathReturn    string
@@ -50,6 +51,9 @@ func (f *fakeContainer) Run(ctx context.Context, cmd []string, mode container.Ru
 	f.RunModes = append(f.RunModes, mode)
 	if len(cmd) > 0 {
 		f.Events = append(f.Events, "run:"+cmd[0])
+	}
+	if f.RunOutput != "" && out != nil {
+		_, _ = out.Write([]byte(f.RunOutput))
 	}
 	return f.RunErr
 }
