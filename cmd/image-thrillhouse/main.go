@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"runtime"
+	"syscall"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -372,6 +374,40 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 }
 
+// buildContext returns the root context for a build, cancelled on SIGINT or
+// SIGTERM so that deferred cleanup (container delete, unmount, store
+// shutdown) still runs when a CI system cancels the job. Without this the
+// process died mid-build and left mounted containers — and their helper
+// processes — behind on the runner, which eventually exhausted the runner's
+// process limit (pthread_create EAGAIN crashes in later builds).
+//
+// The first signal cancels the context and lets the build wind down. A
+// second signal force-exits: cleanup is best-effort, and a CI runner about
+// to SIGKILL us anyway shouldn't have to wait on a wedged unmount.
+func buildContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig, ok := <-sigCh
+		if !ok {
+			return
+		}
+		slog.Warn("received signal, cancelling build and cleaning up (send again to force exit)", "signal", sig)
+		cancel()
+		if _, ok := <-sigCh; ok {
+			slog.Warn("received second signal, exiting immediately")
+			os.Exit(1)
+		}
+	}()
+	stop := func() {
+		signal.Stop(sigCh)
+		close(sigCh)
+		cancel()
+	}
+	return ctx, stop
+}
+
 // runBuild is the main execution function for the build command.
 // It orchestrates the entire image building process:
 //  1. Setup logging
@@ -381,7 +417,8 @@ func init() {
 //  5. Execute the build
 //  6. Publish to configured destinations
 func runBuild(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
+	ctx, stop := buildContext()
+	defer stop()
 
 	// Configure logging first so we can log everything else
 	if err := setupLogger(logLevel, logFormat); err != nil {

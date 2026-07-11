@@ -200,6 +200,13 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 		mode = container.RunModeContainer
 	}
 
+	// buildah.Run doesn't take a context, so an in-flight command can't be
+	// interrupted — but a cancelled build (SIGTERM from a CI runner) must at
+	// least stop launching new ones so the deferred cleanup gets to run.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("run %v: %w", cmd, err)
+	}
+
 	if c.fromScratch {
 		switch mode {
 		default:
@@ -207,6 +214,10 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 		case container.RunModeHost:
 			// exec directly, used for dnf --installroot
 			command := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
+			// Own process group + parent-death signal so the package
+			// manager's whole tree dies with the build instead of lingering
+			// on the runner. See hardenHostCmd.
+			hardenHostCmd(command)
 			command.Stdout = out
 			command.Stderr = out
 			// Set environment variables for RPM/DNF to work in containers,
@@ -524,6 +535,13 @@ func (c *Container) SetLabels(labels map[string]string) {
 func (c *Container) Delete() {
 	log := slog.With("component", "buildah")
 	log.Debug("deleting container", "id", c.GetID(), "container", c.GetName())
+	// Reap anything a build step left running inside the rootfs (chroot
+	// isolation has no PID namespace, so daemons like gpg-agent survive
+	// their install command). Stray processes both pin the mount — failing
+	// the Unmount below — and pile up across builds on shared runners.
+	if n := killStrayProcesses(c.mountPath, log); n > 0 {
+		log.Info("killed stray container processes before unmount", "count", n)
+	}
 	if err := c.Builder.Unmount(); err != nil {
 		log.Warn("unmount container", "id", c.GetID(), "error", err)
 	}

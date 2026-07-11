@@ -11,6 +11,7 @@ package builder
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -399,5 +400,49 @@ func TestBuild_EmptyRootBackendInstallsBeforeWrites(t *testing.T) {
 	}
 	if installIdx > writeIdx {
 		t.Errorf("install must run before repo writes for empty-root backends; events: %v", fc.Events)
+	}
+}
+
+// fakeBackendAcceptAll tolerates every non-zero exit code — used to prove
+// that helper-crash classification preempts the acceptable-exit-code check.
+type fakeBackendAcceptAll struct{ fakeBackendBase }
+
+func (fakeBackendAcceptAll) IsAcceptableExitCode(int, string) bool { return true }
+
+func TestRunInstallCommands_HelperCrashPreemptsAcceptableExitCode(t *testing.T) {
+	// When the reexec'd chroot helper crashes, its exit code does not belong
+	// to the package manager — even a backend that would tolerate the code
+	// must not turn the crash into a "successful" install.
+	b := builderWithLayer(config.Layer{Manager: config.Manager{Name: "zypper"}})
+	b.backend = fakeBackendAcceptAll{}
+	c := &fakeContainer{
+		RunOutput: "runtime/cgo: pthread_create failed: Resource temporarily unavailable\nSIGABRT: abort\n",
+		RunErr:    errors.New("buildah run: exit status 2"),
+	}
+	err := b.runInstallCommands(context.Background(), c,
+		[][]string{{"zypper", "install", "-y", "ansible"}},
+		container.RunModeContainer, "run", slog.Default())
+	if err == nil {
+		t.Fatal("a helper crash must fail the build even when the backend accepts every exit code")
+	}
+	if !strings.Contains(err.Error(), "crashed") {
+		t.Errorf("error should identify the crash as such, got: %v", err)
+	}
+}
+
+func TestRunInstallCommands_AcceptableExitCodeStillTolerated(t *testing.T) {
+	// The crash detector must not break the existing tolerance path: a
+	// non-zero exit with ordinary output and an accepting backend succeeds.
+	b := builderWithLayer(config.Layer{Manager: config.Manager{Name: "zypper"}})
+	b.backend = fakeBackendAcceptAll{}
+	c := &fakeContainer{
+		RunOutput: "warning: %post scriptlet failed\n",
+		RunErr:    errors.New("buildah run: exit status 107"),
+	}
+	err := b.runInstallCommands(context.Background(), c,
+		[][]string{{"zypper", "install", "-y", "ansible"}},
+		container.RunModeContainer, "run", slog.Default())
+	if err != nil {
+		t.Fatalf("acceptable exit code should be tolerated: %v", err)
 	}
 }
