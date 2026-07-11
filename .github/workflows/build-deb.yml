@@ -141,7 +141,6 @@ jobs:
           dnf config-manager --set-enabled crb
           dnf install -y \
             ca-certificates \
-            curl \
             git \
             tar \
             gzip \
