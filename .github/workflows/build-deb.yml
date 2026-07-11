@@ -73,15 +73,20 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            TAG=${GITHUB_REF#refs/tags/}
-            VERSION=${TAG#v}
-          else
-            # PR / non-tag build: synthesize a version so the build can be
-            # validated without publishing a release.
-            TAG="v0.0.0-pr${{ github.event.number }}"
-            VERSION="0.0.0~pr${{ github.event.number }}"
-          fi
+          # POSIX case (not bash [[ ]]) — these steps run under sh in the
+          # build containers, where [[ is unavailable.
+          case "$GITHUB_REF" in
+            refs/tags/*)
+              TAG=${GITHUB_REF#refs/tags/}
+              VERSION=${TAG#v}
+              ;;
+            *)
+              # PR / non-tag build: synthesize a version so the build can be
+              # validated without publishing a release.
+              TAG="v0.0.0-pr${{ github.event.number }}"
+              VERSION="0.0.0~pr${{ github.event.number }}"
+              ;;
+          esac
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
@@ -121,6 +126,7 @@ jobs:
         with:
           name: debian-package-${{ steps.version.outputs.version }}-${{ matrix.arch }}
           path: ./packages/*.deb
+          if-no-files-found: error
           retention-days: ${{ github.event_name == 'pull_request' && 3 || 30 }}
 
   build-rpm:
@@ -171,15 +177,20 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            TAG=${GITHUB_REF#refs/tags/}
-            VERSION=${TAG#v}
-          else
-            # PR / non-tag build: synthesize a version so the build can be
-            # validated without publishing a release.
-            TAG="v0.0.0-pr${{ github.event.number }}"
-            VERSION="0.0.0~pr${{ github.event.number }}"
-          fi
+          # POSIX case (not bash [[ ]]) — these steps run under sh in the
+          # build containers, where [[ is unavailable.
+          case "$GITHUB_REF" in
+            refs/tags/*)
+              TAG=${GITHUB_REF#refs/tags/}
+              VERSION=${TAG#v}
+              ;;
+            *)
+              # PR / non-tag build: synthesize a version so the build can be
+              # validated without publishing a release.
+              TAG="v0.0.0-pr${{ github.event.number }}"
+              VERSION="0.0.0~pr${{ github.event.number }}"
+              ;;
+          esac
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
@@ -251,6 +262,7 @@ jobs:
         with:
           name: rpm-package-${{ steps.version.outputs.version }}-${{ matrix.arch }}
           path: ./packages/*.rpm
+          if-no-files-found: error
           retention-days: ${{ github.event_name == 'pull_request' && 3 || 30 }}
 
   create-release:
