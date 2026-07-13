@@ -46,6 +46,33 @@ To see it, add `--container-debug`:
 image-thrillhouse --log-level debug --container-debug build --config my.yaml
 ```
 
+## "did not get container create message from subprocess: EOF"
+
+This error comes from buildah's OCI runtime while it sets up a **private
+network namespace** for the build container (via netavark/CNI). On a host
+without a configured rootful netavark/CNI stack, that per-container network
+setup fails and the runtime subprocess dies before the package manager runs.
+
+image-thrillhouse defaults the build container to the **host** network
+namespace, which skips netavark entirely — a build only needs outbound access
+to package repositories, which the host already has. If you are seeing this
+error you are likely on an older build; rebuilding from current `main` resolves
+it.
+
+To opt back into a private network namespace (requires a working netavark/CNI
+setup on the host):
+
+```bash
+BUILDAH_HOST_NETWORK=false image-thrillhouse build --config my-image.yaml
+```
+
+As a fallback that avoids the OCI runtime altogether, chroot isolation also
+forces host networking:
+
+```bash
+BUILDAH_ISOLATION=chroot image-thrillhouse build --config my-image.yaml
+```
+
 ## SquashFS creation fails
 
 Install `squashfs-tools`:

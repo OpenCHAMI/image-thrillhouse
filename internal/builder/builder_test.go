@@ -9,6 +9,7 @@
 package builder
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -427,6 +428,34 @@ func TestRunInstallCommands_HelperCrashPreemptsAcceptableExitCode(t *testing.T) 
 	}
 	if !strings.Contains(err.Error(), "crashed") {
 		t.Errorf("error should identify the crash as such, got: %v", err)
+	}
+}
+
+func TestRunInstallCommands_SurfacesOutputOnFatalFailure(t *testing.T) {
+	// A failed install whose output the backend classifier doesn't recognize
+	// (here: the package-manager binary missing from the parent image) must
+	// still put the command's own output in front of the user at the default
+	// log level — previously it was only visible under --log-level debug, which
+	// is what made "exec: dnf: not found" so hard to diagnose.
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	b := builderWithLayer(config.Layer{Manager: config.Manager{Name: "dnf"}})
+	b.backend = fakeBackendBase{}
+	c := &fakeContainer{
+		RunOutput: `exec: "dnf": executable file not found in $PATH`,
+		RunErr:    errors.New("buildah run: exit status 1"),
+	}
+	err := b.runInstallCommands(context.Background(), c,
+		[][]string{{"dnf", "-q", "install", "-y", "curl"}},
+		container.RunModeContainer, "install", slog.Default())
+	if err == nil {
+		t.Fatal("expected a fatal error when the install command fails")
+	}
+	if !strings.Contains(buf.String(), "executable file not found") {
+		t.Errorf("the command's output must be surfaced at ERROR on the fatal path; got logs:\n%s", buf.String())
 	}
 }
 

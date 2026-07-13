@@ -8,6 +8,7 @@ package buildah
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -72,6 +73,37 @@ func toSpecsMounts(in []container.BindMount) []specs.Mount {
 		})
 	}
 	return out
+}
+
+// buildNamespaceOptions returns the namespace overrides applied to every
+// in-container Run. It places the build container in the host's network
+// namespace by default.
+//
+// Why host networking: a build only needs outbound access to package
+// repositories, which the host already has. buildah's default under OCI
+// isolation is to create a *private* network namespace and wire it up with
+// netavark; when that per-container network setup fails — a common state on
+// build hosts that don't have a rootful netavark/CNI stack configured — the
+// runtime subprocess dies before the package manager ever runs, surfacing as
+// the opaque:
+//
+//	did not get container create message from subprocess: EOF
+//
+// buildah's own chroot isolation already sidesteps this by forcing host
+// networking (see checkAndOverrideIsolationOptions upstream). Doing the same
+// for OCI makes both isolation modes behave consistently and removes the
+// dependency on netavark for a plain image build.
+//
+// Escape hatch: set BUILDAH_HOST_NETWORK=false (or 0) to fall back to
+// buildah's default private network namespace, which requires a working
+// netavark/CNI setup on the host.
+func buildNamespaceOptions() define.NamespaceOptions {
+	if v := os.Getenv("BUILDAH_HOST_NETWORK"); v == "false" || v == "0" {
+		return nil
+	}
+	return define.NamespaceOptions{
+		{Name: string(specs.NetworkNamespace), Host: true},
+	}
 }
 
 // defaultCaps are the Linux capabilities buildah needs to grant a process so
@@ -241,12 +273,13 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 		case container.RunModeContainer:
 			// chroot into mountpath, rootfs must have a shell
 			err := c.Builder.Run(cmd, buildah.RunOptions{
-				Isolation:       c.GetIsolation(),
-				Stdout:          out,
-				Stderr:          out,
-				AddCapabilities: defaultCaps,
-				Env:             runOpts.Env,
-				Mounts:          toSpecsMounts(runOpts.Mounts),
+				Isolation:        c.GetIsolation(),
+				NamespaceOptions: buildNamespaceOptions(),
+				Stdout:           out,
+				Stderr:           out,
+				AddCapabilities:  defaultCaps,
+				Env:              runOpts.Env,
+				Mounts:           toSpecsMounts(runOpts.Mounts),
 				// Force pipes (not a pty) so the container's stdout/stderr
 				// reliably reach the writer above. Buildah's default
 				// auto-detects the parent terminal, which can intercept
@@ -268,12 +301,13 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 			return fmt.Errorf("run %v: RunModeHost is only valid for scratch containers", cmd)
 		}
 		err := c.Builder.Run(cmd, buildah.RunOptions{
-			Isolation:       c.GetIsolation(),
-			Stdout:          out,
-			Stderr:          out,
-			AddCapabilities: defaultCaps,
-			Env:             runOpts.Env,
-			Mounts:          toSpecsMounts(runOpts.Mounts),
+			Isolation:        c.GetIsolation(),
+			NamespaceOptions: buildNamespaceOptions(),
+			Stdout:           out,
+			Stderr:           out,
+			AddCapabilities:  defaultCaps,
+			Env:              runOpts.Env,
+			Mounts:           toSpecsMounts(runOpts.Mounts),
 			// See comment in the scratch branch above for why we pin this.
 			Terminal: buildah.WithoutTerminal,
 		})
@@ -548,8 +582,21 @@ func (c *Container) Delete() {
 	if err := c.Builder.Delete(); err != nil {
 		log.Warn("delete container", "id", c.GetID(), "error", err)
 	}
+	// Store.Shutdown tears down the *entire* containers-storage graph driver,
+	// not just this container, and it inspects every layer in the store. On a
+	// shared store — the root system store, or any host also running podman —
+	// it returns ErrLayerUsedByContainer whenever some OTHER container's layer
+	// is still mounted. That is expected and is not a failure of this build's
+	// cleanup: our own container was already unmounted and deleted above (those
+	// steps Warn on their own if they fail). Surfacing it at WARN just cries
+	// wolf on every build that shares a store, so log that specific case at
+	// DEBUG and reserve WARN for genuinely unexpected shutdown failures.
 	if _, err := c.Store.Shutdown(false); err != nil {
-		log.Warn("shutdown store", "error", err)
+		if errors.Is(err, storage.ErrLayerUsedByContainer) {
+			log.Debug("store left running; other containers still hold mounts", "error", err)
+		} else {
+			log.Warn("shutdown store", "error", err)
+		}
 	}
 }
 
