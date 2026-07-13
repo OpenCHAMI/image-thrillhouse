@@ -1,6 +1,6 @@
 module github.com/travisbcotton/image-thrillhouse
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.42.1
@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.30
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.2
 	github.com/docker/distribution v2.8.3+incompatible
-	github.com/mattn/go-shellwords v1.0.13
+	github.com/mattn/go-shellwords v1.0.14
 	github.com/opencontainers/runtime-spec v1.3.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
