@@ -549,6 +549,20 @@ func (b *Builder) runInstallCommands(
 			log.Warn("could not determine exit code; acceptable-exit-code checks skipped",
 				"error", err)
 		}
+
+		// Surface the command's own output on the fatal path. Backend
+		// classifiers only dump raw output at DEBUG and only re-log the
+		// error shapes they recognize (dnf's "Error:" blocks, etc.), so a
+		// failure they don't parse — the package-manager binary missing from
+		// the image, a bare "exec: ... not found", an early crash — was
+		// invisible unless the user re-ran with --log-level debug. LogStreamBlock
+		// at ERROR is always above threshold, so the reason is now in front of
+		// the user the first time. Guard on non-empty so a truly silent command
+		// doesn't emit an empty box.
+		if strings.TrimSpace(out.String()) != "" {
+			container.LogStreamBlock(slog.LevelError, "install command failed", out.String(),
+				"component", "builder", "cmd", strings.Join(cmd, " "))
+		}
 		return fmt.Errorf("%s %v: %w", errVerb, cmd, err)
 	}
 	return nil
