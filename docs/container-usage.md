@@ -99,3 +99,55 @@ podman build -t image-thrillhouse:dev -f Dockerfile .
 ```
 
 Then swap `ghcr.io/openchami/image-thrillhouse:latest` for `image-thrillhouse:dev` in the run command above.
+
+### High uids/gids in the target image (`chown: Invalid argument`)
+
+The builder runs rootless, so container uids/gids are mapped through a
+subordinate range defined in the image's `/etc/subuid` and `/etc/subgid`
+(`builder:2000:50000` by default). Only container ids `0..49999` exist inside the
+build, so an image that assigns an id above that ceiling has no mapping, and any
+`chown user:group` against it fails with:
+
+```
+chown: changing ownership of '/run/dnsmasq/': Invalid argument
+```
+
+The most common offender is Debian/Ubuntu's `nogroup` (gid **65534**).
+
+**Recommended — sparse mapping (`THRILLHOUSE_EXTRA_GIDS` / `_UIDS`)**
+
+Set these at **run** time to splice single-id mappings for the specific high ids a
+build needs. They borrow ids from the existing subordinate block, so they work on
+a stock host with no `/etc/subuid` change:
+
+```bash
+podman run --rm \
+  --device /dev/fuse --cap-add=SYS_ADMIN --cap-add=SETUID --cap-add=SETGID \
+  --security-opt seccomp=unconfined --security-opt label=disable \
+  -e THRILLHOUSE_EXTRA_GIDS=65534 \
+  -v $(pwd)/my-image.yaml:/config.yaml:Z \
+  -v $(pwd)/output:/output:Z \
+  ghcr.io/openchami/image-thrillhouse:latest \
+  image-thrillhouse build --config /config.yaml
+```
+
+Both variables accept a comma-separated list of ids and inclusive `lo-hi` ranges,
+e.g. `THRILLHOUSE_EXTRA_GIDS=65534,65530-65533`. Unset, the mapping is byte-for-byte
+the historical default.
+
+**Alternative — widen the whole range (`SUBID_START` / `SUBID_COUNT` build args)**
+
+If you'd rather map a contiguous block up to the high id, widen it at **build**
+time. This only works if your host's subordinate allocation is large enough to
+contain the range (the default range is deliberately narrow because a wider one
+can collide with host uid/gid allocations):
+
+```bash
+podman build --build-arg SUBID_COUNT=65536 -t image-thrillhouse:dev -f Dockerfile .
+```
+
+Note the outer podman user namespace caps this: with a stock host allocation of
+65536, `start=2000` cannot reach gid 65534 no matter the count — you'd first need
+a larger host `/etc/subuid`/`/etc/subgid` allocation (and a `podman system migrate`
+so podman picks up the change). The sparse mapping above sidesteps that ceiling,
+which is why it's preferred for hitting isolated high ids like `nogroup`.

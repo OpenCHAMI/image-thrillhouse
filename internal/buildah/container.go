@@ -13,7 +13,9 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,7 +29,46 @@ import (
 	"github.com/travisbcotton/image-thrillhouse/internal/config"
 	"github.com/travisbcotton/image-thrillhouse/internal/container"
 	"github.com/travisbcotton/image-thrillhouse/internal/fetch"
+	"github.com/travisbcotton/image-thrillhouse/internal/idmap"
 )
+
+// Env vars that request extra sparse id mappings for the rootless build
+// namespace, so a build can chown to ids above the default contiguous
+// subordinate range (e.g. nogroup at gid 65534). Comma-separated ids and
+// inclusive "lo-hi" ranges, e.g. "65534" or "65530-65534,60000". Unset leaves
+// buildah's default mapping untouched. See internal/idmap and buildIDMapping.
+const (
+	envExtraUIDs = "THRILLHOUSE_EXTRA_UIDS"
+	envExtraGIDs = "THRILLHOUSE_EXTRA_GIDS"
+)
+
+// buildIDMapping returns the uid/gid mapping override for the build container,
+// or nil to let buildah derive its default rootless mapping from /etc/subuid
+// and /etc/subgid. It is non-nil only when THRILLHOUSE_EXTRA_UIDS/_GIDS request
+// ids outside that default range.
+func buildIDMapping() (*define.IDMappingOptions, error) {
+	uidMap, gidMap, ok, err := idmap.Build(rootlessUsername(), os.Getenv(envExtraUIDs), os.Getenv(envExtraGIDs))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	return &define.IDMappingOptions{UIDMap: uidMap, GIDMap: gidMap}, nil
+}
+
+// rootlessUsername resolves the login name whose /etc/subuid and /etc/subgid
+// ranges back the rootless build. Mirrors the lookup in go.podman.io/storage so
+// we read the same subordinate ranges buildah would.
+func rootlessUsername() string {
+	if u := os.Getenv("USER"); u != "" {
+		return u
+	}
+	if u, err := user.LookupId(strconv.Itoa(os.Geteuid())); err == nil {
+		return u.Username
+	}
+	return ""
+}
 
 // annotateRunErr adds a one-line hint to buildah.Run errors that match a
 // well-known host-side misconfiguration. These failures originate in
@@ -161,6 +202,14 @@ type Container struct {
 // The container is created, mounted, and ready to use. The caller is responsible
 // for calling Delete() when done to clean up resources.
 func NewContainer(ctx context.Context, from string, tlsverify bool) (container.Container, error) {
+	// Resolve any requested id-mapping overrides before we touch the store, so
+	// a misconfigured THRILLHOUSE_EXTRA_* value fails fast with nothing to clean
+	// up.
+	idMapping, err := buildIDMapping()
+	if err != nil {
+		return nil, fmt.Errorf("id mapping: %w", err)
+	}
+
 	// get container store
 	store, err := openStore()
 	if err != nil {
@@ -169,8 +218,9 @@ func NewContainer(ctx context.Context, from string, tlsverify bool) (container.C
 
 	// create new builder
 	builder, err := buildah.NewBuilder(ctx, store, buildah.BuilderOptions{
-		FromImage:     from,
-		SystemContext: newSystemContext(tlsverify),
+		FromImage:        from,
+		SystemContext:    newSystemContext(tlsverify),
+		IDMappingOptions: idMapping,
 	})
 	if err != nil {
 		// Builder construction failed, so there's nothing buildah-side to
