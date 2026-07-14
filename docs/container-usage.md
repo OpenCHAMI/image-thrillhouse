@@ -113,59 +113,63 @@ The most common offender is Debian/Ubuntu's `nogroup` (gid **65534**). The right
 fix depends on the buildah **isolation mode** (`BUILDAH_ISOLATION`), because the
 two rootless modes map ids very differently.
 
-**chroot isolation (the image default)**
+**chroot isolation (the image default — the common case)**
 
-Under chroot, buildah identity-maps the *entire* user namespace it was given by
-the outer `podman run`. So the build can `chown` to any id that outer namespace
-owns — the ceiling is your host's subordinate allocation, not the image's
-`/etc/subuid`. If a high id fails:
+Two nested user namespaces are in play. `podman run` creates the *outer* one from
+your host's `/etc/subuid`; then the tool re-execs into an *inner* one built from
+the **container's** `/etc/subuid` (`builder:2000:50000`), and buildah's chroot run
+identity-maps that inner namespace. So the ceiling is the container's
+`/etc/subuid` range — and that range must also fit inside the outer namespace.
+Reaching a high id therefore needs **both**:
 
-1. Give your host user a large enough range in `/etc/subuid` and `/etc/subgid`
-   (e.g. `youruser:100000:1200000`).
-2. Run `podman system migrate` so podman rebuilds the rootless namespace with the
-   new range (it caches the old size otherwise).
+1. **Widen the container's `/etc/subuid`** so the id falls inside it — the
+   `SUBID_COUNT` build arg, or a runtime bind-mount over `/etc/subuid` and
+   `/etc/subgid`:
 
-```bash
-grep "^$USER:" /etc/subuid /etc/subgid   # confirm the range
-podman system migrate
-podman unshare cat /proc/self/uid_map    # should show the full range
-```
+   ```bash
+   # build time
+   podman build --build-arg SUBID_COUNT=65536 -t image-thrillhouse:dev -f Dockerfile .
 
-`THRILLHOUSE_EXTRA_UIDS` / `_GIDS` (below) are **ignored** under chroot — a sparse
-override can't be applied to chroot's direct id-map write, and it isn't needed
-there.
+   # or, against the published image, at run time:
+   printf 'builder:2000:65536\n' > /tmp/subid
+   #   ... -v /tmp/subid:/etc/subuid:ro -v /tmp/subid:/etc/subgid:ro ...
+   ```
+
+2. **Widen the host's `/etc/subuid`/`/etc/subgid`** so the outer namespace can
+   contain that wider range, then `podman system migrate` (podman caches the old
+   size otherwise):
+
+   ```bash
+   grep "^$USER:" /etc/subuid /etc/subgid   # e.g. youruser:100000:1200000
+   podman system migrate
+   podman unshare cat /proc/self/uid_map    # should show the full range
+   ```
+
+With the stock `builder:2000:50000`, ids above 49999 (e.g. `nogroup` at 65534)
+have no mapping no matter how large the *host* range is — you must widen the
+*container* range too. The container range is deliberately narrow by default
+because a wider one can collide with host uid/gid allocations, so it's opt-in.
+
+`THRILLHOUSE_EXTRA_UIDS` / `_GIDS` (below) are **ignored** under chroot: a sparse
+override can't be applied to chroot's direct id-map write, and isn't needed once
+the range above is wide enough.
 
 **OCI-rootless isolation (`BUILDAH_ISOLATION` unset)**
 
-OCI-rootless maps ids through `newuidmap`/`newgidmap` using the image's
-`/etc/subuid` (`builder:2000:50000`), so only container ids `0..49999` exist and
-higher ids fail. Here you *can't* rely on the outer namespace; instead splice
-single-id mappings at **run** time for the specific high ids a build needs. They
-borrow ids from the existing subordinate block, so they need no host change:
+> Note: OCI-rootless generally does not work *inside* a container today, so this
+> path mostly applies to running the tool directly on a host.
+
+OCI-rootless maps ids through `newuidmap`/`newgidmap` from `/etc/subuid`, so it
+can honor a **sparse** map that adds just the high ids a build needs — without
+widening the whole range. Splice them in at run time:
 
 ```bash
-podman run --rm \
-  --device /dev/fuse --cap-add=SYS_ADMIN --cap-add=SETUID --cap-add=SETGID \
-  --security-opt seccomp=unconfined --security-opt label=disable \
-  -e BUILDAH_ISOLATION=oci \
-  -e THRILLHOUSE_EXTRA_GIDS=65534 \
-  -v $(pwd)/my-image.yaml:/config.yaml:Z \
-  -v $(pwd)/output:/output:Z \
-  ghcr.io/openchami/image-thrillhouse:latest \
-  image-thrillhouse build --config /config.yaml
+export BUILDAH_ISOLATION=oci
+export THRILLHOUSE_EXTRA_GIDS=65534
+image-thrillhouse build --config my-image.yaml
 ```
 
 Both variables accept a comma-separated list of ids and inclusive `lo-hi` ranges,
 e.g. `THRILLHOUSE_EXTRA_GIDS=65534,65530-65533`. Unset, the mapping is byte-for-byte
-the historical default.
-
-**Alternative — widen the whole range at build time (`SUBID_START` / `SUBID_COUNT`)**
-
-For OCI-rootless builds you can instead widen the contiguous `/etc/subuid` block
-so a high id falls inside it. This only helps if the outer podman namespace is
-large enough to contain the wider range (the default is deliberately narrow
-because a wider one can collide with host uid/gid allocations):
-
-```bash
-podman build --build-arg SUBID_COUNT=65536 -t image-thrillhouse:dev -f Dockerfile .
-```
+the historical default. (The `SUBID_COUNT` build arg works here too, if you'd
+rather widen the contiguous block than name individual ids.)

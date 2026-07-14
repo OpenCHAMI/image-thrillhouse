@@ -49,10 +49,22 @@ RUN chcon -t container_runtime_exec_t /usr/local/bin/image-thrillhouse 2>/dev/nu
 # Create builder user first
 RUN useradd -m --uid 1001 builder
 
-# Set up subuid/subgid for the builder user
+# Set up subuid/subgid for the builder user.
+#
+# These define the subordinate uid/gid range mapped into the rootless user
+# namespace. The default range (start 2000, count 50000) is deliberately narrow:
+# widening it can collide with host uid/gid allocations, so we keep the tested
+# defaults unless a build explicitly overrides them.
+#
+# Override at build time when target images use ids above the default ceiling,
+# e.g. Ubuntu's `nogroup` (gid 65534), which otherwise fails `chown` with
+# "Invalid argument" because the gid has no mapping in the namespace:
+#   podman build --build-arg SUBID_COUNT=65536 -f Dockerfile .
+ARG SUBID_START=2000
+ARG SUBID_COUNT=50000
 RUN touch /etc/subgid /etc/subuid && \
-    echo builder:2000:50000 > /etc/subuid && \
-    echo builder:2000:50000 > /etc/subgid && \
+    echo "builder:${SUBID_START}:${SUBID_COUNT}" > /etc/subuid && \
+    echo "builder:${SUBID_START}:${SUBID_COUNT}" > /etc/subgid && \
     chmod 644 /etc/subuid /etc/subgid
 
 # Set capabilities on newuidmap/newgidmap
