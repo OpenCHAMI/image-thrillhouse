@@ -25,6 +25,7 @@ import (
 	"go.podman.io/image/v5/docker"
 	"go.podman.io/image/v5/types"
 	"go.podman.io/storage"
+	"go.podman.io/storage/pkg/unshare"
 
 	"github.com/travisbcotton/image-thrillhouse/internal/config"
 	"github.com/travisbcotton/image-thrillhouse/internal/container"
@@ -58,13 +59,16 @@ func buildIDMapping() (*define.IDMappingOptions, error) {
 }
 
 // rootlessUsername resolves the login name whose /etc/subuid and /etc/subgid
-// ranges back the rootless build. Mirrors the lookup in go.podman.io/storage so
-// we read the same subordinate ranges buildah would.
+// ranges back the rootless build.
+//
+// buildah re-execs the binary into a user namespace before the CLI runs (see
+// main's unshare.MaybeReexecUsingUserNamespace), so by the time we get here the
+// process euid is 0 and $USER is "root" — neither reflects the unprivileged
+// builder whose subordinate ranges we need. unshare.GetRootlessUID recovers the
+// original uid (via _CONTAINERS_ROOTLESS_UID) even after that re-exec, matching
+// how go.podman.io/storage reads the same ranges.
 func rootlessUsername() string {
-	if u := os.Getenv("USER"); u != "" {
-		return u
-	}
-	if u, err := user.LookupId(strconv.Itoa(os.Geteuid())); err == nil {
+	if u, err := user.LookupId(strconv.Itoa(unshare.GetRootlessUID())); err == nil {
 		return u.Username
 	}
 	return ""
