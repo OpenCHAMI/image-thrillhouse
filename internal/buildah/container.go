@@ -46,13 +46,41 @@ const (
 // buildIDMapping returns the uid/gid mapping override for the build container,
 // or nil to let buildah derive its default rootless mapping from /etc/subuid
 // and /etc/subgid. It is non-nil only when THRILLHOUSE_EXTRA_UIDS/_GIDS request
-// ids outside that default range.
+// ids outside that default range and the isolation mode can honor a sparse map.
+//
+// Isolation matters because the two rootless modes apply id maps very
+// differently:
+//
+//   - OCI rootless routes the map through newuidmap/newgidmap, which accept a
+//     sparse subordinate map as long as every host id stays inside the
+//     /etc/subuid allocation. This is where a build hits `chown: Invalid
+//     argument` for ids above the contiguous block (e.g. nogroup, gid 65534),
+//     and where the sparse override is both needed and valid.
+//   - chroot writes /proc/pid/{uid,gid}_map directly (via the Go runtime's
+//     SysProcAttr). The kernel only permits that for an *identity* map of ids
+//     the process already owns, so buildah identity-maps the entire parent
+//     (container) user namespace — any id that namespace owns is already
+//     reachable. A sparse subordinate map there is unnecessary and, being
+//     non-identity, fails the direct write with "operation not permitted".
+//
+// So under chroot we skip the override (warning if it was requested) and let
+// buildah's identity mapping stand; widen the outer podman user namespace
+// instead if it doesn't already reach the id.
 func buildIDMapping() (*define.IDMappingOptions, error) {
 	uidMap, gidMap, ok, err := idmap.Build(rootlessUsername(), os.Getenv(envExtraUIDs), os.Getenv(envExtraGIDs))
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
+		return nil, nil
+	}
+	if os.Getenv("BUILDAH_ISOLATION") == "chroot" {
+		slog.With("component", "buildah").Warn(
+			"ignoring extra id mappings under chroot isolation; a chroot build can already "+
+				"chown to any id its user namespace maps. Widen the host subuid/subgid range "+
+				"(and run `podman system migrate`) to reach higher ids, or unset "+
+				"BUILDAH_ISOLATION to use OCI-rootless isolation, which honors these",
+			"vars", envExtraUIDs+","+envExtraGIDs)
 		return nil, nil
 	}
 	return &define.IDMappingOptions{UIDMap: uidMap, GIDMap: gidMap}, nil

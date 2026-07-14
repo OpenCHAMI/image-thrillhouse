@@ -102,28 +102,52 @@ Then swap `ghcr.io/openchami/image-thrillhouse:latest` for `image-thrillhouse:de
 
 ### High uids/gids in the target image (`chown: Invalid argument`)
 
-The builder runs rootless, so container uids/gids are mapped through a
-subordinate range defined in the image's `/etc/subuid` and `/etc/subgid`
-(`builder:2000:50000` by default). Only container ids `0..49999` exist inside the
-build, so an image that assigns an id above that ceiling has no mapping, and any
-`chown user:group` against it fails with:
+Some images assign ids above the range the rootless builder maps into the build,
+so a `chown user:group` against them fails with:
 
 ```
 chown: changing ownership of '/run/dnsmasq/': Invalid argument
 ```
 
-The most common offender is Debian/Ubuntu's `nogroup` (gid **65534**).
+The most common offender is Debian/Ubuntu's `nogroup` (gid **65534**). The right
+fix depends on the buildah **isolation mode** (`BUILDAH_ISOLATION`), because the
+two rootless modes map ids very differently.
 
-**Recommended — sparse mapping (`THRILLHOUSE_EXTRA_GIDS` / `_UIDS`)**
+**chroot isolation (the image default)**
 
-Set these at **run** time to splice single-id mappings for the specific high ids a
-build needs. They borrow ids from the existing subordinate block, so they work on
-a stock host with no `/etc/subuid` change:
+Under chroot, buildah identity-maps the *entire* user namespace it was given by
+the outer `podman run`. So the build can `chown` to any id that outer namespace
+owns — the ceiling is your host's subordinate allocation, not the image's
+`/etc/subuid`. If a high id fails:
+
+1. Give your host user a large enough range in `/etc/subuid` and `/etc/subgid`
+   (e.g. `youruser:100000:1200000`).
+2. Run `podman system migrate` so podman rebuilds the rootless namespace with the
+   new range (it caches the old size otherwise).
+
+```bash
+grep "^$USER:" /etc/subuid /etc/subgid   # confirm the range
+podman system migrate
+podman unshare cat /proc/self/uid_map    # should show the full range
+```
+
+`THRILLHOUSE_EXTRA_UIDS` / `_GIDS` (below) are **ignored** under chroot — a sparse
+override can't be applied to chroot's direct id-map write, and it isn't needed
+there.
+
+**OCI-rootless isolation (`BUILDAH_ISOLATION` unset)**
+
+OCI-rootless maps ids through `newuidmap`/`newgidmap` using the image's
+`/etc/subuid` (`builder:2000:50000`), so only container ids `0..49999` exist and
+higher ids fail. Here you *can't* rely on the outer namespace; instead splice
+single-id mappings at **run** time for the specific high ids a build needs. They
+borrow ids from the existing subordinate block, so they need no host change:
 
 ```bash
 podman run --rm \
   --device /dev/fuse --cap-add=SYS_ADMIN --cap-add=SETUID --cap-add=SETGID \
   --security-opt seccomp=unconfined --security-opt label=disable \
+  -e BUILDAH_ISOLATION=oci \
   -e THRILLHOUSE_EXTRA_GIDS=65534 \
   -v $(pwd)/my-image.yaml:/config.yaml:Z \
   -v $(pwd)/output:/output:Z \
@@ -135,19 +159,13 @@ Both variables accept a comma-separated list of ids and inclusive `lo-hi` ranges
 e.g. `THRILLHOUSE_EXTRA_GIDS=65534,65530-65533`. Unset, the mapping is byte-for-byte
 the historical default.
 
-**Alternative — widen the whole range (`SUBID_START` / `SUBID_COUNT` build args)**
+**Alternative — widen the whole range at build time (`SUBID_START` / `SUBID_COUNT`)**
 
-If you'd rather map a contiguous block up to the high id, widen it at **build**
-time. This only works if your host's subordinate allocation is large enough to
-contain the range (the default range is deliberately narrow because a wider one
-can collide with host uid/gid allocations):
+For OCI-rootless builds you can instead widen the contiguous `/etc/subuid` block
+so a high id falls inside it. This only helps if the outer podman namespace is
+large enough to contain the wider range (the default is deliberately narrow
+because a wider one can collide with host uid/gid allocations):
 
 ```bash
 podman build --build-arg SUBID_COUNT=65536 -t image-thrillhouse:dev -f Dockerfile .
 ```
-
-Note the outer podman user namespace caps this: with a stock host allocation of
-65536, `start=2000` cannot reach gid 65534 no matter the count — you'd first need
-a larger host `/etc/subuid`/`/etc/subgid` allocation (and a `podman system migrate`
-so podman picks up the change). The sparse mapping above sidesteps that ceiling,
-which is why it's preferred for hitting isolated high ids like `nogroup`.
