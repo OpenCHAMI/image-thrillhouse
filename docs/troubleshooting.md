@@ -73,6 +73,30 @@ forces host networking:
 BUILDAH_ISOLATION=chroot image-thrillhouse build --config my-image.yaml
 ```
 
+## "chown: … Invalid argument" during a build
+
+A build step fails with something like:
+
+```
+chown: changing ownership of '/run/dnsmasq/': Invalid argument
+```
+
+This means the target image assigns a uid/gid **above** the rootless subordinate
+range mapped into the build. The usual culprit is Debian/Ubuntu's `nogroup`
+(gid **65534**), which sits above the default `builder:2000:50000` range
+(container ids `0..49999`). `chown user` alone works — only the group (or a high
+uid) fails — because the user's id is inside the range while the group's isn't.
+
+Widen the range so the id is mapped. Under chroot isolation (the container
+default) this takes two steps — a wider **container** `/etc/subuid` **and** a host
+range large enough to hold it — covered in full, with commands, in
+[container-usage.md](container-usage.md#rootless-uidgid-ranges).
+
+If you instead see `newgidmap: … Operation not permitted` / `Falling back to
+single mapping`, the wider range didn't fit in the outer namespace: enlarge the
+host `/etc/subuid`/`/etc/subgid` and run `podman system migrate` (podman caches
+the old size). Same section covers this.
+
 ## SquashFS creation fails
 
 Install `squashfs-tools`:
