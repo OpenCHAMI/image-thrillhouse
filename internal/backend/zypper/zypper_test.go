@@ -181,6 +181,7 @@ func TestInstallCommands_SubcommandFlagPlacement(t *testing.T) {
 		"no-recommends":            "true",
 		"force-resolution":         "true",
 		"auto-agree-with-licenses": "true",
+		"allow-vendor-change":      "true",
 	})
 
 	cmds := backend.InstallCommands(config.Install{Packages: []string{"vim"}})
@@ -202,7 +203,7 @@ func TestInstallCommands_SubcommandFlagPlacement(t *testing.T) {
 			t.Errorf("global option %s must precede 'install': %v", global, cmd)
 		}
 	}
-	for _, sub := range []string{"--no-recommends", "--force-resolution", "--auto-agree-with-licenses"} {
+	for _, sub := range []string{"--no-recommends", "--force-resolution", "--auto-agree-with-licenses", "--allow-vendor-change"} {
 		i, ok := pos[sub]
 		if !ok {
 			t.Errorf("expected %s in command: %v", sub, cmd)

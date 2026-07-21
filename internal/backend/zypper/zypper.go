@@ -26,14 +26,16 @@ import (
 //   - no-gpg-checks: "true" or "false" (default: "false") - Skip GPG signature checks
 //   - force-resolution: "true" or "false" (default: "false") - Force automatic resolution of conflicts
 //   - auto-agree-with-licenses: "true" or "false" (default: "false") - Automatically agree to package licenses
+//   - allow-vendor-change: "true" or "false" (default: "false") - Allow changing package vendors
 //   - macro.*: string (optional) - Custom RPM macros (e.g., macro._dbpath: "/var/lib/rpm")
 type ZypperBackend struct {
-	repoPath             string // Path to the repository directory (default: /etc/zypp/repos.d)
-	noRecommends         bool   // Do not install recommended packages
-	noGpgChecks          bool   // Skip GPG signature checks
-	forceResolution      bool   // Force automatic resolution of conflicts
+	repoPath              string // Path to the repository directory (default: /etc/zypp/repos.d)
+	noRecommends          bool   // Do not install recommended packages
+	noGpgChecks           bool   // Skip GPG signature checks
+	forceResolution       bool   // Force automatic resolution of conflicts
 	autoAgreeWithLicenses bool   // Automatically agree to package licenses
-	customMacros         map[string]string
+	allowVendorChange     bool   // Allow changing package vendors
+	customMacros          map[string]string
 }
 
 // New creates a new Zypper backend instance with the provided options.
@@ -44,6 +46,7 @@ type ZypperBackend struct {
 //   - no-gpg-checks: Skip GPG signature checks (default: false)
 //   - force-resolution: Force automatic resolution of conflicts (default: false)
 //   - auto-agree-with-licenses: Automatically agree to package licenses (default: false)
+//   - allow-vendor-change: Allow changing package vendors (default: false)
 //   - macro.*: Custom RPM macros (e.g., macro._dbpath: "/var/lib/rpm")
 func New(options map[string]string) *ZypperBackend {
 	repoPath := options["repopath"]
@@ -57,6 +60,7 @@ func New(options map[string]string) *ZypperBackend {
 		noGpgChecks:           false,
 		forceResolution:       false,
 		autoAgreeWithLicenses: false,
+		allowVendorChange:     false,
 		customMacros:          cmdutil.ExtractMacroOptions(options),
 	}
 
@@ -72,6 +76,9 @@ func New(options map[string]string) *ZypperBackend {
 	}
 	if options["auto-agree-with-licenses"] == "true" {
 		backend.autoAgreeWithLicenses = true
+	}
+	if options["allow-vendor-change"] == "true" {
+		backend.allowVendorChange = true
 	}
 
 	return backend
@@ -100,6 +107,7 @@ func (z *ZypperBackend) ConfigFilePath() string {
 //	--no-gpg-checks: Skip GPG verification (if configured)
 //	--force-resolution: Force automatic conflict resolution (if configured)
 //	--auto-agree-with-licenses: Automatically agree to package licenses (if configured)
+//	--allow-vendor-change: Allow changing package vendors (if configured)
 func (z *ZypperBackend) InstallCommands(install config.Install) [][]string {
 	var cmds [][]string
 
@@ -189,6 +197,7 @@ func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath str
 //   - no-gpg-checks: "true" or "false"
 //   - force-resolution: "true" or "false"
 //   - auto-agree-with-licenses: "true" or "false"
+//   - allow-vendor-change: "true" or "false"
 //   - macro.*: string (any RPM macro definition)
 //
 // Returns an error if an unknown option is provided or if a value is invalid.
@@ -199,6 +208,7 @@ func (z *ZypperBackend) ValidateOptions(options map[string]string) error {
 		"no-gpg-checks":            cmdutil.OptionBool,
 		"force-resolution":         cmdutil.OptionBool,
 		"auto-agree-with-licenses": cmdutil.OptionBool,
+		"allow-vendor-change":      cmdutil.OptionBool,
 	}
 	return cmdutil.ValidateOptionSchema("zypper", options, schema)
 }
@@ -229,6 +239,9 @@ func (z *ZypperBackend) addInstallFlags(cmd []string) []string {
 	}
 	if z.autoAgreeWithLicenses {
 		cmd = append(cmd, "--auto-agree-with-licenses")
+	}
+	if z.allowVendorChange {
+		cmd = append(cmd, "--allow-vendor-change")
 	}
 	return cmd
 }
