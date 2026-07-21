@@ -99,6 +99,73 @@ meta:
 	}
 }
 
+// TestLoadConfigMisnestedFiles guards the strict-decode behavior: files placed
+// under layer.manager instead of layer used to unmarshal to an empty-but-valid
+// struct (the files were silently dropped) and pass validation. KnownFields must
+// now reject the unknown "files" key under manager instead.
+func TestLoadConfigMisnestedFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "misnested.yaml")
+
+	misnested := `
+meta:
+  name: test-image
+  tags: ["1.0"]
+
+layer:
+  manager:
+    name: dnf
+    files:
+      - path: /etc/foo
+        content: bar
+`
+
+	if err := os.WriteFile(configPath, []byte(misnested), 0644); err != nil {
+		t.Fatalf("Failed to create test config: %v", err)
+	}
+
+	_, err := LoadConfigWithVars(configPath, nil)
+	if err == nil {
+		t.Fatal("Expected error for files misnested under layer.manager, got nil")
+	}
+	if !strings.Contains(err.Error(), "files") {
+		t.Errorf("Expected error to mention the unknown 'files' key, got: %v", err)
+	}
+}
+
+// TestLoadConfigUnknownKey ensures a simple key typo is caught rather than
+// silently ignored.
+func TestLoadConfigUnknownKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "typo.yaml")
+
+	typo := `
+meta:
+  name: test-image
+  tags: ["1.0"]
+
+layer:
+  manager:
+    name: dnf
+  actions:
+    install:
+      packagez:
+        - kernel
+`
+
+	if err := os.WriteFile(configPath, []byte(typo), 0644); err != nil {
+		t.Fatalf("Failed to create test config: %v", err)
+	}
+
+	_, err := LoadConfigWithVars(configPath, nil)
+	if err == nil {
+		t.Fatal("Expected error for unknown key 'packagez', got nil")
+	}
+	if !strings.Contains(err.Error(), "packagez") {
+		t.Errorf("Expected error to mention the unknown 'packagez' key, got: %v", err)
+	}
+}
+
 // TestRenderConfig_SubstitutesVars exercises the happy path of the
 // templating engine: every {{ .var }} reference must be replaced and no
 // markers remain in the output.

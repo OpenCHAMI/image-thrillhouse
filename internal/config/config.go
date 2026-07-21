@@ -8,7 +8,9 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"text/template"
 
@@ -210,9 +212,19 @@ func LoadConfigWithVars(path string, vars map[string]interface{}) (*Config, erro
 
 // ParseAndValidate unmarshals rendered config YAML and validates it. name is
 // used in error messages (typically the source file path).
+//
+// Decoding is strict (KnownFields): a YAML key with no matching struct field is
+// an error rather than being silently dropped. This catches misnested sections
+// (e.g. files placed under layer.manager instead of layer) and key typos, which
+// would otherwise unmarshal to an empty-but-valid struct and pass Validate()
+// while the intended content was quietly ignored.
 func ParseAndValidate(rendered, name string) (*Config, error) {
 	var cfg Config
-	if err := yaml.Unmarshal([]byte(rendered), &cfg); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader([]byte(rendered)))
+	dec.KnownFields(true)
+	// Decode returns io.EOF for an empty document; fall through to Validate so an
+	// empty config still yields a clear "meta.name is required" error.
+	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("parse %s: %w", name, err)
 	}
 
