@@ -163,8 +163,8 @@ func (m *MmdebstrapBackend) RemovePackagesCommand(packages []string, rootPath st
 // used by the apt backend). mmdebstrap normally derives its trust from the
 // mirror's keyring; this path exists for custom third-party keys.
 // See cmdutil.APTImportKey.
-func (m *MmdebstrapBackend) ImportGPGKeyCommand(keyPath string, rootPath string) []string {
-	return cmdutil.APTImportKey(rootPath, keyPath)
+func (m *MmdebstrapBackend) ImportGPGKeyCommand(keyName string, keyPath string, rootPath string) []string {
+	return cmdutil.APTImportKey(rootPath, keyName, keyPath)
 }
 
 // OutputWriter returns a writer that parses and formats mmdebstrap output.

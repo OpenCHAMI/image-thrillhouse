@@ -161,8 +161,8 @@ func (a *AptBackend) RemovePackagesCommand(packages []string, rootPath string) [
 
 // ImportGPGKeyCommand delegates to the shared apt key-import helper (also
 // used by the mmdebstrap backend). See cmdutil.APTImportKey.
-func (a *AptBackend) ImportGPGKeyCommand(keyPath string, rootPath string) []string {
-	return cmdutil.APTImportKey(rootPath, keyPath)
+func (a *AptBackend) ImportGPGKeyCommand(keyName string, keyPath string, rootPath string) []string {
+	return cmdutil.APTImportKey(rootPath, keyName, keyPath)
 }
 
 // OutputWriter returns a writer that parses and formats APT command output.

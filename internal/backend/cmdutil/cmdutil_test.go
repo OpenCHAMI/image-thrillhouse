@@ -127,6 +127,7 @@ func TestAPTImportKey(t *testing.T) {
 	tests := []struct {
 		name     string
 		rootPath string
+		keyName  string
 		keyPath  string
 		wantNil  bool
 		// substrings the rendered script must contain
@@ -138,21 +139,30 @@ func TestAPTImportKey(t *testing.T) {
 			wantNil: true,
 		},
 		{
-			name:        "container-side",
+			name:        "container-side uses keyName in destination",
 			rootPath:    "",
+			keyName:     "toolchain",
 			keyPath:     "/tmp/key.bin",
-			mustContain: []string{"sh", "-c", "/tmp/key.bin", "/etc/apt/trusted.gpg.d/image-thrillhouse-repo.gpg", "gpg --dearmor"},
+			mustContain: []string{"sh", "-c", "/tmp/key.bin", "/etc/apt/trusted.gpg.d/toolchain.gpg", "gpg --dearmor"},
 		},
 		{
 			name:        "scratch-root prefixes destination path",
 			rootPath:    "/mnt/scratch",
+			keyName:     "toolchain",
 			keyPath:     "/tmp/key.bin",
-			mustContain: []string{"/mnt/scratch/etc/apt/trusted.gpg.d/image-thrillhouse-repo.gpg"},
+			mustContain: []string{"/mnt/scratch/etc/apt/trusted.gpg.d/toolchain.gpg"},
+		},
+		{
+			name:        "empty keyName falls back to a fixed safe name",
+			rootPath:    "",
+			keyName:     "",
+			keyPath:     "/tmp/key.bin",
+			mustContain: []string{"/etc/apt/trusted.gpg.d/image-thrillhouse-repo.gpg"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := APTImportKey(tt.rootPath, tt.keyPath)
+			got := APTImportKey(tt.rootPath, tt.keyName, tt.keyPath)
 			if tt.wantNil {
 				if got != nil {
 					t.Errorf("APTImportKey expected nil, got %v", got)
@@ -176,7 +186,7 @@ func TestAPTImportKey(t *testing.T) {
 // passed as argv to sh (not interpolated into the script body) so that any
 // future widening of input sources can't introduce a shell-injection vector.
 func TestAPTImportKey_PositionalArgs(t *testing.T) {
-	got := APTImportKey("/mnt/root", "/host/tmp/key.bin")
+	got := APTImportKey("/mnt/root", "toolchain", "/host/tmp/key.bin")
 	if len(got) != 6 {
 		t.Fatalf("expected 6 argv elements (sh -c <script> $0 $1 $2), got %d: %v", len(got), got)
 	}
@@ -193,7 +203,7 @@ func TestAPTImportKey_PositionalArgs(t *testing.T) {
 		t.Errorf("paths leaked into script body (injection surface): %q", script)
 	}
 	// Argv positions: $0 first, then $1 (dest), then $2 (key).
-	if got[4] != "/mnt/root/etc/apt/trusted.gpg.d/image-thrillhouse-repo.gpg" {
+	if got[4] != "/mnt/root/etc/apt/trusted.gpg.d/toolchain.gpg" {
 		t.Errorf("argv[4] (destination) = %q, want scratch-rooted path", got[4])
 	}
 	if got[5] != "/host/tmp/key.bin" {
@@ -206,7 +216,7 @@ func TestAPTImportKey_PositionalArgs(t *testing.T) {
 // bytes must only appear as argv values.
 func TestAPTImportKey_NoShellInjection(t *testing.T) {
 	malicious := `/tmp/key.bin"; rm -rf / #`
-	got := APTImportKey("", malicious)
+	got := APTImportKey("", "toolchain", malicious)
 	script := got[2]
 	if strings.Contains(script, "rm -rf") {
 		t.Errorf("malicious bytes interpolated into script: %q", script)
@@ -215,6 +225,47 @@ func TestAPTImportKey_NoShellInjection(t *testing.T) {
 	// so the dearmor/cp can find the file.
 	if got[5] != malicious {
 		t.Errorf("argv[5] = %q, want verbatim malicious path %q", got[5], malicious)
+	}
+}
+
+// TestAPTImportKey_DistinctNames is the regression guard for the collision
+// bug: two repos importing keys under different names must resolve to
+// different destination files. Before the fix every apt repo wrote to a
+// single hardcoded keyring, so the second key silently overwrote the first.
+func TestAPTImportKey_DistinctNames(t *testing.T) {
+	a := APTImportKey("", "toolchain", "/tmp/a.bin")
+	b := APTImportKey("", "docker", "/tmp/b.bin")
+	if a[4] == b[4] {
+		t.Fatalf("distinct key names produced the same destination %q — collision not fixed", a[4])
+	}
+	if a[4] != "/etc/apt/trusted.gpg.d/toolchain.gpg" {
+		t.Errorf("destination = %q, want toolchain.gpg", a[4])
+	}
+	if b[4] != "/etc/apt/trusted.gpg.d/docker.gpg" {
+		t.Errorf("destination = %q, want docker.gpg", b[4])
+	}
+}
+
+// TestSafeKeyName covers the sanitizer that keeps a repo-derived name from
+// escaping the trusted.gpg.d directory or producing an invalid filename.
+func TestSafeKeyName(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"toolchain", "toolchain"},
+		{"my.repo_1", "my.repo_1"},
+		{"", "image-thrillhouse-repo"},
+		{".", "image-thrillhouse-repo"},
+		{"../../etc/passwd", "passwd"},        // Base strips the traversal
+		{"a/b/c", "c"},                        // only the final component survives
+		{"weird name!@#", "weird-name"},       // disallowed chars become dashes, trailing trimmed
+		{"...", "image-thrillhouse-repo"},     // trims to empty, then falls back
+		{"-lead-trail-", "lead-trail"},        // leading/trailing dashes trimmed
+	}
+	for _, tt := range tests {
+		if got := safeKeyName(tt.in); got != tt.want {
+			t.Errorf("safeKeyName(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
 
