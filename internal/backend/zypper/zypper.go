@@ -228,7 +228,9 @@ func (z *ZypperBackend) RemovePackagesCommand(packages []string, rootPath string
 
 // ImportGPGKeyCommand delegates to the shared RPM key-import helper (also
 // used by the dnf backend). See cmdutil.RPMImportKey.
-func (z *ZypperBackend) ImportGPGKeyCommand(keyPath string, rootPath string) []string {
+func (z *ZypperBackend) ImportGPGKeyCommand(keyName string, keyPath string, rootPath string) []string {
+	// keyName is unused: rpm imports into its own keyring, so there is no
+	// per-repo destination filename to disambiguate (see cmdutil.APTImportKey).
 	return cmdutil.RPMImportKey(rootPath, keyPath)
 }
 

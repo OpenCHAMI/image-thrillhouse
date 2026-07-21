@@ -162,7 +162,7 @@ func (fakeBackendBase) InstallRootCommands(install config.Install, rootPath stri
 func (fakeBackendBase) RemovePackagesCommand(packages []string, rootPath string) []string {
 	return nil
 }
-func (fakeBackendBase) ImportGPGKeyCommand(keyPath, rootPath string) []string { return nil }
+func (fakeBackendBase) ImportGPGKeyCommand(keyName, keyPath, rootPath string) []string { return nil }
 func (fakeBackendBase) OutputWriter() container.OutputWriter                  { return &container.NopWriter{} }
 func (fakeBackendBase) IsAcceptableExitCode(exitCode int, output string) bool { return false }
 

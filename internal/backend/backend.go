@@ -88,6 +88,13 @@ type Backend interface {
 	// ImportGPGKeyCommand generates a command to install a GPG key into the
 	// container (or scratch root) from a *local* file.
 	//
+	// keyName is a stable, per-repository identifier the caller derives from
+	// the repo (typically its path basename). deb-based backends use it to
+	// give each key a distinct filename under /etc/apt/trusted.gpg.d/, so two
+	// repos that each supply a `gpg:` key no longer overwrite one another.
+	// RPM-based backends (dnf, zypper) import into the rpm keyring and ignore
+	// it.
+	//
 	// keyPath is the path to the key bytes on disk. Its interpretation
 	// depends on rootPath:
 	//   - If rootPath is non-empty (scratch build), keyPath is a *host* path
@@ -103,7 +110,7 @@ type Backend interface {
 	// string — see internal/builder.importGPGKeys.
 	//
 	// Returns a command as a slice of arguments, or nil if not supported.
-	ImportGPGKeyCommand(keyPath string, rootPath string) []string
+	ImportGPGKeyCommand(keyName string, keyPath string, rootPath string) []string
 
 	// OutputWriter returns a writer for capturing package manager output.
 	// This allows backends to format and filter package manager output.

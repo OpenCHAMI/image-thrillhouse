@@ -11,6 +11,11 @@
 // inputs may include user-supplied paths and package names.
 package cmdutil
 
+import (
+	"path/filepath"
+	"strings"
+)
+
 // RPMRemove returns the `rpm -e --nodeps [--root rootPath] <packages…>`
 // command shared by the dnf and zypper backends. When rootPath is empty
 // the command runs against the live container's RPM database; otherwise
@@ -66,8 +71,16 @@ func DPKGRemove(rootPath string, packages []string) []string {
 }
 
 // APTImportKey returns a `sh -c` command that installs a previously fetched
-// key into /etc/apt/trusted.gpg.d/. The key is dearmored when possible and
-// copied verbatim otherwise.
+// key into /etc/apt/trusted.gpg.d/<keyName>.gpg. The key is dearmored when
+// possible and copied verbatim otherwise.
+//
+// keyName makes the destination filename unique per repository. It was
+// previously a hardcoded "image-thrillhouse-repo.gpg", which meant a build
+// with two apt repos each carrying a `gpg:` key silently clobbered the first
+// key with the second — leaving one repo unverifiable. Callers derive keyName
+// from the repo (see internal/builder). It is reduced to a safe filename
+// component here (see safeKeyName), so an empty or junk value can never
+// escape the trusted.gpg.d directory.
 //
 // The destination and key paths are passed as POSITIONAL arguments to sh
 // (referenced inside the script as $1 and $2) rather than interpolated into
@@ -83,16 +96,40 @@ func DPKGRemove(rootPath string, packages []string) []string {
 // that root and the command is meant to run on the host.
 //
 // Returns nil if keyPath is empty.
-func APTImportKey(rootPath, keyPath string) []string {
+func APTImportKey(rootPath, keyName, keyPath string) []string {
 	if keyPath == "" {
 		return nil
 	}
-	final := "/etc/apt/trusted.gpg.d/image-thrillhouse-repo.gpg"
+	final := "/etc/apt/trusted.gpg.d/" + safeKeyName(keyName) + ".gpg"
 	if rootPath != "" {
-		final = rootPath + "/etc/apt/trusted.gpg.d/image-thrillhouse-repo.gpg"
+		final = rootPath + final
 	}
 	// $0 is the script's "name" slot (we pass "apt-import-key" so error
 	// messages from sh stay readable), $1 is the destination, $2 is the key.
 	const script = `gpg --dearmor -o "$1" "$2" 2>/dev/null || cp "$2" "$1"`
 	return []string{"sh", "-c", script, "apt-import-key", final, keyPath}
+}
+
+// safeKeyName reduces an arbitrary, repo-derived name to a single safe
+// filename component for use under /etc/apt/trusted.gpg.d/. It strips any
+// directory part (so "../../etc/passwd" can't traverse out), restricts the
+// charset to [A-Za-z0-9._-], and trims leading/trailing dots and dashes.
+// If nothing usable survives it falls back to a fixed name so the caller
+// still gets a valid, if non-unique, destination.
+func safeKeyName(name string) string {
+	name = filepath.Base(name)
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	s := strings.Trim(b.String(), ".-")
+	if s == "" {
+		return "image-thrillhouse-repo"
+	}
+	return s
 }

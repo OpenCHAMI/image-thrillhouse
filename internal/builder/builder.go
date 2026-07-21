@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -289,6 +290,13 @@ func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) erro
 		rootPath = c.MountPath()
 	}
 
+	// usedNames disambiguates the per-repo key filename that deb-based
+	// backends derive from keyName. Two repos whose paths share a basename
+	// (e.g. /a/x.sources and /b/x.sources) would otherwise map to the same
+	// keyring file and reintroduce the very collision this loop guards
+	// against, so the second one gets an index suffix.
+	usedNames := make(map[string]bool)
+
 	for i, repo := range b.cfg.Layer.Repos {
 		if repo.GPGKey == "" {
 			continue
@@ -308,7 +316,8 @@ func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) erro
 			continue
 		}
 
-		cmd := b.backend.ImportGPGKeyCommand(keyPath, rootPath)
+		keyName := gpgKeyName(repo.Path, i, usedNames)
+		cmd := b.backend.ImportGPGKeyCommand(keyName, keyPath, rootPath)
 		if cmd == nil {
 			log.Warn("backend does not support gpg key import", "backend", b.cfg.Layer.Manager.Name)
 			cleanup()
@@ -329,6 +338,32 @@ func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) erro
 	}
 
 	return nil
+}
+
+// gpgKeyName derives a stable, human-readable identifier for a repo's imported
+// GPG key from the repo's destination path (its basename, minus extension). A
+// deb-based backend turns this into the keyring filename under
+// /etc/apt/trusted.gpg.d/, so /etc/apt/sources.list.d/toolchain.sources yields
+// a "toolchain" key rather than the old shared name every repo collided on.
+//
+// used tracks names already handed out in this build; a duplicate (two repos
+// with the same basename in different directories) falls back to an
+// index-suffixed name so the destinations stay distinct. A path with no usable
+// basename (empty, ".", "/") falls back to the index too. The returned name is
+// still passed through cmdutil.safeKeyName by the backend, so this function
+// only has to worry about uniqueness and readability, not filesystem safety.
+func gpgKeyName(repoPath string, idx int, used map[string]bool) string {
+	base := filepath.Base(repoPath)
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		base = fmt.Sprintf("repo-%d", idx)
+	}
+	name := base
+	if used[name] {
+		name = fmt.Sprintf("%s-%d", base, idx)
+	}
+	used[name] = true
+	return name
 }
 
 // placeGPGKey writes fetched key bytes to a location the backend's import
