@@ -178,8 +178,9 @@ func TestInstallRootCommands(t *testing.T) {
 // global and must appear BEFORE it. Zypper rejects them in the wrong slot.
 func TestInstallCommands_SubcommandFlagPlacement(t *testing.T) {
 	backend := New(map[string]string{
-		"no-recommends":    "true",
-		"force-resolution": "true",
+		"no-recommends":            "true",
+		"force-resolution":         "true",
+		"auto-agree-with-licenses": "true",
 	})
 
 	cmds := backend.InstallCommands(config.Install{Packages: []string{"vim"}})
@@ -201,7 +202,7 @@ func TestInstallCommands_SubcommandFlagPlacement(t *testing.T) {
 			t.Errorf("global option %s must precede 'install': %v", global, cmd)
 		}
 	}
-	for _, sub := range []string{"--no-recommends", "--force-resolution"} {
+	for _, sub := range []string{"--no-recommends", "--force-resolution", "--auto-agree-with-licenses"} {
 		i, ok := pos[sub]
 		if !ok {
 			t.Errorf("expected %s in command: %v", sub, cmd)
