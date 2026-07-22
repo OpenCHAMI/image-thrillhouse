@@ -31,6 +31,7 @@ import (
 	"github.com/travisbcotton/image-thrillhouse/internal/config"
 	"github.com/travisbcotton/image-thrillhouse/internal/container"
 	"github.com/travisbcotton/image-thrillhouse/internal/manifest"
+	"github.com/travisbcotton/image-thrillhouse/internal/promote"
 	"github.com/travisbcotton/image-thrillhouse/internal/publisher"
 	"github.com/travisbcotton/image-thrillhouse/internal/publisher/local"
 	"github.com/travisbcotton/image-thrillhouse/internal/publisher/registry"
@@ -51,6 +52,13 @@ var (
 	layerName      string   // Layer name (within the manifest) to build
 	archName       string   // Target architecture for a multi-arch manifest build (defaults to host arch)
 	skipIfExists   bool     // Skip build when every configured publisher reports the image already exists
+
+	// promote-specific flags
+	releaseTag   string // Human-readable tag to publish under (e.g. release-0.0.1)
+	fromType     string // Source publisher type to promote from
+	toType       string // Target publisher type to promote to
+	forcePromote bool   // Overwrite an existing release artifact instead of failing
+	dryRun       bool   // Resolve and print actions without pulling or publishing
 )
 
 // canonicalHostArch returns the arch name the manifest is likely to use
@@ -170,6 +178,24 @@ var versionCmd = &cobra.Command{
 	},
 }
 
+// promoteCmd promotes an already-built, already-tested artifact to a
+// human-readable release tag without rebuilding it.
+var promoteCmd = &cobra.Command{
+	Use:   "promote",
+	Short: "Promote a tested artifact to a release tag",
+	Long: `Promote an already-built, already-tested artifact to a human-readable
+release tag without rebuilding it.
+
+Stage 1 supports registry -> s3: the layer's content-addressed image is pulled
+from the registry, its rootfs mounted, and republished to S3 under the release
+tag using the S3 publisher's existing extraction. It is a re-package of tested
+bytes, never a rebuild.
+
+The content tag is recomputed from the manifest, so promote must run from the
+same checkout that built the image, on a machine of the target architecture.`,
+	RunE: runPromote,
+}
+
 // newBackend creates the appropriate package manager backend based on the configuration.
 // Each backend knows how to install packages using its specific package manager.
 //
@@ -244,24 +270,143 @@ func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
 			}
 			publishers = append(publishers, registry.New(p.URL, tlsVerify))
 		case "s3":
-			if p.URL == "" {
-				return nil, fmt.Errorf("s3 publisher requires url")
+			pub, err := newS3Publisher(p)
+			if err != nil {
+				return nil, err
 			}
-			if p.Bucket == "" {
-				return nil, fmt.Errorf("s3 publisher requires bucket")
-			}
-			// Get S3 credentials from environment variables
-			accessKey := os.Getenv("S3_ACCESS")
-			secretKey := os.Getenv("S3_SECRET")
-			if accessKey == "" || secretKey == "" {
-				return nil, fmt.Errorf("s3 publisher requires S3_ACCESS and S3_SECRET environment variables")
-			}
-			publishers = append(publishers, s3pub.New(p.URL, p.Bucket, p.Prefix, accessKey, secretKey))
+			publishers = append(publishers, pub)
 		default:
 			return nil, fmt.Errorf("unsupported publisher type: %s", p.Type)
 		}
 	}
 	return publishers, nil
+}
+
+// newS3Publisher constructs an S3 publisher from a publish block, reading
+// credentials from S3_ACCESS/S3_SECRET. Shared by build's newPublishers and the
+// promote command so required-field validation and credential handling live in
+// one place.
+func newS3Publisher(p config.Publish) (*s3pub.S3Publisher, error) {
+	if p.URL == "" {
+		return nil, fmt.Errorf("s3 publisher requires url")
+	}
+	if p.Bucket == "" {
+		return nil, fmt.Errorf("s3 publisher requires bucket")
+	}
+	accessKey := os.Getenv("S3_ACCESS")
+	secretKey := os.Getenv("S3_SECRET")
+	if accessKey == "" || secretKey == "" {
+		return nil, fmt.Errorf("s3 publisher requires S3_ACCESS and S3_SECRET environment variables")
+	}
+	return s3pub.New(p.URL, p.Bucket, p.Prefix, accessKey, secretKey), nil
+}
+
+// runPromote implements the promote command (Stage 1: registry -> s3).
+//
+// It recomputes the layer's content tag from the manifest, resolves the source
+// registry ref and the target S3 destination from the layer's own publish
+// blocks, then materializes the tested image to S3 under the release tag.
+func runPromote(cmd *cobra.Command, args []string) error {
+	ctx, stop := buildContext()
+	defer stop()
+
+	if err := setupLogger(logLevel, logFormat); err != nil {
+		return err
+	}
+
+	// Stage 1 is manifest-driven: the content tag to promote is recomputed
+	// from the manifest, so a single --config has nothing to compute against.
+	if manifestPath == "" || layerName == "" {
+		return fmt.Errorf("--manifest and --layer are required")
+	}
+	if releaseTag == "" {
+		return fmt.Errorf("--release is required")
+	}
+	if fromType != "registry" || toType != "s3" {
+		return fmt.Errorf("stage 1 supports only --from registry --to s3 (got --from %q --to %q)", fromType, toType)
+	}
+
+	cliVars, err := config.LoadVars([]string{varFile}, vars)
+	if err != nil {
+		return fmt.Errorf("load vars: %w", err)
+	}
+
+	dag, err := loadDAG(manifestPath)
+	if err != nil {
+		return err
+	}
+	concreteName, err := resolveManifestLayer(dag)
+	if err != nil {
+		return err
+	}
+
+	// Recompute the content tag for the selected layer.
+	tags, err := dag.ComputeTags(concreteName, cliVars)
+	if err != nil {
+		return fmt.Errorf("compute tags: %w", err)
+	}
+	contentTag := tags[concreteName]
+
+	// Render the layer config to recover meta.name and the publish blocks that
+	// tell us where the source image lives and where the S3 target is.
+	configPath, mergedVars, err := prepareLayerRender(dag, concreteName, cliVars)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.LoadConfigWithVars(configPath, mergedVars)
+	if err != nil {
+		return err
+	}
+
+	regPub, err := promote.FindPublish(cfg.Publish, "registry")
+	if err != nil {
+		return fmt.Errorf("resolve source: %w", err)
+	}
+	s3Pub, err := promote.FindPublish(cfg.Publish, "s3")
+	if err != nil {
+		return fmt.Errorf("resolve target: %w", err)
+	}
+
+	tlsVerify := true
+	if regPub.TLSVerify != nil {
+		tlsVerify = *regPub.TLSVerify
+	}
+	src := promote.RegistrySource{
+		URL:       regPub.URL,
+		Name:      cfg.Meta.Name,
+		Tag:       contentTag,
+		TLSVerify: tlsVerify,
+	}
+
+	log := slog.With("component", "cli")
+	log.Info("promote resolved",
+		"layer", concreteName,
+		"content_tag", contentTag,
+		"source", src.Ref(),
+		"release", releaseTag,
+		"bucket", s3Pub.Bucket,
+		"prefix", s3Pub.Prefix,
+		"force", forcePromote,
+	)
+
+	// Resolve-only: report what would happen without touching credentials, the
+	// registry, or S3. Constructed after this point so a dry-run needs no secrets.
+	if dryRun {
+		log.Info("dry-run: skipping pull and publish")
+		return nil
+	}
+
+	dst, err := newS3Publisher(s3Pub)
+	if err != nil {
+		return err
+	}
+
+	// TODO(stage1-polish): probe the release rootfs key
+	// (<prefix><os>-<name>-<release>) before publishing; fail when it already
+	// exists unless --force is set. The S3 publisher's current Exists() can't
+	// answer this (the key depends on the built filesystem), so this needs a
+	// dedicated HeadObject probe. Until then --force is accepted but inert.
+	return promote.MaterializeToS3(ctx, src, dst, cfg.Meta.Name, releaseTag)
 }
 
 // setupLogger configures the global logger with the specified level and format.
@@ -367,11 +512,26 @@ func init() {
 	renderCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 	renderCmd.Flags().StringVarP(&renderOutput, "output", "o", "", "output file (default: stdout)")
 
+	// Promote-specific flags. Manifest-driven like build (the content tag is
+	// recomputed from the manifest), plus the release tag and source/target
+	// selectors.
+	promoteCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file (required)")
+	promoteCmd.Flags().StringVar(&layerName, "layer", "", "logical layer name to promote (required)")
+	promoteCmd.Flags().StringVar(&archName, "arch", "", "target architecture (multi-arch manifests only; defaults to host arch)")
+	promoteCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
+	promoteCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
+	promoteCmd.Flags().StringVar(&releaseTag, "release", "", "release tag to publish under, e.g. release-0.0.1 (required)")
+	promoteCmd.Flags().StringVar(&fromType, "from", "registry", "source publisher type")
+	promoteCmd.Flags().StringVar(&toType, "to", "s3", "target publisher type")
+	promoteCmd.Flags().BoolVar(&forcePromote, "force", false, "overwrite an existing release artifact instead of failing")
+	promoteCmd.Flags().BoolVar(&dryRun, "dry-run", false, "resolve and print actions without pulling or publishing")
+
 	// Register all subcommands under the root command
 	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(renderCmd)
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(promoteCmd)
 }
 
 // buildContext returns the root context for a build, cancelled on SIGINT or
