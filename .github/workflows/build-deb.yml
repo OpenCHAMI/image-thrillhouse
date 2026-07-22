@@ -31,7 +31,7 @@ jobs:
     name: Build Debian Package (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     container:
-      image: debian:trixie-20260623
+      image: debian:13
     strategy:
       matrix:
         include:
