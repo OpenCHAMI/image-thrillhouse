@@ -31,6 +31,7 @@ import (
 	"github.com/travisbcotton/image-thrillhouse/internal/config"
 	"github.com/travisbcotton/image-thrillhouse/internal/container"
 	"github.com/travisbcotton/image-thrillhouse/internal/manifest"
+	"github.com/travisbcotton/image-thrillhouse/internal/promote"
 	"github.com/travisbcotton/image-thrillhouse/internal/publisher"
 	"github.com/travisbcotton/image-thrillhouse/internal/publisher/local"
 	"github.com/travisbcotton/image-thrillhouse/internal/publisher/registry"
@@ -51,6 +52,11 @@ var (
 	layerName      string   // Layer name (within the manifest) to build
 	archName       string   // Target architecture for a multi-arch manifest build (defaults to host arch)
 	skipIfExists   bool     // Skip build when every configured publisher reports the image already exists
+
+	// promote-specific flags
+	releaseTag   string // Human-readable tag to publish under (e.g. release-0.0.1)
+	forcePromote bool   // Overwrite an existing release artifact instead of failing
+	dryRun       bool   // Resolve and print actions without contacting the registry
 )
 
 // canonicalHostArch returns the arch name the manifest is likely to use
@@ -170,6 +176,25 @@ var versionCmd = &cobra.Command{
 	},
 }
 
+// promoteCmd promotes an already-built, already-tested artifact to a
+// human-readable release tag without rebuilding it.
+var promoteCmd = &cobra.Command{
+	Use:   "promote",
+	Short: "Retag a tested image under a release tag",
+	Long: `Promote an already-built, already-tested image to a human-readable
+release tag within its registry, without rebuilding it.
+
+The layer's content-addressed image is copied to the release tag (the blobs
+already exist, so only a new tag is written). For a multi-arch layer, omitting
+--arch applies the release tag to every arch (each in its own repo, e.g.
+<image>-x86_64:release-0.0.1 and <image>-aarch64:release-0.0.1); passing --arch
+retags just that arch.
+
+The content tag is recomputed from the manifest, so promote must run from the
+same checkout that built the image.`,
+	RunE: runPromote,
+}
+
 // newBackend creates the appropriate package manager backend based on the configuration.
 // Each backend knows how to install packages using its specific package manager.
 //
@@ -262,6 +287,146 @@ func newPublishers(publishes []config.Publish) ([]publisher.Publisher, error) {
 		}
 	}
 	return publishers, nil
+}
+
+// runPromote implements the promote command: OCI -> OCI retag within a registry.
+//
+// It recomputes the layer's content tag from the manifest and resolves the
+// registry source from the layer's own publish block, then:
+//   - multi-arch layer, no --arch: assemble an OCI image index over all arches
+//     under one release tag.
+//   - otherwise: copy the single content-tagged image to the release tag.
+func runPromote(cmd *cobra.Command, args []string) error {
+	ctx, stop := buildContext()
+	defer stop()
+
+	if err := setupLogger(logLevel, logFormat); err != nil {
+		return err
+	}
+
+	// Manifest-driven: the content tag to promote is recomputed from the
+	// manifest, so a single --config has nothing to compute against.
+	if manifestPath == "" || layerName == "" {
+		return fmt.Errorf("--manifest and --layer are required")
+	}
+	if releaseTag == "" {
+		return fmt.Errorf("--release is required")
+	}
+
+	cliVars, err := config.LoadVars([]string{varFile}, vars)
+	if err != nil {
+		return fmt.Errorf("load vars: %w", err)
+	}
+
+	dag, err := loadDAG(manifestPath)
+	if err != nil {
+		return err
+	}
+
+	log := slog.With("component", "cli")
+
+	// Multi-arch with no --arch means "apply the release tag to every arch":
+	// retag each arch's image in its own repo. An explicit --arch (or a
+	// single-arch manifest) retags just that one.
+	if dag.IsMultiArch() && archName == "" {
+		return runPromoteMultiArch(ctx, dag, cliVars, log)
+	}
+
+	concreteName, err := resolveManifestLayer(dag)
+	if err != nil {
+		return err
+	}
+	src, err := resolveRegistrySource(dag, cliVars, concreteName)
+	if err != nil {
+		return err
+	}
+
+	log.Info("promote resolved",
+		"layer", concreteName,
+		"content_tag", src.Tag,
+		"source", src.Ref(),
+		"dest", src.RefWithTag(releaseTag),
+		"force", forcePromote,
+	)
+	if dryRun {
+		log.Info("dry-run: skipping retag")
+		return nil
+	}
+	return promote.RetagRegistry(ctx, src, releaseTag, forcePromote)
+}
+
+// resolveRegistrySource recomputes the content tag for concreteName, renders its
+// config, and returns the registry source the promotion reads from. The source
+// is always the layer's registry publish block — the canonical artifact store.
+func resolveRegistrySource(dag *manifest.DAG, cliVars map[string]interface{}, concreteName string) (promote.RegistrySource, error) {
+	tags, err := dag.ComputeTags(concreteName, cliVars)
+	if err != nil {
+		return promote.RegistrySource{}, fmt.Errorf("compute tags: %w", err)
+	}
+	configPath, mergedVars, err := prepareLayerRender(dag, concreteName, cliVars)
+	if err != nil {
+		return promote.RegistrySource{}, err
+	}
+	cfg, err := config.LoadConfigWithVars(configPath, mergedVars)
+	if err != nil {
+		return promote.RegistrySource{}, err
+	}
+	regPub, err := promote.FindPublish(cfg.Publish, "registry")
+	if err != nil {
+		return promote.RegistrySource{}, fmt.Errorf("resolve source: %w", err)
+	}
+	tlsVerify := true
+	if regPub.TLSVerify != nil {
+		tlsVerify = *regPub.TLSVerify
+	}
+	return promote.RegistrySource{
+		URL:       regPub.URL,
+		Name:      cfg.Meta.Name,
+		Tag:       tags[concreteName],
+		TLSVerify: tlsVerify,
+	}, nil
+}
+
+// runPromoteMultiArch applies the release tag to every arch of a multi-arch
+// layer by retagging each arch's image in its own repo. Every arch is resolved
+// up front (so a config error fails before anything is mutated); a duplicate
+// destination ref across arches is rejected, since that means the release tag
+// can't tell the arches apart. Retags then run sequentially.
+func runPromoteMultiArch(ctx context.Context, dag *manifest.DAG, cliVars map[string]interface{}, log *slog.Logger) error {
+	arches := dag.ArchesFor(layerName)
+	if len(arches) == 0 {
+		return fmt.Errorf("layer %q does not build for multiple arches", layerName)
+	}
+
+	sources := make([]promote.RegistrySource, 0, len(arches))
+	seen := make(map[string]string, len(arches)) // dest ref -> arch that claimed it
+	for _, arch := range arches {
+		src, err := resolveRegistrySource(dag, cliVars, layerName+"-"+arch)
+		if err != nil {
+			return fmt.Errorf("arch %s: %w", arch, err)
+		}
+		dst := src.RefWithTag(releaseTag)
+		if prev, ok := seen[dst]; ok {
+			return fmt.Errorf(
+				"arches %q and %q both retag to %s; the release tag can't distinguish them — "+
+					"put the arch in meta.name (e.g. <image>-{{ .arch }}) so each arch has its own repo",
+				prev, arch, dst)
+		}
+		seen[dst] = arch
+		sources = append(sources, src)
+	}
+
+	log.Info("promote resolved", "layer", layerName, "arches", arches, "release", releaseTag, "force", forcePromote)
+	for i, src := range sources {
+		if dryRun {
+			log.Info("dry-run: would retag", "arch", arches[i], "source", src.Ref(), "dest", src.RefWithTag(releaseTag))
+			continue
+		}
+		if err := promote.RetagRegistry(ctx, src, releaseTag, forcePromote); err != nil {
+			return fmt.Errorf("arch %s: %w", arches[i], err)
+		}
+	}
+	return nil
 }
 
 // setupLogger configures the global logger with the specified level and format.
@@ -367,11 +532,24 @@ func init() {
 	renderCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 	renderCmd.Flags().StringVarP(&renderOutput, "output", "o", "", "output file (default: stdout)")
 
+	// Promote-specific flags. Manifest-driven like build (the content tag is
+	// recomputed from the manifest), plus the release tag and source/target
+	// selectors.
+	promoteCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file (required)")
+	promoteCmd.Flags().StringVar(&layerName, "layer", "", "logical layer name to promote (required)")
+	promoteCmd.Flags().StringVar(&archName, "arch", "", "target architecture (multi-arch manifests only; defaults to host arch)")
+	promoteCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
+	promoteCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
+	promoteCmd.Flags().StringVar(&releaseTag, "release", "", "release tag to publish under, e.g. release-0.0.1 (required)")
+	promoteCmd.Flags().BoolVar(&forcePromote, "force", false, "overwrite an existing release tag instead of failing")
+	promoteCmd.Flags().BoolVar(&dryRun, "dry-run", false, "resolve and print actions without contacting the registry")
+
 	// Register all subcommands under the root command
 	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(renderCmd)
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(promoteCmd)
 }
 
 // buildContext returns the root context for a build, cancelled on SIGINT or
