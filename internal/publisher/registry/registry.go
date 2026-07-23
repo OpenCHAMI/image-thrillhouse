@@ -121,8 +121,6 @@ func RefExists(ctx context.Context, ref string, tlsVerify bool) (bool, error) {
 // so copy.Image detects them and writes only the new manifest/tag: no blob
 // re-upload, effectively a server-side alias of the exact tested bytes.
 //
-// ImageListSelection is CopyAllImages so that a multi-arch image index at the
-// source is copied whole; for a single-arch source it copies the one image.
 // Both endpoints share one SystemContext because retag stays within a single
 // registry's auth/TLS regime.
 func Copy(ctx context.Context, srcRef, dstRef string, tlsVerify bool) error {
@@ -151,9 +149,8 @@ func Copy(ctx context.Context, srcRef, dstRef string, tlsVerify bool) error {
 
 	sys := systemContext(tlsVerify)
 	if _, err := copy.Image(ctx, policyCtx, dst, src, &copy.Options{
-		SourceCtx:          sys,
-		DestinationCtx:     sys,
-		ImageListSelection: copy.CopyAllImages,
+		SourceCtx:      sys,
+		DestinationCtx: sys,
 	}); err != nil {
 		return fmt.Errorf("copy %s -> %s: %w", srcRef, dstRef, err)
 	}

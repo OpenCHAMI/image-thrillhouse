@@ -48,9 +48,8 @@ func (s RegistrySource) Ref() string {
 }
 
 // FindPublish returns the first publish block of the given type, or an error if
-// none is present. A layer selected for promotion that lacks the requested
-// source/target block is a hard failure, not a silent skip — a mis-tagged
-// manifest should fail loud.
+// none is present. A layer selected for promotion that lacks a registry block is
+// a hard failure, not a silent skip — a mis-tagged manifest should fail loud.
 func FindPublish(publishes []config.Publish, typ string) (config.Publish, error) {
 	for _, p := range publishes {
 		if p.Type == typ {
@@ -60,34 +59,26 @@ func FindPublish(publishes []config.Publish, typ string) (config.Publish, error)
 	return config.Publish{}, fmt.Errorf("layer config has no %q publish block", typ)
 }
 
-// checkDestination fails when dstRef already exists and force is false, so a
-// promotion never silently overwrites a release tag. With force set it skips the
-// probe entirely. Shared by the single-image and image-index paths.
-func checkDestination(ctx context.Context, dstRef string, tlsVerify, force bool) error {
-	if force {
-		return nil
-	}
-	exists, err := registry.RefExists(ctx, dstRef, tlsVerify)
-	if err != nil {
-		return fmt.Errorf("check destination %s: %w", dstRef, err)
-	}
-	if exists {
-		return fmt.Errorf("release tag %s already exists (use --force to overwrite)", dstRef)
-	}
-	return nil
-}
-
 // RetagRegistry promotes a registry artifact to a release tag in the same
 // repository (OCI -> OCI). It is a manifest copy from the content tag to the
 // release tag: the blobs already exist at the destination, so only a new tag is
 // written — the exact tested bytes under a human-readable name, never a rebuild.
+//
+// When force is false and the release tag already exists, it fails rather than
+// overwriting.
 func RetagRegistry(ctx context.Context, src RegistrySource, release string, force bool) error {
 	srcRef := src.Ref()
 	dstRef := src.RefWithTag(release)
 	log := slog.With("component", "promote", "source", srcRef, "dest", dstRef)
 
-	if err := checkDestination(ctx, dstRef, src.TLSVerify, force); err != nil {
-		return err
+	if !force {
+		exists, err := registry.RefExists(ctx, dstRef, src.TLSVerify)
+		if err != nil {
+			return fmt.Errorf("check destination %s: %w", dstRef, err)
+		}
+		if exists {
+			return fmt.Errorf("release tag %s already exists (use --force to overwrite)", dstRef)
+		}
 	}
 
 	log.Info("retagging registry image")
