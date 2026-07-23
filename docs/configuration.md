@@ -302,6 +302,8 @@ Since `{{ .tag }}` is the layer's own hash, it can't feed its own computation: t
 
 Manifests replace the pattern of hand-writing one config per (distro × arch) with a single template plus per-arch var files.
 
+Once a layer's content-tagged image has been built and tested, give it a human-readable release tag with [`promote`](promote.md) — it retags the tested image in place, no rebuild.
+
 ### Minimal example
 
 ```yaml

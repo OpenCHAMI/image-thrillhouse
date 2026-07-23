@@ -115,10 +115,13 @@ For registry and S3 targets, see [docs/configuration.md#publish](docs/configurat
 image-thrillhouse build    --config <path>                    # build a single image
 image-thrillhouse build    --manifest <path> --layer <name>   # build one layer from a manifest
 image-thrillhouse validate --config <path>                    # validate config without building
+image-thrillhouse promote  --manifest <path> --layer <name> --release <tag>   # retag a tested image
 image-thrillhouse version                                     # print version info
 ```
 
 For multi-arch manifests, pass `--arch <x86_64|aarch64|…>`; it defaults to the host arch. See [Manifests](docs/configuration.md#manifests) for the full manifest schema.
+
+Once a content-tagged image has been built and tested, `promote` gives it a human-readable release tag without rebuilding. See [Promoting a release tag](docs/promote.md).
 
 Global flags:
 
@@ -137,6 +140,7 @@ Global flags:
 ## Documentation
 
 - [Configuration reference](docs/configuration.md) — every field in the YAML, with examples
+- [Promoting a release tag](docs/promote.md) — retagging a tested image for release
 - [Container usage](docs/container-usage.md) — running the pre-built image, flag explanations, multi-version DNF
 - [Package manager support](docs/package-managers.md) — backend feature matrix
 - [Example configs](docs/examples.md) — annotated index of `tests/` configs
