@@ -30,25 +30,6 @@ func TestRegistrySourceRef(t *testing.T) {
 	}
 }
 
-func TestOCIPlatform(t *testing.T) {
-	cases := []struct {
-		arch    string
-		wantOS  string
-		wantArc string
-	}{
-		{"x86_64", "linux", "amd64"},
-		{"aarch64", "linux", "arm64"},
-		{"i386", "linux", "386"},
-		{"riscv64", "linux", "riscv64"}, // unknown passes through under linux
-	}
-	for _, c := range cases {
-		osName, ociArch := ociPlatform(c.arch)
-		if osName != c.wantOS || ociArch != c.wantArc {
-			t.Errorf("ociPlatform(%q) = (%q, %q), want (%q, %q)", c.arch, osName, ociArch, c.wantOS, c.wantArc)
-		}
-	}
-}
-
 func TestFindPublish(t *testing.T) {
 	publishes := []config.Publish{
 		{Type: "local"},

@@ -186,8 +186,9 @@ release tag within its registry, without rebuilding it.
 
 The layer's content-addressed image is copied to the release tag (the blobs
 already exist, so only a new tag is written). For a multi-arch layer, omitting
---arch assembles an OCI image index over all arches under one release tag;
-passing --arch retags a single arch (e.g. release-0.0.1-aarch64).
+--arch applies the release tag to every arch (each in its own repo, e.g.
+<image>-x86_64:release-0.0.1 and <image>-aarch64:release-0.0.1); passing --arch
+retags just that arch.
 
 The content tag is recomputed from the manifest, so promote must run from the
 same checkout that built the image.`,
@@ -324,11 +325,11 @@ func runPromote(cmd *cobra.Command, args []string) error {
 
 	log := slog.With("component", "cli")
 
-	// Multi-arch with no --arch means "one release tag for all arches": assemble
-	// an OCI image index. An explicit --arch (or a single-arch manifest) takes
-	// the per-arch retag path.
+	// Multi-arch with no --arch means "apply the release tag to every arch":
+	// retag each arch's image in its own repo. An explicit --arch (or a
+	// single-arch manifest) retags just that one.
 	if dag.IsMultiArch() && archName == "" {
-		return runPromoteIndex(ctx, dag, cliVars, log)
+		return runPromoteMultiArch(ctx, dag, cliVars, log)
 	}
 
 	concreteName, err := resolveManifestLayer(dag)
@@ -386,52 +387,46 @@ func resolveRegistrySource(dag *manifest.DAG, cliVars map[string]interface{}, co
 	}, nil
 }
 
-// runPromoteIndex assembles a single release tag over every arch of a
-// multi-arch layer as an OCI image index. Each arch's single-arch image must
-// already live in one shared repository (url/name); the index references them
-// by digest, which is only valid within a repo, so a per-arch repo split is a
-// hard error pointing the user at --arch (per-arch tags) instead.
-func runPromoteIndex(ctx context.Context, dag *manifest.DAG, cliVars map[string]interface{}, log *slog.Logger) error {
+// runPromoteMultiArch applies the release tag to every arch of a multi-arch
+// layer by retagging each arch's image in its own repo. Every arch is resolved
+// up front (so a config error fails before anything is mutated); a duplicate
+// destination ref across arches is rejected, since that means the release tag
+// can't tell the arches apart. Retags then run sequentially.
+func runPromoteMultiArch(ctx context.Context, dag *manifest.DAG, cliVars map[string]interface{}, log *slog.Logger) error {
 	arches := dag.ArchesFor(layerName)
 	if len(arches) == 0 {
 		return fmt.Errorf("layer %q does not build for multiple arches", layerName)
 	}
 
-	var (
-		url, name string
-		tlsVerify bool
-		members   []promote.IndexMember
-	)
-	for i, arch := range arches {
-		concrete := layerName + "-" + arch
-		src, err := resolveRegistrySource(dag, cliVars, concrete)
+	sources := make([]promote.RegistrySource, 0, len(arches))
+	seen := make(map[string]string, len(arches)) // dest ref -> arch that claimed it
+	for _, arch := range arches {
+		src, err := resolveRegistrySource(dag, cliVars, layerName+"-"+arch)
 		if err != nil {
 			return fmt.Errorf("arch %s: %w", arch, err)
 		}
-		if i == 0 {
-			url, name, tlsVerify = src.URL, src.Name, src.TLSVerify
-		} else if src.URL != url || src.Name != name {
+		dst := src.RefWithTag(releaseTag)
+		if prev, ok := seen[dst]; ok {
 			return fmt.Errorf(
-				"image index requires all arches in one repository, but arch %q resolves to %s/%s while %q resolves to %s/%s; "+
-					"use a shared registry url/name, or promote per-arch with --arch",
-				arch, src.URL, src.Name, arches[0], url, name)
+				"arches %q and %q both retag to %s; the release tag can't distinguish them — "+
+					"put the arch in meta.name (e.g. <image>-{{ .arch }}) so each arch has its own repo",
+				prev, arch, dst)
 		}
-		members = append(members, promote.IndexMember{Arch: arch, Tag: src.Tag})
+		seen[dst] = arch
+		sources = append(sources, src)
 	}
 
-	log.Info("promote resolved",
-		"mode", "index",
-		"layer", layerName,
-		"repo", fmt.Sprintf("%s/%s", url, name),
-		"release", releaseTag,
-		"arches", arches,
-		"force", forcePromote,
-	)
-	if dryRun {
-		log.Info("dry-run: skipping index assembly")
-		return nil
+	log.Info("promote resolved", "layer", layerName, "arches", arches, "release", releaseTag, "force", forcePromote)
+	for i, src := range sources {
+		if dryRun {
+			log.Info("dry-run: would retag", "arch", arches[i], "source", src.Ref(), "dest", src.RefWithTag(releaseTag))
+			continue
+		}
+		if err := promote.RetagRegistry(ctx, src, releaseTag, forcePromote); err != nil {
+			return fmt.Errorf("arch %s: %w", arches[i], err)
+		}
 	}
-	return promote.RetagIndex(ctx, url, name, releaseTag, members, tlsVerify, forcePromote)
+	return nil
 }
 
 // setupLogger configures the global logger with the specified level and format.
