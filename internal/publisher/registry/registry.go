@@ -16,7 +16,11 @@ import (
 
 	"github.com/docker/distribution/registry/api/errcode"
 	v2 "github.com/docker/distribution/registry/api/v2"
+	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"go.podman.io/image/v5/copy"
 	"go.podman.io/image/v5/docker"
+	"go.podman.io/image/v5/manifest"
+	"go.podman.io/image/v5/signature"
 	"go.podman.io/image/v5/types"
 
 	"github.com/travisbcotton/image-thrillhouse/internal/container"
@@ -75,10 +79,7 @@ func (r *RegistryPublisher) Publish(ctx context.Context, c container.Container, 
 // silently treated as "missing" — skip-if-exists should fail loud when it
 // can't tell. Operators who want best-effort behaviour can disable the flag.
 func (r *RegistryPublisher) Exists(ctx context.Context, name string, tags []string) (bool, error) {
-	sys := &types.SystemContext{
-		DockerInsecureSkipTLSVerify: types.NewOptionalBool(!r.tlsVerify),
-		AuthFilePath:                os.Getenv("REGISTRY_AUTH_FILE"),
-	}
+	sys := systemContext(r.tlsVerify)
 
 	for _, t := range tags {
 		ref := fmt.Sprintf("%s/%s:%s", r.url, name, t)
@@ -91,6 +92,155 @@ func (r *RegistryPublisher) Exists(ctx context.Context, name string, tags []stri
 		}
 	}
 	return true, nil
+}
+
+// systemContext builds the containers/image SystemContext used for every
+// registry interaction: TLS verification per the caller's setting and the auth
+// file from REGISTRY_AUTH_FILE (falling back to the containers/image default
+// search when unset). Kept in one place so pushes, existence probes, and copies
+// all authenticate identically.
+func systemContext(tlsVerify bool) *types.SystemContext {
+	return &types.SystemContext{
+		DockerInsecureSkipTLSVerify: types.NewOptionalBool(!tlsVerify),
+		AuthFilePath:                os.Getenv("REGISTRY_AUTH_FILE"),
+	}
+}
+
+// RefExists reports whether a specific fully-qualified reference (e.g.
+// "registry.io/repo/name:release-0.0.1") resolves in its registry. Unlike the
+// RegistryPublisher.Exists method — which probes a name + tag list against a
+// publisher's configured URL — this takes a complete ref, so promote can gate a
+// retag on whether the destination tag already exists.
+//
+// Failure handling matches Exists: a genuine "not found" is (false, nil); any
+// auth/network/transport error surfaces as (false, err) so callers fail loud.
+func RefExists(ctx context.Context, ref string, tlsVerify bool) (bool, error) {
+	return manifestExists(ctx, systemContext(tlsVerify), ref)
+}
+
+// Copy performs a registry-to-registry copy of srcRef to dstRef. For the retag
+// case — same repository, different tag — the destination blobs already exist,
+// so copy.Image detects them and writes only the new manifest/tag: no blob
+// re-upload, effectively a server-side alias of the exact tested bytes.
+//
+// ImageListSelection is CopyAllImages so that a multi-arch image index at the
+// source is copied whole; for a single-arch source it copies the one image.
+// Both endpoints share one SystemContext because retag stays within a single
+// registry's auth/TLS regime.
+func Copy(ctx context.Context, srcRef, dstRef string, tlsVerify bool) error {
+	src, err := docker.ParseReference("//" + srcRef)
+	if err != nil {
+		return fmt.Errorf("parse source ref %q: %w", srcRef, err)
+	}
+	dst, err := docker.ParseReference("//" + dstRef)
+	if err != nil {
+		return fmt.Errorf("parse dest ref %q: %w", dstRef, err)
+	}
+
+	policy, err := signature.DefaultPolicy(nil)
+	if err != nil {
+		return fmt.Errorf("load default signature policy: %w", err)
+	}
+	policyCtx, err := signature.NewPolicyContext(policy)
+	if err != nil {
+		return fmt.Errorf("new policy context: %w", err)
+	}
+	defer func() {
+		if err := policyCtx.Destroy(); err != nil {
+			slog.With("component", "publisher.registry").Warn("destroy policy context", "error", err)
+		}
+	}()
+
+	sys := systemContext(tlsVerify)
+	if _, err := copy.Image(ctx, policyCtx, dst, src, &copy.Options{
+		SourceCtx:          sys,
+		DestinationCtx:     sys,
+		ImageListSelection: copy.CopyAllImages,
+	}); err != nil {
+		return fmt.Errorf("copy %s -> %s: %w", srcRef, dstRef, err)
+	}
+	return nil
+}
+
+// IndexEntry names one platform member of an image index: an existing tag in
+// the target repository (the arch's content tag) and the OCI platform it
+// represents (e.g. os "linux", arch "amd64").
+type IndexEntry struct {
+	Tag  string
+	OS   string
+	Arch string
+}
+
+// PushIndex assembles an OCI image index in repository repo (e.g.
+// "registry.io/openchami/rocky-base") that references each entry's already-
+// pushed manifest, and pushes the index under tag.
+//
+// Every referenced manifest must already exist in repo: an image index stores
+// member digests, which are only meaningful within a single repository, so all
+// members must share one repo. The caller is responsible for enforcing that the
+// per-arch images were pushed to the same repo; here we simply resolve each
+// member's manifest digest and fold it into the index.
+func PushIndex(ctx context.Context, repo, tag string, entries []IndexEntry, tlsVerify bool) error {
+	if len(entries) == 0 {
+		return fmt.Errorf("image index requires at least one member")
+	}
+	sys := systemContext(tlsVerify)
+
+	descriptors := make([]imgspecv1.Descriptor, 0, len(entries))
+	for _, e := range entries {
+		memberRef := repo + ":" + e.Tag
+		srcRef, err := docker.ParseReference("//" + memberRef)
+		if err != nil {
+			return fmt.Errorf("parse member ref %q: %w", memberRef, err)
+		}
+		src, err := srcRef.NewImageSource(ctx, sys)
+		if err != nil {
+			return fmt.Errorf("open member %q: %w", memberRef, err)
+		}
+		manBytes, manType, err := src.GetManifest(ctx, nil)
+		src.Close()
+		if err != nil {
+			return fmt.Errorf("get member manifest %q: %w", memberRef, err)
+		}
+		dig, err := manifest.Digest(manBytes)
+		if err != nil {
+			return fmt.Errorf("digest member %q: %w", memberRef, err)
+		}
+		descriptors = append(descriptors, imgspecv1.Descriptor{
+			MediaType: manType,
+			Digest:    dig,
+			Size:      int64(len(manBytes)),
+			Platform:  &imgspecv1.Platform{OS: e.OS, Architecture: e.Arch},
+		})
+	}
+
+	index := manifest.OCI1IndexFromComponents(descriptors, nil)
+	indexBytes, err := index.Serialize()
+	if err != nil {
+		return fmt.Errorf("serialize image index: %w", err)
+	}
+
+	indexRef := repo + ":" + tag
+	dstRef, err := docker.ParseReference("//" + indexRef)
+	if err != nil {
+		return fmt.Errorf("parse index ref %q: %w", indexRef, err)
+	}
+	dest, err := dstRef.NewImageDestination(ctx, sys)
+	if err != nil {
+		return fmt.Errorf("open index destination %q: %w", indexRef, err)
+	}
+	defer dest.Close()
+
+	// instanceDigest nil => this is the tagged, top-level manifest. For the
+	// docker transport Commit is a no-op (the manifest PUT is the persist), so
+	// a nil top-level image is safe here.
+	if err := dest.PutManifest(ctx, indexBytes, nil); err != nil {
+		return fmt.Errorf("put image index %q: %w", indexRef, err)
+	}
+	if err := dest.Commit(ctx, nil); err != nil {
+		return fmt.Errorf("commit image index %q: %w", indexRef, err)
+	}
+	return nil
 }
 
 // manifestExists returns true if the manifest for ref is reachable in the
