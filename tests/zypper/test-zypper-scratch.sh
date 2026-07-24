@@ -118,13 +118,16 @@ run_test "suse-scratch-full" "zypper/suse-scratch-full.yaml"
 # Test 4: Scratch build with patterns (SUSE's equivalent of groups)
 run_test "suse-scratch-patterns" "zypper/suse-scratch-patterns.yaml"
 
+# Test 5: Scratch build with auto-agree-with-licenses option
+run_test "suse-scratch-with-licenses" "zypper/suse-scratch-with-licenses.yaml"
+
 echo ""
 echo "════════════════════════════════════════════════════════════════"
 echo "Phase 3: Error Handling Tests"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 
-# Test 5: Invalid zypper option (should fail validation)
+# Test 6: Invalid zypper option (should fail validation)
 TOTAL_TESTS=$((TOTAL_TESTS + 1))
 echo "[$TOTAL_TESTS] Testing: invalid-zypper-option"
 if podman run --rm \

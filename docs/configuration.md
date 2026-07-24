@@ -72,6 +72,8 @@ All option values are strings (`"true"` / `"false"` / etc.).
 | `no-recommends` | `"false"` | Don't install recommended packages |
 | `no-gpg-checks` | `"false"` | Skip GPG verification |
 | `force-resolution` | `"false"` | Auto-resolve conflicts |
+| `auto-agree-with-licenses` | `"false"` | Auto-accept package licenses (`--auto-agree-with-licenses`) |
+| `allow-vendor-change` | `"false"` | Allow packages to change vendor (`--allow-vendor-change`) |
 
 **mmdebstrap (Debian/Ubuntu, scratch builds only)**
 | Option | Default | Description |
@@ -101,7 +103,9 @@ All option values are strings (`"true"` / `"false"` / etc.).
 
 Use exactly one of `content`, `src`, or `url` per entry.
 
-**GPG key import.** The optional `gpg` field fetches a key over HTTP (60-second timeout, cancellable) and installs it in the backend's trust store:
+#### GPG key import
+
+The optional `gpg` field fetches a key over HTTP (60-second timeout, cancellable) and installs it in the backend's trust store:
 
 - **RPM-based (dnf, zypper):** imported via `rpm --import`
 - **APT-based (apt, mmdebstrap):** dearmored if ASCII-armored and placed in `/etc/apt/trusted.gpg.d/<name>.gpg`, where `<name>` is derived from the repo file's basename (e.g. `/etc/apt/sources.list.d/toolchain.sources` → `/etc/apt/trusted.gpg.d/toolchain.gpg`). Each repo gets its own keyring file, so multiple apt repos with separate `gpg:` keys no longer overwrite one another. Because the key lands in `trusted.gpg.d` it is trusted globally, so a plain deb822 stanza needs no `Signed-By:` line — supplying `gpg:` is enough.
@@ -290,7 +294,7 @@ S3 publishing reads credentials from the `S3_ACCESS` and `S3_SECRET` environment
 
 `promote-only: true` marks a block as a destination *descriptor* rather than a build-time action: `build` skips it entirely, but [`promote`](promote.md) uses it as a target.
 
-This matters when OCI is your build medium and S3 is only how nodes boot. Every rebuild pushes to the registry, but you only want S3 artifacts for an actual release — yet promote still needs to know the bucket and prefix to compute the object keys. Declaring the s3 block `promote-only` gives it the destination without the per-build upload:
+Use it when OCI is your build medium and S3 is only how nodes boot: every rebuild pushes to the registry, but S3 artifacts are wanted only for an actual release. Marking the s3 block `promote-only` records the bucket/prefix `promote` needs to compute object keys, without uploading a rootfs on every build:
 
 ```yaml
 publish:
