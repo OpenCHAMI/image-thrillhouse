@@ -167,6 +167,14 @@ func (m *MmdebstrapBackend) ImportGPGKeyCommand(keyName string, keyPath string, 
 	return cmdutil.APTImportKey(rootPath, keyName, keyPath)
 }
 
+// WireRepoContent injects `signed-by=/etc/apt/keyrings/<keyName>.gpg` into the
+// repo's source entry so apt actually trusts the key imported for it. See
+// cmdutil.APTWireRepoContent. Repos are written after the bootstrap for this
+// backend, so the wiring lands in the final image for apt at runtime.
+func (m *MmdebstrapBackend) WireRepoContent(content string, keyName string) string {
+	return cmdutil.APTWireRepoContent(content, keyName)
+}
+
 // OutputWriter returns a writer that parses and formats mmdebstrap output.
 // The writer filters mmdebstrap's verbose output and logs relevant information.
 func (m *MmdebstrapBackend) OutputWriter() container.OutputWriter {

@@ -296,6 +296,13 @@ func (z *ZypperBackend) SupportsParentInstall() bool {
 	return true
 }
 
+// WireRepoContent returns the repo content unchanged: Zypper verifies keys via
+// the rpm keyring and the .repo file's own gpgkey= directive, so there is no
+// per-repo keyring path to inject (unlike apt's signed-by= linkage).
+func (z *ZypperBackend) WireRepoContent(content string, keyName string) string {
+	return content
+}
+
 // OutputWriter returns a writer that parses and formats Zypper output.
 // The writer extracts useful information like installed packages and errors.
 func (z *ZypperBackend) OutputWriter() container.OutputWriter {

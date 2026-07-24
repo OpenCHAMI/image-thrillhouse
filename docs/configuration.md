@@ -103,12 +103,23 @@ All option values are strings (`"true"` / `"false"` / etc.).
 
 Use exactly one of `content`, `src`, or `url` per entry.
 
+#### APT repo paths (apt / mmdebstrap)
+
+APT only reads repository definitions from `/etc/apt/sources.list` or from files under `/etc/apt/sources.list.d/` whose names end in **`.list`** (one-line format) or **`.sources`** (deb822 format). A file placed anywhere else — or with any other extension, e.g. a `.repo` name carried over from an RPM config — is *silently ignored*: the build succeeds but the repo does nothing. The config validator rejects such paths for the `apt` and `mmdebstrap` managers, so the mistake surfaces up front instead of as a later "package not found".
+
+```yaml
+  repos:
+    - path: /etc/apt/sources.list.d/toolchain.sources   # ✓ .sources (deb822)
+    - path: /etc/apt/sources.list.d/toolchain.list      # ✓ .list (one-line)
+    - path: /etc/apt/sources.list.d/toolchain.repo      # ✗ rejected — apt would ignore it
+```
+
 #### GPG key import
 
 The optional `gpg` field fetches a key over HTTP (60-second timeout, cancellable) and installs it in the backend's trust store:
 
 - **RPM-based (dnf, zypper):** imported via `rpm --import`
-- **APT-based (apt, mmdebstrap):** dearmored if ASCII-armored and placed in `/etc/apt/trusted.gpg.d/<name>.gpg`, where `<name>` is derived from the repo file's basename (e.g. `/etc/apt/sources.list.d/toolchain.sources` → `/etc/apt/trusted.gpg.d/toolchain.gpg`). Each repo gets its own keyring file, so multiple apt repos with separate `gpg:` keys no longer overwrite one another. Because the key lands in `trusted.gpg.d` it is trusted globally, so a plain deb822 stanza needs no `Signed-By:` line — supplying `gpg:` is enough.
+- **APT-based (apt, mmdebstrap):** dearmored if ASCII-armored and placed in `/etc/apt/keyrings/<name>.gpg`, where `<name>` is derived from the repo file's basename (e.g. `/etc/apt/sources.list.d/toolchain.sources` → `/etc/apt/keyrings/toolchain.gpg`). Each repo gets its own keyring file, so multiple apt repos with separate `gpg:` keys no longer overwrite one another. The repo's source entry is then automatically wired to that keyring with `signed-by=/etc/apt/keyrings/<name>.gpg` (a `Signed-By:` field for deb822 `.sources`), because modern apt only trusts a key a source explicitly names — the deprecated global-trust `/etc/apt/trusted.gpg.d` is no longer used. If your repo content already specifies its own `signed-by=`/`Signed-By:`, that choice is preserved.
 - **Scratch builds:** the trust store under the new root filesystem is targeted on the host
 - **Parent builds:** the key is placed inside the container
 

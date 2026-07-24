@@ -99,6 +99,21 @@ echo ""
 # Validate the parent build configs
 validate_config "debian-parent-validation" "apt/debian-parent.yaml"
 
+# Negative test: a repo file with a .repo extension is placed where apt will
+# never read it, so validation must REJECT it (a passing validate is a failure).
+TOTAL_TESTS=$((TOTAL_TESTS + 1))
+echo "[$TOTAL_TESTS] Testing: reject-bad-apt-repo-path"
+if podman run --rm \
+    -v "${SCRIPT_DIR}/tests:/tests:Z" \
+    image-thrillhouse:test \
+    image-thrillhouse validate --config "/tests/apt/invalid-repo-path.yaml" > "${OUTPUT_DIR}/invalid-repo-path.log" 2>&1; then
+    echo "  ✗ FAILED (should have rejected .repo path for apt)"
+    FAILED_TESTS=$((FAILED_TESTS + 1))
+else
+    echo "  ✓ PASSED (correctly rejected apt repo path apt would ignore)"
+    PASSED_TESTS=$((PASSED_TESTS + 1))
+fi
+
 echo ""
 echo "════════════════════════════════════════════════════════════════"
 echo "Phase 2: APT Parent Image Build Tests"
@@ -116,6 +131,9 @@ run_test "ubuntu-parent-files" "apt/debian-parent-files.yaml"
 
 # Test 4: Parent build with commands only
 run_test "debian-parent-commands" "apt/debian-parent-commands.yaml"
+
+# Test 5: Parent build that adds a repo file (.list) with a pinned signed-by
+run_test "ubuntu-parent-repo" "apt/debian-parent-repo.yaml"
 
 echo ""
 echo "════════════════════════════════════════════════════════════════"

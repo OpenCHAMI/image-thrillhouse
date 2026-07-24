@@ -310,6 +310,13 @@ func (d *DnfBackend) SupportsParentInstall() bool {
 	return true
 }
 
+// WireRepoContent returns the repo content unchanged: DNF verifies keys via
+// the rpm keyring and the .repo file's own gpgkey= directive, so there is no
+// per-repo keyring path to inject (unlike apt's signed-by= linkage).
+func (d *DnfBackend) WireRepoContent(content string, keyName string) string {
+	return content
+}
+
 // OutputWriter returns a custom log writer for DNF output.
 // The writer parses DNF's output to extract package information and errors.
 func (d *DnfBackend) OutputWriter() container.OutputWriter {

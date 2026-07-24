@@ -364,6 +364,62 @@ func TestValidateLayer(t *testing.T) {
 	}
 }
 
+// TestValidateRepoPathForManager verifies apt/mmdebstrap reject repo files
+// that apt would silently ignore, while RPM managers impose no path rule.
+func TestValidateRepoPathForManager(t *testing.T) {
+	tests := []struct {
+		name    string
+		manager string
+		path    string
+		wantErr bool
+	}{
+		// apt-family: accepted locations
+		{"apt sources.list.d .list", "apt", "/etc/apt/sources.list.d/toolchain.list", false},
+		{"apt sources.list.d .sources", "apt", "/etc/apt/sources.list.d/toolchain.sources", false},
+		{"apt main sources.list", "apt", "/etc/apt/sources.list", false},
+		{"mmdebstrap .list", "mmdebstrap", "/etc/apt/sources.list.d/x.list", false},
+		{"mmdebstrap .sources", "mmdebstrap", "/etc/apt/sources.list.d/x.sources", false},
+		// apt-family: rejected — apt would ignore these
+		{"apt .repo extension", "apt", "/etc/apt/sources.list.d/toolchain.repo", true},
+		{"apt no extension", "apt", "/etc/apt/sources.list.d/toolchain", true},
+		{"apt wrong directory", "apt", "/etc/apt/toolchain.list", true},
+		{"apt yum.repos.d path", "apt", "/etc/yum.repos.d/toolchain.repo", true},
+		{"apt nested subdir", "apt", "/etc/apt/sources.list.d/sub/x.list", true},
+		{"mmdebstrap .repo extension", "mmdebstrap", "/etc/apt/sources.list.d/x.repo", true},
+		// RPM managers: no path constraint here
+		{"dnf .repo", "dnf", "/etc/yum.repos.d/base.repo", false},
+		{"dnf arbitrary", "dnf", "/some/other/place.repo", false},
+		{"zypper .repo", "zypper", "/etc/zypp/repos.d/base.repo", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRepoPathForManager(tt.manager, tt.path)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateRepoPathForManager(%q, %q) error = %v, wantErr %v", tt.manager, tt.path, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestValidateLayerRejectsBadAptRepoPath is an end-to-end check that a bad apt
+// repo path surfaces through Layer.Validate (not just the helper).
+func TestValidateLayerRejectsBadAptRepoPath(t *testing.T) {
+	layer := Layer{
+		Manager: Manager{Name: "apt"},
+		Repos: []Repo{
+			{Path: "/etc/apt/sources.list.d/toolchain.repo", Content: "deb http://x bookworm main"},
+		},
+	}
+	if err := layer.Validate(); err == nil {
+		t.Fatal("expected Layer.Validate to reject a .repo path under apt")
+	}
+
+	layer.Repos[0].Path = "/etc/apt/sources.list.d/toolchain.list"
+	if err := layer.Validate(); err != nil {
+		t.Fatalf("expected valid .list path to pass, got: %v", err)
+	}
+}
+
 // TestValidateFile tests File validation
 func TestValidateFile(t *testing.T) {
 	tests := []struct {

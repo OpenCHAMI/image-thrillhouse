@@ -4,7 +4,10 @@
 
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+)
 
 // Validate checks the entire configuration for errors.
 // It recursively validates all sections: Meta, Layer, and their subsections.
@@ -81,9 +84,13 @@ func (l *Layer) Validate() error {
 		}
 	}
 
-	// Validate all repos (same source rules as files)
+	// Validate all repos (same source rules as files), plus any
+	// package-manager-specific rules about where the repo file may live.
 	for _, r := range l.Repos {
 		if err := r.Validate(); err != nil {
+			return err
+		}
+		if err := validateRepoPathForManager(l.Manager.Name, r.Path); err != nil {
 			return err
 		}
 	}
@@ -104,6 +111,35 @@ func (r *Repo) Validate() error {
 		return fmt.Errorf("repo.path is required")
 	}
 	return requireExactlyOneSource("repo", r.Path, r.Content, r.Src, r.URL)
+}
+
+// validateRepoPathForManager enforces package-manager-specific rules on where a
+// repository file may be written.
+//
+// apt (and mmdebstrap, which produces images apt then manages) only reads
+// repository definitions from /etc/apt/sources.list or from files under
+// /etc/apt/sources.list.d/ whose names end in .list (one-line format) or
+// .sources (deb822 format). A file placed anywhere else — or with any other
+// extension, e.g. a .repo file copied from an RPM config — is *silently
+// ignored*: the build succeeds but the repo does nothing. We reject it up
+// front so the mistake surfaces at validation time instead of as a mysterious
+// "package not found" during install.
+//
+// Managers with no such constraint (dnf, zypper) return nil.
+func validateRepoPathForManager(manager, path string) error {
+	switch manager {
+	case "apt", "mmdebstrap":
+		clean := filepath.Clean(path)
+		if clean == "/etc/apt/sources.list" {
+			return nil
+		}
+		ext := filepath.Ext(clean)
+		if filepath.Dir(clean) == "/etc/apt/sources.list.d" && (ext == ".list" || ext == ".sources") {
+			return nil
+		}
+		return fmt.Errorf("repo %q: apt reads only /etc/apt/sources.list or /etc/apt/sources.list.d/*.{list,sources}; a file at this path would be silently ignored", path)
+	}
+	return nil
 }
 
 // Validate checks a File configuration for correctness.

@@ -165,6 +165,13 @@ func (a *AptBackend) ImportGPGKeyCommand(keyName string, keyPath string, rootPat
 	return cmdutil.APTImportKey(rootPath, keyName, keyPath)
 }
 
+// WireRepoContent injects `signed-by=/etc/apt/keyrings/<keyName>.gpg` into the
+// repo's source entry so apt actually trusts the key imported for it. See
+// cmdutil.APTWireRepoContent.
+func (a *AptBackend) WireRepoContent(content string, keyName string) string {
+	return cmdutil.APTWireRepoContent(content, keyName)
+}
+
 // OutputWriter returns a writer that parses and formats APT command output.
 // The writer extracts useful information like installed packages and warnings.
 func (a *AptBackend) OutputWriter() container.OutputWriter {

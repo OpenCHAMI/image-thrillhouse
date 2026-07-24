@@ -90,7 +90,7 @@ type Backend interface {
 	//
 	// keyName is a stable, per-repository identifier the caller derives from
 	// the repo (typically its path basename). deb-based backends use it to
-	// give each key a distinct filename under /etc/apt/trusted.gpg.d/, so two
+	// give each key a distinct keyring file under /etc/apt/keyrings/, so two
 	// repos that each supply a `gpg:` key no longer overwrite one another.
 	// RPM-based backends (dnf, zypper) import into the rpm keyring and ignore
 	// it.
@@ -111,6 +111,21 @@ type Backend interface {
 	//
 	// Returns a command as a slice of arguments, or nil if not supported.
 	ImportGPGKeyCommand(keyName string, keyPath string, rootPath string) []string
+
+	// WireRepoContent optionally rewrites a repository file's content so it
+	// references the GPG key the builder imports for it, identified by the
+	// same keyName later passed to ImportGPGKeyCommand.
+	//
+	// deb-based backends (apt, mmdebstrap) inject `signed-by=/etc/apt/keyrings/
+	// <keyName>.gpg` into the source entry when it doesn't already name a
+	// keyring, because apt only trusts a key a source explicitly references.
+	// RPM-based backends (dnf, zypper) verify keys through the rpm keyring and
+	// so return the content unchanged.
+	//
+	// keyName == "" means the repo has no builder-managed key; implementations
+	// return the content unchanged. The builder only calls this for repos that
+	// declare a `gpg:` key and whose content it has resolved.
+	WireRepoContent(content, keyName string) string
 
 	// OutputWriter returns a writer for capturing package manager output.
 	// This allows backends to format and filter package manager output.
