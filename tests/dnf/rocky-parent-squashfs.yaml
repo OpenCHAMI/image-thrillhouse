@@ -16,4 +16,4 @@ layer:
 publish:
   - type: local
   - type: squashfs
-    path: /output/rocky-parent.squashfs
+    path: /output

@@ -3,7 +3,7 @@
 | Backend | Scratch builds | Parent builds | Groups / patterns | Modules | Configurable options |
 | --- | --- | --- | --- | --- | --- |
 | **DNF** (RHEL, Rocky, AlmaLinux, Fedora) | ✅ (installroot) | ✅ | ✅ groups | ✅ enable/install/disable | 6 options |
-| **Zypper** (openSUSE, SLES) | ✅ | ✅ | ⚠️ patterns only | ❌ | 4 options |
+| **Zypper** (openSUSE, SLES) | ✅ | ✅ | ⚠️ patterns only | ❌ | 6 options |
 | **APT** (Debian, Ubuntu) | ❌ — use mmdebstrap | ✅ | ❌ | ❌ | 3 options |
 | **mmdebstrap** (Debian, Ubuntu) | ✅ (Debian bootstrap) | ❌ | ❌ | ❌ | suite + mirror required |
 

@@ -121,6 +121,12 @@ run_test "rocky-parent-commands" "dnf/rocky-parent-commands.yaml"
 # with excludes; fixture tree lives under tests/dnf/fixtures/sample-tree/)
 run_test "rocky-parent-directories" "dnf/rocky-parent-directories.yaml"
 
+# Test 6: Parent build exercising per-file modes (0755/0600/0644)
+run_test "rocky-parent-files-mode" "dnf/rocky-parent-files-mode.yaml"
+
+# Test 7: Parent build with a squashfs publisher alongside local
+run_test "rocky-parent-squashfs" "dnf/rocky-parent-squashfs.yaml"
+
 echo ""
 echo "════════════════════════════════════════════════════════════════"
 echo "Test Results Summary"

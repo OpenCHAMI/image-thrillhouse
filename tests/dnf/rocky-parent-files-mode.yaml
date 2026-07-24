@@ -22,8 +22,9 @@ layer:
         # Secure configuration
         SECRET_KEY=value
       mode: "0600"
-    - path: /opt/test/.gitkeep
-      content: ""
+    - path: /opt/test/marker
+      content: |
+        placeholder
       mode: "0644"
   actions:
     install:

@@ -86,6 +86,7 @@ Unit-tested packages (run with `go test ./...`, or add `-tags containers_image_o
 - `internal/backend/mmdebstrap` - mmdebstrap backend
 - `internal/builder` - helpers plus fake-container tests (label application before publish, empty-root install ordering, ansible staging)
 - `internal/manifest` / `internal/tag` - DAG resolution and deterministic tag hashing (including `--var` overrides)
+- `internal/promote` - content-tag recomputation and registry/S3 target resolution for the `promote` command
 - `internal/container` - stream log writers and handlers
 - `internal/fetch` - HTTP fetch with ctx + timeout + size caps
 - `internal/oscap` - OVAL fetch/decompress caps

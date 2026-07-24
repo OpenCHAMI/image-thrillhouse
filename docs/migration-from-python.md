@@ -43,5 +43,7 @@ See [configuration.md](configuration.md) for the full Go format.
 - ✅ OpenSCAP security scanning (new)
 - ✅ Package removal (new)
 - ✅ GPG key import for repositories (new)
+- ✅ Recursive host-directory copies (`layer.directories`, new)
 - ✅ Image labels/metadata
-- ❌ Ansible layer support (intentionally not supported; do it as a post-build step — see [`examples/ansible-workflow/`](../examples/ansible-workflow/))
+- ✅ Ansible playbooks as a build command (in-container `ansible:` command; new). A post-build workflow is also supported — see [`examples/ansible-workflow/`](../examples/ansible-workflow/)
+- ✅ Multi-arch manifests + `promote` release tagging (new; no Python equivalent)

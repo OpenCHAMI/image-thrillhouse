@@ -56,6 +56,7 @@ See [`TESTING.md`](../TESTING.md) for the full unit-testing guide.
 - ✅ `internal/backend/mmdebstrap`
 - ✅ `internal/builder` — helpers plus fake-container tests (label application before publish, empty-root install ordering)
 - ✅ `internal/manifest`, `internal/tag` — DAG resolution, render-based deterministic tag hashing
+- ✅ `internal/promote` — content-tag recomputation and target resolution for `promote`
 - ✅ `internal/container`, `internal/fetch`, `internal/oscap`, `internal/publisher/*`
 - ⚠️ `internal/buildah` — covered only by the integration suite below
 
@@ -114,6 +115,8 @@ image-thrillhouse/
 │   │   └── labels.go
 │   ├── oscap/               # OpenSCAP security scanning
 │   │   └── oscap.go
+│   ├── promote/             # Retag/materialize a tested image (promote command)
+│   │   └── promote.go
 │   └── publisher/           # Image publishing
 │       ├── publisher.go     # Publisher interface
 │       ├── local/

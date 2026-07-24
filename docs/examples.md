@@ -12,6 +12,9 @@ Complete, runnable configs live under [`tests/`](../tests/). They double as the 
 - [`tests/dnf/rocky-parent-groups.yaml`](../tests/dnf/rocky-parent-groups.yaml) — Parent build using groups
 - [`tests/dnf/rocky-parent-modules.yaml`](../tests/dnf/rocky-parent-modules.yaml) — Parent build using DNF modules
 - [`tests/dnf/rocky-parent-commands.yaml`](../tests/dnf/rocky-parent-commands.yaml) — Parent build with run/script commands
+- [`tests/dnf/rocky-parent-directories.yaml`](../tests/dnf/rocky-parent-directories.yaml) — Parent build copying a host directory tree (`layer.directories`)
+- [`tests/dnf/rocky-parent-files-mode.yaml`](../tests/dnf/rocky-parent-files-mode.yaml) — Parent build with per-file permission modes
+- [`tests/dnf/rocky-parent-squashfs.yaml`](../tests/dnf/rocky-parent-squashfs.yaml) — Parent build with a SquashFS publisher alongside local
 
 ## APT / mmdebstrap (Debian / Ubuntu)
 
@@ -28,6 +31,7 @@ Complete, runnable configs live under [`tests/`](../tests/). They double as the 
 
 - [`tests/zypper/suse-scratch.yaml`](../tests/zypper/suse-scratch.yaml) — Minimal scratch build
 - [`tests/zypper/suse-scratch-options.yaml`](../tests/zypper/suse-scratch-options.yaml) — Scratch with Zypper backend options
+- [`tests/zypper/suse-scratch-with-licenses.yaml`](../tests/zypper/suse-scratch-with-licenses.yaml) — Scratch with `auto-agree-with-licenses`
 - [`tests/zypper/suse-scratch-patterns.yaml`](../tests/zypper/suse-scratch-patterns.yaml) — Scratch using SUSE patterns (groups)
 - [`tests/zypper/suse-scratch-full.yaml`](../tests/zypper/suse-scratch-full.yaml) — Scratch with repos, files, commands
 - [`tests/zypper/suse-parent.yaml`](../tests/zypper/suse-parent.yaml) — Parent build
