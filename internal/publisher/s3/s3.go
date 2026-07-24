@@ -8,8 +8,10 @@ package s3
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -18,6 +20,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/travisbcotton/image-thrillhouse/internal/container"
 	"github.com/travisbcotton/image-thrillhouse/internal/fsutil"
@@ -104,7 +108,7 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	log.Info("found kernel version", "version", kernelVersion)
 
 	// Step 2: Find initramfs
-	initramfsPath, _, err := s.findInitramfs(mountPath, kernelVersion)
+	initramfsPath, err := s.findInitramfs(mountPath, kernelVersion)
 	if err != nil {
 		return fmt.Errorf("find initramfs: %w", err)
 	}
@@ -174,32 +178,25 @@ func (s *S3Publisher) findKernelVersion(mountPath string) (string, error) {
 	return "", fmt.Errorf("no kernel versions found in /lib/modules")
 }
 
-// findInitramfs finds the initramfs file for the given kernel version
-func (s *S3Publisher) findInitramfs(mountPath, kernelVersion string) (string, string, error) {
+// findInitramfs returns the path to the initramfs file for the given kernel
+// version, trying the RHEL/Rocky/Fedora and Debian/Ubuntu naming variants.
+func (s *S3Publisher) findInitramfs(mountPath, kernelVersion string) (string, error) {
 	bootPath := filepath.Join(mountPath, "boot")
 
-	// Try initramfs-<version>.img (RHEL/Rocky/Fedora style)
-	initramfsName := fmt.Sprintf("initramfs-%s.img", kernelVersion)
-	initramfsPath := filepath.Join(bootPath, initramfsName)
-	if _, err := os.Stat(initramfsPath); err == nil {
-		return initramfsPath, initramfsName, nil
+	// initramfs-<version>.img (RHEL/Rocky/Fedora), initrd-<version> and
+	// initrd.img-<version> (Debian/Ubuntu variants).
+	for _, name := range []string{
+		fmt.Sprintf("initramfs-%s.img", kernelVersion),
+		fmt.Sprintf("initrd-%s", kernelVersion),
+		fmt.Sprintf("initrd.img-%s", kernelVersion),
+	} {
+		p := filepath.Join(bootPath, name)
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
 	}
 
-	// Try initrd-<version> (Debian/Ubuntu style)
-	initramfsName = fmt.Sprintf("initrd-%s", kernelVersion)
-	initramfsPath = filepath.Join(bootPath, initramfsName)
-	if _, err := os.Stat(initramfsPath); err == nil {
-		return initramfsPath, initramfsName, nil
-	}
-
-	// Try initrd.img-<version> (another Debian variant)
-	initramfsName = fmt.Sprintf("initrd.img-%s", kernelVersion)
-	initramfsPath = filepath.Join(bootPath, initramfsName)
-	if _, err := os.Stat(initramfsPath); err == nil {
-		return initramfsPath, initramfsName, nil
-	}
-
-	return "", "", fmt.Errorf("no initramfs found for kernel %s", kernelVersion)
+	return "", fmt.Errorf("no initramfs found for kernel %s", kernelVersion)
 }
 
 // createSquashFS creates a SquashFS image in a temporary location
@@ -264,24 +261,55 @@ func (s *S3Publisher) uploadFile(ctx context.Context, uploader *manager.Uploader
 	return nil
 }
 
-// Exists is intentionally a "don't know" stub for the s3 publisher.
+// Exists reports whether every tag is already materialized in S3. It probes the
+// rootfs key for each tag (objectKeys) — the tag-identifying artifact — and
+// short-circuits on the first missing one. The key is fully determined by
+// prefix + tag + arch, so no container is needed.
 //
-// Publish writes <prefix><os>-<name>-<tag> as the rootfs key, where <os> is
-// detected from the container filesystem (detectOS) AFTER the container has
-// been created. There is no way to construct the key from (name, tag) alone
-// at Exists time without either:
-//
-//   - Materialising a throwaway container just to detect the OS (defeats the
-//     point of skip-if-exists), or
-//   - Adding an explicit os-name field to the publish config so the lookup
-//     key is knowable up-front, or
-//   - Falling back to ListObjectsV2 with prefix matching, which is slower and
-//     racier.
-//
-// Returning false is the conservative answer: when an s3 publisher is in the
-// list, skip-if-exists will rebuild rather than silently treating the image
-// as cached. Real existence support should land alongside one of the design
-// choices above.
+// A missing object surfaces as (false, nil); any other error (auth, DNS, TLS,
+// 5xx) surfaces as (false, err) so callers fail loud rather than silently
+// rebuilding or overwriting on an infra outage. name is unused — the S3 key
+// layout is keyed by tag and arch, not by image name.
 func (s *S3Publisher) Exists(ctx context.Context, name string, tags []string) (bool, error) {
-	return false, nil
+	if len(tags) == 0 {
+		return false, nil
+	}
+	client, err := s.createS3Client(ctx)
+	if err != nil {
+		return false, fmt.Errorf("create S3 client: %w", err)
+	}
+	for _, tag := range tags {
+		rootfsKey, _, _ := s.objectKeys(tag)
+		ok, err := s.objectExists(ctx, client, rootfsKey)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// objectExists reports whether key is present in the bucket via HeadObject. A
+// 404 (typed NotFound, or a bare HTTP 404 from S3-compatible services whose HEAD
+// response carries no error body) is (false, nil); anything else is a real error.
+func (s *S3Publisher) objectExists(ctx context.Context, client *s3.Client, key string) (bool, error) {
+	_, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err == nil {
+		return true, nil
+	}
+
+	var notFound *s3types.NotFound
+	if errors.As(err, &notFound) {
+		return false, nil
+	}
+	var respErr *smithyhttp.ResponseError
+	if errors.As(err, &respErr) && respErr.HTTPStatusCode() == http.StatusNotFound {
+		return false, nil
+	}
+	return false, fmt.Errorf("head object %s: %w", key, err)
 }

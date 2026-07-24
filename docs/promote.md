@@ -110,6 +110,15 @@ image-thrillhouse promote \
 Multi-arch materializes each arch into its own `<arch>` segment, so there is no
 collision — arches run sequentially. Pass `--arch` to materialize just one.
 
+By default promote **fails if the release is already materialized** (probed with
+a `HeadObject` on the rootfs key before the pull, so it's cheap):
+
+```
+Error: release "release-0.0.1" already materialized in s3 (use --force to overwrite)
+```
+
+Pass `--force` to re-materialize and overwrite the objects.
+
 > Cross-arch note: materializing every arch in one invocation pulls and mounts
 > each arch's image on the host running `promote`. If your environment can't pull
 > a foreign-arch image, run `promote --to s3 --arch <arch>` on a host of that arch
@@ -124,7 +133,7 @@ collision — arches run sequentially. Pass `--arch` to materialize just one.
 | `--arch` | Target arch for a multi-arch manifest. Omit to promote every arch. |
 | `--release` | The release tag to write (required), e.g. `release-0.0.1`. |
 | `--to` | `registry` (default, retag) or `s3` (materialize boot artifacts). |
-| `--force` | (registry) Overwrite the release tag if it already exists; otherwise promote fails. |
+| `--force` | Overwrite an existing release if it already exists (registry tag, or s3 objects); otherwise promote fails. |
 | `--dry-run` | Resolve and print what would happen, without contacting the target. |
 | `--var-file`, `--var` | Same var inputs as `build`, so the recomputed content tag matches what was built. |
 
@@ -143,8 +152,6 @@ collision — arches run sequentially. Pass `--arch` to materialize just one.
   the registry. There is no S3→S3 or S3→registry path.
 - **`--to registry` is a same-repo retag**, not a copy between repositories, and
   not a manifest list — multi-arch tags each arch's separate image.
-- **`--force` applies to the registry target.** For `--to s3`, materializing the
-  same release re-uploads the objects (overwrites the directory).
 - **Same checkout.** The content tag is recomputed from the manifest, so promote
   must see the same manifest, var files, and referenced content that produced the
   build.

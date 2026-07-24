@@ -493,6 +493,7 @@ func promoteS3One(ctx context.Context, dag *manifest.DAG, cliVars map[string]int
 		"bucket", s3Block.Bucket,
 		"prefix", s3Block.Prefix,
 		"arch", layer.Arch,
+		"force", forcePromote,
 	)
 	if dryRun {
 		log.Info("dry-run: skipping materialize")
@@ -503,7 +504,7 @@ func promoteS3One(ctx context.Context, dag *manifest.DAG, cliVars map[string]int
 	if err != nil {
 		return err
 	}
-	return promote.MaterializeToS3(ctx, src, dst, cfg.Meta.Name, releaseTag)
+	return promote.MaterializeToS3(ctx, src, dst, cfg.Meta.Name, releaseTag, forcePromote)
 }
 
 // runPromoteS3MultiArch projects every arch of a multi-arch layer into S3 under
@@ -635,7 +636,7 @@ func init() {
 	promoteCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 	promoteCmd.Flags().StringVar(&releaseTag, "release", "", "release tag to publish under, e.g. release-0.0.1 (required)")
 	promoteCmd.Flags().StringVar(&toType, "to", "registry", "promotion target: registry (retag) or s3 (materialize)")
-	promoteCmd.Flags().BoolVar(&forcePromote, "force", false, "overwrite an existing release tag instead of failing")
+	promoteCmd.Flags().BoolVar(&forcePromote, "force", false, "overwrite an existing release (registry tag or s3 objects) instead of failing")
 	promoteCmd.Flags().BoolVar(&dryRun, "dry-run", false, "resolve and print actions without contacting the target")
 
 	// Register all subcommands under the root command

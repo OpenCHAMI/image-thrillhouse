@@ -103,8 +103,23 @@ func RetagRegistry(ctx context.Context, src RegistrySource, release string, forc
 // credentials; name is passed through to Publish; release is the tag the S3
 // object layout is keyed under. Labels are nil — the S3 publisher does not apply
 // OCI labels.
-func MaterializeToS3(ctx context.Context, src RegistrySource, dst publisher.Publisher, name, release string) error {
+//
+// When force is false and the release is already materialized, it fails rather
+// than overwriting — probed via the publisher's Exists before the (expensive)
+// pull and squashfs.
+func MaterializeToS3(ctx context.Context, src RegistrySource, dst publisher.Publisher, name, release string, force bool) error {
 	log := slog.With("component", "promote", "source", src.Ref(), "release", release)
+
+	if !force {
+		exists, err := dst.Exists(ctx, name, []string{release})
+		if err != nil {
+			return fmt.Errorf("check destination: %w", err)
+		}
+		if exists {
+			return fmt.Errorf("release %q already materialized in s3 (use --force to overwrite)", release)
+		}
+	}
+
 	log.Info("materializing registry image to s3")
 
 	// Pull + mount the tested image. NewContainer returns a generic
