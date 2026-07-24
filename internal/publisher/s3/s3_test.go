@@ -15,6 +15,7 @@ func TestNew(t *testing.T) {
 		endpoint  string
 		bucket    string
 		prefix    string
+		arch      string
 		accessKey string
 		secretKey string
 	}{
@@ -23,6 +24,7 @@ func TestNew(t *testing.T) {
 			endpoint:  "https://s3.amazonaws.com",
 			bucket:    "boot-images",
 			prefix:    "compute/",
+			arch:      "x86_64",
 			accessKey: "AKIAIOSFODNN7EXAMPLE",
 			secretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 		},
@@ -31,14 +33,16 @@ func TestNew(t *testing.T) {
 			endpoint:  "http://localhost:9000",
 			bucket:    "images",
 			prefix:    "test/",
+			arch:      "aarch64",
 			accessKey: "minioadmin",
 			secretKey: "minioadmin",
 		},
 		{
-			name:      "custom S3",
+			name:      "custom S3, no arch",
 			endpoint:  "https://s3.example.com",
 			bucket:    "boot",
 			prefix:    "",
+			arch:      "",
 			accessKey: "access",
 			secretKey: "secret",
 		},
@@ -46,7 +50,7 @@ func TestNew(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pub := New(tt.endpoint, tt.bucket, tt.prefix, tt.accessKey, tt.secretKey)
+			pub := New(tt.endpoint, tt.bucket, tt.prefix, tt.arch, tt.accessKey, tt.secretKey)
 			if pub == nil {
 				t.Fatal("New() returned nil")
 			}
@@ -59,6 +63,9 @@ func TestNew(t *testing.T) {
 			if pub.prefix != tt.prefix {
 				t.Errorf("prefix = %v, want %v", pub.prefix, tt.prefix)
 			}
+			if pub.arch != tt.arch {
+				t.Errorf("arch = %v, want %v", pub.arch, tt.arch)
+			}
 			if pub.accessKey != tt.accessKey {
 				t.Errorf("accessKey = %v, want %v", pub.accessKey, tt.accessKey)
 			}
@@ -70,82 +77,64 @@ func TestNew(t *testing.T) {
 }
 
 func TestS3Publisher_Type(t *testing.T) {
-	pub := New("https://s3.amazonaws.com", "bucket", "prefix/", "key", "secret")
+	pub := New("https://s3.amazonaws.com", "bucket", "prefix/", "x86_64", "key", "secret")
 
 	if _, ok := interface{}(pub).(*S3Publisher); !ok {
 		t.Error("New() did not return *S3Publisher")
 	}
 }
 
-func TestDetectOS(t *testing.T) {
-	// Just verify New() works
-	pub := New("", "", "", "", "")
-	if pub == nil {
-		t.Fatal("New() returned nil")
-	}
-
+func TestObjectKeys(t *testing.T) {
 	tests := []struct {
-		name       string
-		content    string
-		expectedID string
-		wantErr    bool
+		name          string
+		prefix        string
+		arch          string
+		tag           string
+		wantRootfs    string
+		wantKernel    string
+		wantInitramfs string
 	}{
 		{
-			name: "rocky linux",
-			content: `NAME="Rocky Linux"
-VERSION="9.5"
-ID=rocky
-ID_LIKE="rhel centos fedora"
-VERSION_ID="9.5"`,
-			expectedID: "rocky",
-			wantErr:    false,
+			name:          "prefix and arch",
+			prefix:        "compute/",
+			arch:          "x86_64",
+			tag:           "release-0.0.1",
+			wantRootfs:    "compute/release-0.0.1/x86_64/rootfs.squashfs",
+			wantKernel:    "compute/release-0.0.1/x86_64/vmlinuz",
+			wantInitramfs: "compute/release-0.0.1/x86_64/initramfs.img",
 		},
 		{
-			name: "ubuntu",
-			content: `NAME="Ubuntu"
-VERSION="22.04"
-ID=ubuntu
-ID_LIKE=debian
-VERSION_ID="22.04"`,
-			expectedID: "ubuntu",
-			wantErr:    false,
+			name:          "no arch segment when arch empty",
+			prefix:        "compute/",
+			arch:          "",
+			tag:           "abc123",
+			wantRootfs:    "compute/abc123/rootfs.squashfs",
+			wantKernel:    "compute/abc123/vmlinuz",
+			wantInitramfs: "compute/abc123/initramfs.img",
 		},
 		{
-			name: "with quotes",
-			content: `NAME="AlmaLinux"
-ID="almalinux"
-VERSION_ID="9"`,
-			expectedID: "almalinux",
-			wantErr:    false,
-		},
-		{
-			name:       "missing ID",
-			content:    `NAME="Unknown"\nVERSION="1.0"`,
-			expectedID: "",
-			wantErr:    true,
+			name:          "no prefix",
+			prefix:        "",
+			arch:          "aarch64",
+			tag:           "release-1.0",
+			wantRootfs:    "release-1.0/aarch64/rootfs.squashfs",
+			wantKernel:    "release-1.0/aarch64/vmlinuz",
+			wantInitramfs: "release-1.0/aarch64/initramfs.img",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// We can't easily test this without creating temp files
-			// but we can verify the logic works with real content
-			if !tt.wantErr {
-				lines := strings.Split(tt.content, "\n")
-				found := false
-				for _, line := range lines {
-					if strings.HasPrefix(line, "ID=") {
-						osID := strings.TrimPrefix(line, "ID=")
-						osID = strings.Trim(osID, "\"")
-						if osID == tt.expectedID {
-							found = true
-						}
-						break
-					}
-				}
-				if !found {
-					t.Errorf("Failed to extract ID=%s from content", tt.expectedID)
-				}
+			pub := New("", "", tt.prefix, tt.arch, "", "")
+			rootfs, kernel, initramfs := pub.objectKeys(tt.tag)
+			if rootfs != tt.wantRootfs {
+				t.Errorf("rootfs = %q, want %q", rootfs, tt.wantRootfs)
+			}
+			if kernel != tt.wantKernel {
+				t.Errorf("kernel = %q, want %q", kernel, tt.wantKernel)
+			}
+			if initramfs != tt.wantInitramfs {
+				t.Errorf("initramfs = %q, want %q", initramfs, tt.wantInitramfs)
 			}
 		})
 	}
@@ -213,51 +202,5 @@ func TestVmlinuzPattern(t *testing.T) {
 
 	if !strings.Contains(expected, kver) {
 		t.Error("vmlinuz pattern should contain kernel version")
-	}
-}
-
-func TestS3KeyGeneration(t *testing.T) {
-	tests := []struct {
-		name        string
-		prefix      string
-		osName      string
-		imageName   string
-		tag         string
-		expectedKey string
-	}{
-		{
-			name:        "with prefix",
-			prefix:      "compute/base/",
-			osName:      "rocky",
-			imageName:   "rocky-base",
-			tag:         "9.5",
-			expectedKey: "compute/base/rocky-rocky-base-9.5",
-		},
-		{
-			name:        "without prefix",
-			prefix:      "",
-			osName:      "ubuntu",
-			imageName:   "ubuntu-base",
-			tag:         "22.04",
-			expectedKey: "ubuntu-ubuntu-base-22.04",
-		},
-		{
-			name:        "efi-images path",
-			prefix:      "compute/",
-			osName:      "rocky",
-			imageName:   "compute",
-			tag:         "1.0",
-			expectedKey: "efi-images/compute/vmlinuz-5.14.0",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Test rootfs key
-			rootfsKey := tt.prefix + tt.osName + "-" + tt.imageName + "-" + tt.tag
-			if !strings.Contains(rootfsKey, tt.imageName) {
-				t.Errorf("Key should contain image name: %s", rootfsKey)
-			}
-		})
 	}
 }

@@ -277,13 +277,23 @@ publish:
     url: registry.example.com/myorg
     tls-verify: false          # Optional: disable TLS verification
 
-  - type: s3                   # Upload to S3-compatible storage
+  - type: s3                   # Upload boot artifacts to S3-compatible storage
     url: https://s3.example.com
     bucket: boot-images
     prefix: compute/
 ```
 
 S3 publishing reads credentials from the `S3_ACCESS` and `S3_SECRET` environment variables.
+
+The S3 publisher extracts the rootfs (SquashFS), kernel, and initramfs and uploads them as a self-contained directory per tag:
+
+```
+<prefix><tag>/<arch>/rootfs.squashfs
+<prefix><tag>/<arch>/vmlinuz
+<prefix><tag>/<arch>/initramfs.img
+```
+
+`<tag>` is `meta.tags[0]` (the content tag in a manifest build). The `<arch>` segment is present for multi-arch manifest builds and omitted otherwise. The same layout is produced whether an image reaches S3 via a build-time `s3` publish block or via [`promote --to s3`](promote.md).
 
 ## Manifests
 

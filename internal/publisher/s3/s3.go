@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -30,6 +29,7 @@ type S3Publisher struct {
 	endpoint  string // S3 endpoint URL
 	bucket    string // S3 bucket name
 	prefix    string // S3 key prefix
+	arch      string // target arch for the key layout ("" omits the arch segment)
 	accessKey string // AWS access key ID
 	secretKey string // AWS secret access key
 }
@@ -40,28 +40,48 @@ type S3Publisher struct {
 // Parameters:
 //   - endpoint: S3 endpoint URL (e.g., "https://s3.amazonaws.com" or custom S3 service)
 //   - bucket: S3 bucket name
-//   - prefix: Key prefix for uploaded objects (e.g., "compute/base/")
+//   - prefix: Key prefix for uploaded objects (e.g., "compute/")
+//   - arch: target architecture for the key layout (e.g. "x86_64"); "" omits the
+//     arch path segment (single-arch / non-manifest builds)
 //   - accessKey: AWS access key ID or S3-compatible access key
 //   - secretKey: AWS secret access key or S3-compatible secret
-func New(endpoint, bucket, prefix, accessKey, secretKey string) *S3Publisher {
+func New(endpoint, bucket, prefix, arch, accessKey, secretKey string) *S3Publisher {
 	return &S3Publisher{
 		endpoint:  endpoint,
 		bucket:    bucket,
 		prefix:    prefix,
+		arch:      arch,
 		accessKey: accessKey,
 		secretKey: secretKey,
 	}
 }
 
+// objectKeys returns the S3 keys for a tag's three boot artifacts, laid out as
+//
+//	<prefix><tag>/<arch>/rootfs.squashfs
+//	<prefix><tag>/<arch>/vmlinuz
+//	<prefix><tag>/<arch>/initramfs.img
+//
+// Everything for a tag lives under one directory, so a materialized image is
+// self-contained and immutable — a different tag is a different directory, and
+// there is no shared kernel-version-keyed object a later build can overwrite.
+// The arch segment is omitted when arch is empty (single-arch / non-manifest).
+func (s *S3Publisher) objectKeys(tag string) (rootfs, kernel, initramfs string) {
+	base := s.prefix + tag + "/"
+	if s.arch != "" {
+		base += s.arch + "/"
+	}
+	return base + "rootfs.squashfs", base + "vmlinuz", base + "initramfs.img"
+}
+
 // Publish creates a SquashFS image and uploads it to S3 along with kernel and initramfs.
 //
-// The upload structure is:
-//   - s3://<bucket>/<prefix><os>-<name>-<tag> (SquashFS rootfs)
-//   - s3://<bucket>/efi-images/<prefix>vmlinuz-<kver> (kernel)
-//   - s3://<bucket>/efi-images/<prefix>initramfs-<kver>.img (initramfs)
+// The upload structure is a self-contained directory per tag (see objectKeys):
+//   - s3://<bucket>/<prefix><tag>/<arch>/rootfs.squashfs
+//   - s3://<bucket>/<prefix><tag>/<arch>/vmlinuz
+//   - s3://<bucket>/<prefix><tag>/<arch>/initramfs.img
 //
-// This format is compatible with network booting systems that expect separate
-// kernel, initramfs, and rootfs files.
+// The <arch> segment is omitted when the publisher has no arch configured.
 //
 // Note: Labels are not uploaded to S3 as they are only relevant for OCI images.
 func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
@@ -84,11 +104,11 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	log.Info("found kernel version", "version", kernelVersion)
 
 	// Step 2: Find initramfs
-	initramfsPath, initramfsName, err := s.findInitramfs(mountPath, kernelVersion)
+	initramfsPath, _, err := s.findInitramfs(mountPath, kernelVersion)
 	if err != nil {
 		return fmt.Errorf("find initramfs: %w", err)
 	}
-	log.Info("found initramfs", "path", initramfsPath, "name", initramfsName)
+	log.Info("found initramfs", "path", initramfsPath)
 
 	// Step 3: Find vmlinuz
 	vmlinuzPath := filepath.Join(mountPath, "boot", fmt.Sprintf("vmlinuz-%s", kernelVersion))
@@ -105,14 +125,7 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	defer os.Remove(squashfsPath)
 	log.Info("created squashfs", "path", squashfsPath)
 
-	// Step 5: Detect OS for naming
-	osName, err := s.detectOS(mountPath)
-	if err != nil {
-		log.Warn("could not detect os, using 'linux'", "error", err)
-		osName = "linux"
-	}
-
-	// Step 6: Create S3 client
+	// Step 5: Create S3 client
 	client, err := s.createS3Client(ctx)
 	if err != nil {
 		return fmt.Errorf("create S3 client: %w", err)
@@ -120,22 +133,21 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 
 	uploader := manager.NewUploader(client)
 
-	// Step 7: Upload rootfs
-	rootfsKey := fmt.Sprintf("%s%s-%s-%s", s.prefix, osName, name, tag)
+	rootfsKey, vmlinuzKey, initramfsKey := s.objectKeys(tag)
+
+	// Step 6: Upload rootfs
 	if err := s.uploadFile(ctx, uploader, squashfsPath, rootfsKey); err != nil {
 		return fmt.Errorf("upload rootfs: %w", err)
 	}
 	log.Info("uploaded rootfs", "key", rootfsKey)
 
-	// Step 8: Upload kernel
-	vmlinuzKey := fmt.Sprintf("efi-images/%svmlinuz-%s", s.prefix, kernelVersion)
+	// Step 7: Upload kernel
 	if err := s.uploadFile(ctx, uploader, vmlinuzPath, vmlinuzKey); err != nil {
 		return fmt.Errorf("upload vmlinuz: %w", err)
 	}
 	log.Info("uploaded vmlinuz", "key", vmlinuzKey)
 
-	// Step 9: Upload initramfs
-	initramfsKey := fmt.Sprintf("efi-images/%s%s", s.prefix, initramfsName)
+	// Step 8: Upload initramfs
 	if err := s.uploadFile(ctx, uploader, initramfsPath, initramfsKey); err != nil {
 		return fmt.Errorf("upload initramfs: %w", err)
 	}
@@ -204,26 +216,6 @@ func (s *S3Publisher) createSquashFS(ctx context.Context, mountPath, name, tag s
 		return "", err
 	}
 	return squashfsPath, nil
-}
-
-// detectOS tries to detect the OS name from /etc/os-release
-func (s *S3Publisher) detectOS(mountPath string) (string, error) {
-	osReleasePath := filepath.Join(mountPath, "etc", "os-release")
-	content, err := os.ReadFile(osReleasePath)
-	if err != nil {
-		return "", err
-	}
-
-	lines := strings.Split(string(content), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "ID=") {
-			osID := strings.TrimPrefix(line, "ID=")
-			osID = strings.Trim(osID, "\"")
-			return osID, nil
-		}
-	}
-
-	return "", fmt.Errorf("ID not found in os-release")
 }
 
 // createS3Client creates an AWS SDK v2 S3 client with custom endpoint support
