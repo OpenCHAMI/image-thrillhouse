@@ -6,13 +6,16 @@
 // human-readable release tags without rebuilding them.
 //
 // A release tag must point at the exact bytes that were tested, so promotion
-// is always a copy of published content — never a build.
+// is always a copy or re-projection of published content — never a build.
 //
-// The one operation is RetagRegistry: a manifest copy of one content-tagged
-// image to a release tag in the same repository. The blobs already exist, so it
-// writes only a new tag — the exact tested bytes under a human-readable name.
-// Multi-arch is just this applied once per arch (each arch has its own repo,
-// e.g. <image>-x86_64 / <image>-aarch64), driven by the caller.
+//   - RetagRegistry (OCI -> OCI): a manifest copy of one content-tagged image to
+//     a release tag in the same repository. The blobs already exist, so it writes
+//     only a new tag. Multi-arch is this applied once per arch (each arch has its
+//     own repo, e.g. <image>-x86_64 / <image>-aarch64), driven by the caller.
+//
+//   - MaterializeToS3 (OCI -> S3): pull the content-tagged image, mount it, and
+//     project it into S3 boot artifacts (rootfs/kernel/initramfs) under the
+//     release tag via the S3 publisher. A re-package of tested bytes, not a build.
 package promote
 
 import (
@@ -20,7 +23,9 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/travisbcotton/image-thrillhouse/internal/buildah"
 	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/travisbcotton/image-thrillhouse/internal/publisher"
 	"github.com/travisbcotton/image-thrillhouse/internal/publisher/registry"
 )
 
@@ -86,5 +91,51 @@ func RetagRegistry(ctx context.Context, src RegistrySource, release string, forc
 		return err
 	}
 	log.Info("retagged registry image")
+	return nil
+}
+
+// MaterializeToS3 projects a registry image into S3 boot artifacts under a
+// release tag. It pulls the content-tagged image, mounts its rootfs, and runs
+// the S3 publisher's extraction (SquashFS + kernel + initramfs) unchanged — a
+// re-package of already-tested bytes, never a rebuild.
+//
+// dst is a constructed S3 publisher carrying the target bucket/prefix/arch and
+// credentials; name is passed through to Publish; release is the tag the S3
+// object layout is keyed under. Labels are nil — the S3 publisher does not apply
+// OCI labels.
+//
+// When force is false and the release is already materialized, it fails rather
+// than overwriting — probed via the publisher's Exists before the (expensive)
+// pull and squashfs.
+func MaterializeToS3(ctx context.Context, src RegistrySource, dst publisher.Publisher, name, release string, force bool) error {
+	log := slog.With("component", "promote", "source", src.Ref(), "release", release)
+
+	if !force {
+		exists, err := dst.Exists(ctx, name, []string{release})
+		if err != nil {
+			return fmt.Errorf("check destination: %w", err)
+		}
+		if exists {
+			return fmt.Errorf("release %q already materialized in s3 (use --force to overwrite)", release)
+		}
+	}
+
+	log.Info("materializing registry image to s3")
+
+	// Pull + mount the tested image. NewContainer returns a generic
+	// container.Container whose MountPath() is all the S3 publisher needs, so it
+	// cannot tell (and does not care) that this rootfs came from a registry pull
+	// rather than a fresh build.
+	c, err := buildah.NewContainer(ctx, src.Ref(), src.TLSVerify)
+	if err != nil {
+		return fmt.Errorf("pull source image %s: %w", src.Ref(), err)
+	}
+	defer c.Delete()
+
+	if err := dst.Publish(ctx, c, name, []string{release}, nil); err != nil {
+		return fmt.Errorf("publish %q to s3: %w", release, err)
+	}
+
+	log.Info("materialized to s3")
 	return nil
 }
