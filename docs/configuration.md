@@ -281,9 +281,29 @@ publish:
     url: https://s3.example.com
     bucket: boot-images
     prefix: compute/
+    promote-only: true         # Optional: destination only; build never writes here
 ```
 
 S3 publishing reads credentials from the `S3_ACCESS` and `S3_SECRET` environment variables.
+
+### `promote-only`
+
+`promote-only: true` marks a block as a destination *descriptor* rather than a build-time action: `build` skips it entirely, but [`promote`](promote.md) uses it as a target.
+
+This matters when OCI is your build medium and S3 is only how nodes boot. Every rebuild pushes to the registry, but you only want S3 artifacts for an actual release — yet promote still needs to know the bucket and prefix to compute the object keys. Declaring the s3 block `promote-only` gives it the destination without the per-build upload:
+
+```yaml
+publish:
+  - type: registry             # build pushes here on every rebuild
+    url: registry.example/openchami
+  - type: s3                   # only `promote --to s3` writes here
+    url: https://s3.example.com
+    bucket: boot-images
+    prefix: compute/
+    promote-only: true
+```
+
+Defaults to `false`, so existing configs keep publishing at build time. If filtering leaves a layer with no build-time targets, it falls back to `local` (same as declaring none) so child layers still have a parent image to build on.
 
 The S3 publisher extracts the rootfs (SquashFS), kernel, and initramfs and uploads them as a self-contained directory per tag:
 

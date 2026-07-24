@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -193,6 +194,11 @@ is copied to the release tag (blobs already exist, so only a new tag is written)
 the release tag, laid out as <prefix><release>/<arch>/. Pulls the content-tagged
 image and re-extracts it — a re-package of tested bytes, not a rebuild.
 
+Omitting --layer promotes every layer in the manifest that declares a publish
+block of the target type, so a whole release is one command. Mark a block
+promote-only: true to declare a destination that only promote writes (build
+skips it) — typically the s3 block on release targets.
+
 For a multi-arch layer, omitting --arch promotes every arch; passing --arch
 promotes just that one.`,
 	RunE: runPromote,
@@ -247,13 +253,26 @@ func newBackend(manager config.Manager) (backend.Backend, error) {
 //
 // Returns an error if a publisher type is not supported or missing required fields.
 func newPublishers(publishes []config.Publish, arch string) ([]publisher.Publisher, error) {
-	// Default to local publisher if none specified
-	if len(publishes) == 0 {
+	// Drop promote-only blocks: they describe where `promote` materializes to,
+	// not somewhere `build` writes. Filtering here (rather than in each case)
+	// also keeps them out of the skip-if-exists probe.
+	buildTargets := make([]config.Publish, 0, len(publishes))
+	for _, p := range publishes {
+		if p.PromoteOnly {
+			continue
+		}
+		buildTargets = append(buildTargets, p)
+	}
+
+	// Default to local publisher when nothing is left to publish at build time
+	// (none configured, or all of them promote-only) so the image still lands
+	// somewhere for child layers to build on.
+	if len(buildTargets) == 0 {
 		return []publisher.Publisher{local.New()}, nil
 	}
 
 	var publishers []publisher.Publisher
-	for _, p := range publishes {
+	for _, p := range buildTargets {
 		switch p.Type {
 		case "local":
 			publishers = append(publishers, local.New())
@@ -320,8 +339,8 @@ func runPromote(cmd *cobra.Command, args []string) error {
 
 	// Manifest-driven: the content tag to promote is recomputed from the
 	// manifest, so a single --config has nothing to compute against.
-	if manifestPath == "" || layerName == "" {
-		return fmt.Errorf("--manifest and --layer are required")
+	if manifestPath == "" {
+		return fmt.Errorf("--manifest is required")
 	}
 	if releaseTag == "" {
 		return fmt.Errorf("--release is required")
@@ -342,53 +361,97 @@ func runPromote(cmd *cobra.Command, args []string) error {
 
 	log := slog.With("component", "cli")
 
-	// Multi-arch with no --arch promotes every arch of the layer; an explicit
-	// --arch (or a single-arch manifest) promotes just that one.
-	multiArch := dag.IsMultiArch() && archName == ""
-
-	switch toType {
-	case "registry":
-		if multiArch {
-			return runPromoteRegistryMultiArch(ctx, dag, cliVars, log)
+	// A named --layer promotes just that one. Omitting it walks the whole
+	// manifest and promotes every layer declaring a publish block of the target
+	// type — so which layers reach s3 is a config decision (promote-only s3
+	// blocks on release targets), not something the pipeline has to enumerate.
+	if layerName != "" {
+		err := promoteLayer(ctx, dag, cliVars, layerName, false, log)
+		if errors.Is(err, errNoTarget) {
+			return fmt.Errorf("layer %q declares no %q publish block", layerName, toType)
 		}
-		concreteName, err := resolveManifestLayer(dag)
-		if err != nil {
-			return err
-		}
-		return promoteRegistryOne(ctx, dag, cliVars, concreteName, log)
-	case "s3":
-		if multiArch {
-			return runPromoteS3MultiArch(ctx, dag, cliVars, log)
-		}
-		concreteName, err := resolveManifestLayer(dag)
-		if err != nil {
-			return err
-		}
-		return promoteS3One(ctx, dag, cliVars, concreteName, log)
+		return err
 	}
-	return nil // unreachable: toType validated above
+
+	promoted := 0
+	for _, name := range dag.LogicalNames() {
+		err := promoteLayer(ctx, dag, cliVars, name, true, log)
+		switch {
+		case errors.Is(err, errNoTarget):
+			log.Debug("skipping layer: no publish block for target", "layer", name, "target", toType)
+		case err != nil:
+			return fmt.Errorf("layer %s: %w", name, err)
+		default:
+			promoted++
+		}
+	}
+	if promoted == 0 {
+		if archName != "" {
+			return fmt.Errorf("nothing to promote: no layer declares a %q publish block for arch %q", toType, archName)
+		}
+		return fmt.Errorf("nothing to promote: no layer declares a %q publish block", toType)
+	}
+	return nil
 }
 
-// resolveRegistrySource recomputes the content tag for concreteName, renders its
-// config, and returns the registry source the promotion reads from plus the
-// rendered config (for callers that also need the s3 target block). The source
-// is always the layer's registry publish block — the canonical artifact store.
-func resolveRegistrySource(dag *manifest.DAG, cliVars map[string]interface{}, concreteName string) (promote.RegistrySource, *config.Config, error) {
+// errNoTarget marks a layer that declares no publish block for the promotion
+// target: skipped during a whole-manifest promote, an error when the layer was
+// named explicitly with --layer.
+var errNoTarget = errors.New("no publish block for promotion target")
+
+// concreteLayersFor expands a logical layer name into the concrete DAG layers
+// to promote: every arch it builds for, or just --arch when set. Returns an
+// empty slice (and no error) when --arch excludes the layer entirely.
+func concreteLayersFor(dag *manifest.DAG, logicalName string) ([]string, error) {
+	if !dag.IsMultiArch() {
+		if _, err := dag.Get(logicalName); err != nil {
+			return nil, err
+		}
+		return []string{logicalName}, nil
+	}
+	arches := dag.ArchesFor(logicalName)
+	if len(arches) == 0 {
+		return nil, fmt.Errorf("unknown layer %q in manifest", logicalName)
+	}
+	if archName != "" {
+		for _, a := range arches {
+			if a == archName {
+				return []string{logicalName + "-" + archName}, nil
+			}
+		}
+		return nil, nil
+	}
+	out := make([]string, 0, len(arches))
+	for _, a := range arches {
+		out = append(out, logicalName+"-"+a)
+	}
+	return out, nil
+}
+
+// renderLayer computes a concrete layer's content tag and renders its config —
+// the two things every promotion needs before it can resolve source or target.
+func renderLayer(dag *manifest.DAG, cliVars map[string]interface{}, concreteName string) (*config.Config, string, error) {
 	tags, err := dag.ComputeTags(concreteName, cliVars)
 	if err != nil {
-		return promote.RegistrySource{}, nil, fmt.Errorf("compute tags: %w", err)
+		return nil, "", fmt.Errorf("compute tags: %w", err)
 	}
 	configPath, mergedVars, err := prepareLayerRender(dag, concreteName, cliVars)
 	if err != nil {
-		return promote.RegistrySource{}, nil, err
+		return nil, "", err
 	}
 	cfg, err := config.LoadConfigWithVars(configPath, mergedVars)
 	if err != nil {
-		return promote.RegistrySource{}, nil, err
+		return nil, "", err
 	}
+	return cfg, tags[concreteName], nil
+}
+
+// registrySourceFrom builds the OCI source reference from a layer's registry
+// publish block — the canonical artifact store every promotion reads from.
+func registrySourceFrom(cfg *config.Config, contentTag string) (promote.RegistrySource, error) {
 	regPub, err := promote.FindPublish(cfg.Publish, "registry")
 	if err != nil {
-		return promote.RegistrySource{}, nil, fmt.Errorf("resolve source: %w", err)
+		return promote.RegistrySource{}, fmt.Errorf("resolve source: %w", err)
 	}
 	tlsVerify := true
 	if regPub.TLSVerify != nil {
@@ -397,127 +460,115 @@ func resolveRegistrySource(dag *manifest.DAG, cliVars map[string]interface{}, co
 	return promote.RegistrySource{
 		URL:       regPub.URL,
 		Name:      cfg.Meta.Name,
-		Tag:       tags[concreteName],
+		Tag:       contentTag,
 		TLSVerify: tlsVerify,
-	}, cfg, nil
+	}, nil
 }
 
-// promoteRegistryOne retags a single concrete layer's image to the release tag
-// (OCI -> OCI). Honors --dry-run and --force.
-func promoteRegistryOne(ctx context.Context, dag *manifest.DAG, cliVars map[string]interface{}, concreteName string, log *slog.Logger) error {
-	src, _, err := resolveRegistrySource(dag, cliVars, concreteName)
+// promoteLayer promotes one logical layer — every arch it builds for, or just
+// --arch when set. All arches are resolved up front so a config error or a
+// missing target fails before anything is written; promotions then run
+// sequentially.
+//
+// Returns errNoTarget when the layer declares no publish block of the target
+// type. bulk selects how "nothing to do" is treated: skipped during a
+// whole-manifest promote, an error when the layer was named explicitly.
+func promoteLayer(ctx context.Context, dag *manifest.DAG, cliVars map[string]interface{}, logicalName string, bulk bool, log *slog.Logger) error {
+	concretes, err := concreteLayersFor(dag, logicalName)
 	if err != nil {
 		return err
 	}
-	log.Info("promote resolved",
-		"mode", "registry",
-		"layer", concreteName,
-		"content_tag", src.Tag,
-		"source", src.Ref(),
-		"dest", src.RefWithTag(releaseTag),
-		"force", forcePromote,
-	)
-	if dryRun {
-		log.Info("dry-run: skipping retag")
-		return nil
-	}
-	return promote.RetagRegistry(ctx, src, releaseTag, forcePromote)
-}
-
-// runPromoteRegistryMultiArch retags every arch of a multi-arch layer to the
-// release tag, each in its own repo. Every arch is resolved up front (so a
-// config error fails before anything is mutated); a duplicate destination ref
-// across arches is rejected, since that means the release tag can't tell the
-// arches apart. Retags then run sequentially.
-func runPromoteRegistryMultiArch(ctx context.Context, dag *manifest.DAG, cliVars map[string]interface{}, log *slog.Logger) error {
-	arches := dag.ArchesFor(layerName)
-	if len(arches) == 0 {
-		return fmt.Errorf("layer %q does not build for multiple arches", layerName)
+	if len(concretes) == 0 {
+		if bulk {
+			return errNoTarget
+		}
+		return fmt.Errorf("layer %q does not build for arch %q", logicalName, archName)
 	}
 
-	sources := make([]promote.RegistrySource, 0, len(arches))
-	seen := make(map[string]string, len(arches)) // dest ref -> arch that claimed it
-	for _, arch := range arches {
-		src, _, err := resolveRegistrySource(dag, cliVars, layerName+"-"+arch)
+	type target struct {
+		concrete string
+		arch     string
+		src      promote.RegistrySource
+		cfg      *config.Config
+		block    config.Publish
+	}
+
+	targets := make([]target, 0, len(concretes))
+	seen := make(map[string]string, len(concretes)) // registry dest ref -> arch that claimed it
+	for _, concrete := range concretes {
+		cfg, contentTag, err := renderLayer(dag, cliVars, concrete)
 		if err != nil {
-			return fmt.Errorf("arch %s: %w", arch, err)
+			return err
 		}
-		dst := src.RefWithTag(releaseTag)
-		if prev, ok := seen[dst]; ok {
-			return fmt.Errorf(
-				"arches %q and %q both retag to %s; the release tag can't distinguish them — "+
-					"put the arch in meta.name (e.g. <image>-{{ .arch }}) so each arch has its own repo",
-				prev, arch, dst)
+		block, err := promote.FindPublish(cfg.Publish, toType)
+		if err != nil {
+			return errNoTarget
 		}
-		seen[dst] = arch
-		sources = append(sources, src)
-	}
-
-	log.Info("promote resolved", "mode", "registry", "layer", layerName, "arches", arches, "release", releaseTag, "force", forcePromote)
-	for i, src := range sources {
-		if dryRun {
-			log.Info("dry-run: would retag", "arch", arches[i], "source", src.Ref(), "dest", src.RefWithTag(releaseTag))
-			continue
+		src, err := registrySourceFrom(cfg, contentTag)
+		if err != nil {
+			return err
 		}
-		if err := promote.RetagRegistry(ctx, src, releaseTag, forcePromote); err != nil {
-			return fmt.Errorf("arch %s: %w", arches[i], err)
+		layer, err := dag.Get(concrete)
+		if err != nil {
+			return err
 		}
-	}
-	return nil
-}
-
-// promoteS3One projects a single concrete layer's image into S3 boot artifacts
-// under the release tag (OCI -> S3). The layer's arch drives the S3 key layout;
-// the S3 target comes from the layer's s3 publish block. Honors --dry-run;
-// credentials are only needed for a real run.
-func promoteS3One(ctx context.Context, dag *manifest.DAG, cliVars map[string]interface{}, concreteName string, log *slog.Logger) error {
-	src, cfg, err := resolveRegistrySource(dag, cliVars, concreteName)
-	if err != nil {
-		return err
-	}
-	s3Block, err := promote.FindPublish(cfg.Publish, "s3")
-	if err != nil {
-		return fmt.Errorf("resolve target: %w", err)
-	}
-	layer, err := dag.Get(concreteName)
-	if err != nil {
-		return err
+		// A registry retag writes <repo>:<release>; two arches landing on the
+		// same ref would silently clobber each other. S3 keys embed the arch,
+		// so they can't collide.
+		if toType == "registry" {
+			dst := src.RefWithTag(releaseTag)
+			if prev, ok := seen[dst]; ok {
+				return fmt.Errorf(
+					"arches %q and %q both retag to %s; the release tag can't distinguish them — "+
+						"put the arch in meta.name (e.g. <image>-{{ .arch }}) so each arch has its own repo",
+					prev, layer.Arch, dst)
+			}
+			seen[dst] = layer.Arch
+		}
+		targets = append(targets, target{concrete: concrete, arch: layer.Arch, src: src, cfg: cfg, block: block})
 	}
 
-	log.Info("promote resolved",
-		"mode", "s3",
-		"layer", concreteName,
-		"content_tag", src.Tag,
-		"source", src.Ref(),
-		"release", releaseTag,
-		"bucket", s3Block.Bucket,
-		"prefix", s3Block.Prefix,
-		"arch", layer.Arch,
-		"force", forcePromote,
-	)
-	if dryRun {
-		log.Info("dry-run: skipping materialize")
-		return nil
-	}
-
-	dst, err := newS3Publisher(s3Block, layer.Arch)
-	if err != nil {
-		return err
-	}
-	return promote.MaterializeToS3(ctx, src, dst, cfg.Meta.Name, releaseTag, forcePromote)
-}
-
-// runPromoteS3MultiArch projects every arch of a multi-arch layer into S3 under
-// the release tag. Each arch materializes into its own <arch> segment, so there
-// is no collision; arches run sequentially.
-func runPromoteS3MultiArch(ctx context.Context, dag *manifest.DAG, cliVars map[string]interface{}, log *slog.Logger) error {
-	arches := dag.ArchesFor(layerName)
-	if len(arches) == 0 {
-		return fmt.Errorf("layer %q does not build for multiple arches", layerName)
-	}
-	for _, arch := range arches {
-		if err := promoteS3One(ctx, dag, cliVars, layerName+"-"+arch, log); err != nil {
-			return fmt.Errorf("arch %s: %w", arch, err)
+	for _, t := range targets {
+		switch toType {
+		case "registry":
+			log.Info("promote resolved",
+				"mode", "registry",
+				"layer", t.concrete,
+				"content_tag", t.src.Tag,
+				"source", t.src.Ref(),
+				"dest", t.src.RefWithTag(releaseTag),
+				"force", forcePromote,
+				"dry_run", dryRun,
+			)
+			if dryRun {
+				continue
+			}
+			if err := promote.RetagRegistry(ctx, t.src, releaseTag, forcePromote); err != nil {
+				return fmt.Errorf("arch %s: %w", t.arch, err)
+			}
+		case "s3":
+			log.Info("promote resolved",
+				"mode", "s3",
+				"layer", t.concrete,
+				"content_tag", t.src.Tag,
+				"source", t.src.Ref(),
+				"release", releaseTag,
+				"bucket", t.block.Bucket,
+				"prefix", t.block.Prefix,
+				"arch", t.arch,
+				"force", forcePromote,
+				"dry_run", dryRun,
+			)
+			if dryRun {
+				continue
+			}
+			dst, err := newS3Publisher(t.block, t.arch)
+			if err != nil {
+				return err
+			}
+			if err := promote.MaterializeToS3(ctx, t.src, dst, t.cfg.Meta.Name, releaseTag, forcePromote); err != nil {
+				return fmt.Errorf("arch %s: %w", t.arch, err)
+			}
 		}
 	}
 	return nil
@@ -630,7 +681,7 @@ func init() {
 	// recomputed from the manifest), plus the release tag and source/target
 	// selectors.
 	promoteCmd.Flags().StringVar(&manifestPath, "manifest", "", "path to manifest file (required)")
-	promoteCmd.Flags().StringVar(&layerName, "layer", "", "logical layer name to promote (required)")
+	promoteCmd.Flags().StringVar(&layerName, "layer", "", "logical layer name to promote (default: every layer declaring a block for --to)")
 	promoteCmd.Flags().StringVar(&archName, "arch", "", "target architecture (multi-arch manifests only; defaults to host arch)")
 	promoteCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
 	promoteCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")

@@ -174,6 +174,14 @@ type Publish struct {
 	Prefix    string `yaml:"prefix"`
 	Path      string `yaml:"path"`
 	TLSVerify *bool  `yaml:"tls-verify"`
+
+	// PromoteOnly marks this block as a destination *descriptor* rather than a
+	// build-time action: `build` never writes to it, but `promote` uses it as a
+	// target. This is what lets a layer declare where its S3 boot artifacts
+	// live (url/bucket/prefix, needed to compute the object keys) without every
+	// rebuild uploading a rootfs nobody boots. Defaults to false, so existing
+	// configs keep publishing at build time.
+	PromoteOnly bool `yaml:"promote-only"`
 }
 
 // Used for switch-case so I can make things easier add in the future

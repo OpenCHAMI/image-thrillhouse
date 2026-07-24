@@ -31,7 +31,7 @@ that built the image (the hash covers the rendered config and referenced files).
 ```
 image-thrillhouse promote \
   --manifest <path> \
-  --layer <logical-name> \
+  [--layer <logical-name>] \
   [--arch <arch>] \
   --release <tag> \
   [--to registry|s3] \
@@ -41,6 +41,32 @@ image-thrillhouse promote \
 The source is always the layer's own `registry` [publish block](configuration.md#publish)
 (URL + `meta.name`) — the layer must have one, or promote fails. For `--to s3`
 the layer must also have an `s3` publish block (bucket + prefix).
+
+### Which layers get promoted
+
+**Omitting `--layer` promotes the whole manifest** — every layer that declares a
+publish block of the target type. So which layers reach S3 is a *config*
+decision, not something the pipeline enumerates: put a
+[`promote-only`](configuration.md#promote-only) `s3` block on your release
+targets, and `promote --to s3` picks exactly those up.
+
+```
+# one command releases every bootable image in the manifest, all arches:
+image-thrillhouse promote --manifest manifests/rocky.yaml \
+  --release test-release-1.2.3 --to s3
+```
+
+Layers with no matching block are skipped silently (visible at `--log-level debug`).
+Naming `--layer` explicitly promotes just that one — and *errors* if it has no
+block for the target, so a typo fails loud rather than doing nothing:
+
+```
+Error: layer "base" declares no "s3" publish block
+```
+
+Note `--to registry` matches every layer that has a registry block — which is
+usually all of them — so a bare `promote --release X` tags the entire build set
+in OCI. Use `--layer` if you only want specific images tagged.
 
 ## `--to registry` (retag)
 
@@ -129,7 +155,7 @@ Pass `--force` to re-materialize and overwrite the objects.
 | Flag | Description |
 |------|-------------|
 | `--manifest` | Manifest file (required). |
-| `--layer` | Logical layer name to promote (required). |
+| `--layer` | Logical layer to promote. Omit to promote every layer declaring a block for `--to`. |
 | `--arch` | Target arch for a multi-arch manifest. Omit to promote every arch. |
 | `--release` | The release tag to write (required), e.g. `release-0.0.1`. |
 | `--to` | `registry` (default, retag) or `s3` (materialize boot artifacts). |

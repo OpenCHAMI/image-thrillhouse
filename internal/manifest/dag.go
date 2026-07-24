@@ -134,6 +134,27 @@ func (d *DAG) IsMultiArch() bool {
 	return false
 }
 
+// LogicalNames returns every logical layer name in the manifest, sorted and
+// de-duplicated across arch expansions — so a multi-arch manifest yields one
+// entry per logical layer, not one per (layer, arch). Used by promote to walk
+// the whole manifest when no single layer was named.
+func (d *DAG) LogicalNames() []string {
+	seen := make(map[string]bool, len(d.layers))
+	out := make([]string, 0, len(d.layers))
+	for _, l := range d.layers {
+		name := l.LogicalName
+		if name == "" {
+			name = l.Name
+		}
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // ArchesFor returns the sorted list of arches a logical layer builds for,
 // or empty when the DAG has no expansion. Used to produce helpful error
 // messages when a user asks for an unsupported arch.
