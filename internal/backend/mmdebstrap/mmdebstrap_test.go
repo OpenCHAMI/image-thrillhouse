@@ -365,6 +365,23 @@ func TestOutputWriter(t *testing.T) {
 	}
 }
 
+func TestWireRepoContent(t *testing.T) {
+	backend := New(map[string]string{
+		"suite":  "bookworm",
+		"mirror": "http://deb.debian.org/debian",
+	})
+
+	const deb822 = "Types: deb\nURIs: http://x\nSuites: bookworm\nComponents: main\n"
+	if got := backend.WireRepoContent(deb822, ""); got != deb822 {
+		t.Errorf("empty keyName should leave content unchanged, got %q", got)
+	}
+
+	got := backend.WireRepoContent(deb822, "toolchain")
+	if !strings.Contains(got, "Signed-By: /etc/apt/keyrings/toolchain.gpg") {
+		t.Errorf("expected deb822 Signed-By wired to the keyring, got %q", got)
+	}
+}
+
 func TestPackageListFormatting(t *testing.T) {
 	backend := New(map[string]string{
 		"suite":  "bookworm",

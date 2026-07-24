@@ -143,21 +143,21 @@ func TestAPTImportKey(t *testing.T) {
 			rootPath:    "",
 			keyName:     "toolchain",
 			keyPath:     "/tmp/key.bin",
-			mustContain: []string{"sh", "-c", "/tmp/key.bin", "/etc/apt/trusted.gpg.d/toolchain.gpg", "gpg --dearmor"},
+			mustContain: []string{"sh", "-c", "/tmp/key.bin", "/etc/apt/keyrings/toolchain.gpg", "gpg --dearmor", "mkdir -p"},
 		},
 		{
 			name:        "scratch-root prefixes destination path",
 			rootPath:    "/mnt/scratch",
 			keyName:     "toolchain",
 			keyPath:     "/tmp/key.bin",
-			mustContain: []string{"/mnt/scratch/etc/apt/trusted.gpg.d/toolchain.gpg"},
+			mustContain: []string{"/mnt/scratch/etc/apt/keyrings/toolchain.gpg"},
 		},
 		{
 			name:        "empty keyName falls back to a fixed safe name",
 			rootPath:    "",
 			keyName:     "",
 			keyPath:     "/tmp/key.bin",
-			mustContain: []string{"/etc/apt/trusted.gpg.d/image-thrillhouse-repo.gpg"},
+			mustContain: []string{"/etc/apt/keyrings/image-thrillhouse-repo.gpg"},
 		},
 	}
 	for _, tt := range tests {
@@ -203,7 +203,7 @@ func TestAPTImportKey_PositionalArgs(t *testing.T) {
 		t.Errorf("paths leaked into script body (injection surface): %q", script)
 	}
 	// Argv positions: $0 first, then $1 (dest), then $2 (key).
-	if got[4] != "/mnt/root/etc/apt/trusted.gpg.d/toolchain.gpg" {
+	if got[4] != "/mnt/root/etc/apt/keyrings/toolchain.gpg" {
 		t.Errorf("argv[4] (destination) = %q, want scratch-rooted path", got[4])
 	}
 	if got[5] != "/host/tmp/key.bin" {
@@ -238,10 +238,10 @@ func TestAPTImportKey_DistinctNames(t *testing.T) {
 	if a[4] == b[4] {
 		t.Fatalf("distinct key names produced the same destination %q — collision not fixed", a[4])
 	}
-	if a[4] != "/etc/apt/trusted.gpg.d/toolchain.gpg" {
+	if a[4] != "/etc/apt/keyrings/toolchain.gpg" {
 		t.Errorf("destination = %q, want toolchain.gpg", a[4])
 	}
-	if b[4] != "/etc/apt/trusted.gpg.d/docker.gpg" {
+	if b[4] != "/etc/apt/keyrings/docker.gpg" {
 		t.Errorf("destination = %q, want docker.gpg", b[4])
 	}
 }
@@ -256,16 +256,155 @@ func TestSafeKeyName(t *testing.T) {
 		{"my.repo_1", "my.repo_1"},
 		{"", "image-thrillhouse-repo"},
 		{".", "image-thrillhouse-repo"},
-		{"../../etc/passwd", "passwd"},        // Base strips the traversal
-		{"a/b/c", "c"},                        // only the final component survives
-		{"weird name!@#", "weird-name"},       // disallowed chars become dashes, trailing trimmed
-		{"...", "image-thrillhouse-repo"},     // trims to empty, then falls back
-		{"-lead-trail-", "lead-trail"},        // leading/trailing dashes trimmed
+		{"../../etc/passwd", "passwd"},    // Base strips the traversal
+		{"a/b/c", "c"},                    // only the final component survives
+		{"weird name!@#", "weird-name"},   // disallowed chars become dashes, trailing trimmed
+		{"...", "image-thrillhouse-repo"}, // trims to empty, then falls back
+		{"-lead-trail-", "lead-trail"},    // leading/trailing dashes trimmed
 	}
 	for _, tt := range tests {
 		if got := safeKeyName(tt.in); got != tt.want {
 			t.Errorf("safeKeyName(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+// TestAPTKeyringPath locks in the keyrings location (NOT the deprecated
+// trusted.gpg.d) and that the name is run through the same sanitizer as the
+// key-import destination, so signed-by wiring and key placement can never
+// disagree on the path.
+func TestAPTKeyringPath(t *testing.T) {
+	tests := []struct {
+		keyName, want string
+	}{
+		{"toolchain", "/etc/apt/keyrings/toolchain.gpg"},
+		{"docker", "/etc/apt/keyrings/docker.gpg"},
+		{"", "/etc/apt/keyrings/image-thrillhouse-repo.gpg"},
+		{"../../etc/passwd", "/etc/apt/keyrings/passwd.gpg"},
+	}
+	for _, tt := range tests {
+		if got := APTKeyringPath(tt.keyName); got != tt.want {
+			t.Errorf("APTKeyringPath(%q) = %q, want %q", tt.keyName, got, tt.want)
+		}
+	}
+}
+
+func TestAPTWireRepoContent(t *testing.T) {
+	const key = "toolchain"
+	keyring := APTKeyringPath(key) // /etc/apt/keyrings/toolchain.gpg
+
+	tests := []struct {
+		name        string
+		keyName     string
+		content     string
+		want        string
+		wantChanged bool
+	}{
+		{
+			name:        "empty keyName leaves content untouched",
+			keyName:     "",
+			content:     "deb http://deb.debian.org/debian bookworm main\n",
+			want:        "deb http://deb.debian.org/debian bookworm main\n",
+			wantChanged: false,
+		},
+		{
+			name:        "one-line without options gets a bracket group",
+			keyName:     key,
+			content:     "deb http://deb.debian.org/debian bookworm main\n",
+			want:        "deb [signed-by=" + keyring + "] http://deb.debian.org/debian bookworm main\n",
+			wantChanged: true,
+		},
+		{
+			name:        "one-line merges into existing options",
+			keyName:     key,
+			content:     "deb [arch=amd64] http://deb.debian.org/debian bookworm main\n",
+			want:        "deb [arch=amd64 signed-by=" + keyring + "] http://deb.debian.org/debian bookworm main\n",
+			wantChanged: true,
+		},
+		{
+			name:        "deb-src line is also wired",
+			keyName:     key,
+			content:     "deb-src http://deb.debian.org/debian bookworm main\n",
+			want:        "deb-src [signed-by=" + keyring + "] http://deb.debian.org/debian bookworm main\n",
+			wantChanged: true,
+		},
+		{
+			name:        "user-pinned signed-by is preserved",
+			keyName:     key,
+			content:     "deb [signed-by=/usr/share/keyrings/other.gpg] http://x bookworm main\n",
+			want:        "deb [signed-by=/usr/share/keyrings/other.gpg] http://x bookworm main\n",
+			wantChanged: false,
+		},
+		{
+			name:        "comments and blanks are preserved, only deb lines change",
+			keyName:     key,
+			content:     "# a comment\n\ndeb http://x bookworm main\n",
+			want:        "# a comment\n\ndeb [signed-by=" + keyring + "] http://x bookworm main\n",
+			wantChanged: true,
+		},
+		{
+			name:        "deb822 stanza gains a Signed-By field",
+			keyName:     key,
+			content:     "Types: deb\nURIs: http://deb.debian.org/debian\nSuites: bookworm\nComponents: main\n",
+			want:        "Types: deb\nURIs: http://deb.debian.org/debian\nSuites: bookworm\nComponents: main\nSigned-By: " + keyring + "\n",
+			wantChanged: true,
+		},
+		{
+			name:        "deb822 with existing Signed-By is preserved",
+			keyName:     key,
+			content:     "Types: deb\nURIs: http://x\nSuites: bookworm\nComponents: main\nSigned-By: /usr/share/keyrings/other.gpg\n",
+			want:        "Types: deb\nURIs: http://x\nSuites: bookworm\nComponents: main\nSigned-By: /usr/share/keyrings/other.gpg\n",
+			wantChanged: false,
+		},
+		{
+			name:        "unrecognized content is left alone",
+			keyName:     key,
+			content:     "this is not an apt source file\n",
+			want:        "this is not an apt source file\n",
+			wantChanged: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := APTWireRepoContent(tt.content, tt.keyName)
+			if got != tt.want {
+				t.Errorf("APTWireRepoContent()\n got: %q\nwant: %q", got, tt.want)
+			}
+			if changed := got != tt.content; changed != tt.wantChanged {
+				t.Errorf("changed = %v, want %v", changed, tt.wantChanged)
+			}
+		})
+	}
+}
+
+// TestAPTWireRepoContent_MultipleStanzas verifies each deb822 source stanza
+// gets its own Signed-By, and that a stanza already pinned keeps its choice.
+func TestAPTWireRepoContent_MultipleStanzas(t *testing.T) {
+	keyring := APTKeyringPath("multi")
+	content := "Types: deb\nURIs: http://a\nSuites: bookworm\nComponents: main\n" +
+		"\n" +
+		"Types: deb\nURIs: http://b\nSuites: bookworm\nComponents: main\nSigned-By: /pinned.gpg\n"
+	got := APTWireRepoContent(content, "multi")
+
+	// First stanza should be wired to our keyring.
+	if !strings.Contains(got, "URIs: http://a\nSuites: bookworm\nComponents: main\nSigned-By: "+keyring) {
+		t.Errorf("first stanza not wired to keyring:\n%s", got)
+	}
+	// Second stanza keeps its pinned key and does not gain ours.
+	if strings.Contains(got, "URIs: http://b") && strings.Count(got, keyring) != 1 {
+		t.Errorf("second (pinned) stanza should be untouched; keyring should appear exactly once:\n%s", got)
+	}
+}
+
+// TestAPTWireRepoContent_MultipleOneLine ensures every deb line in a multi-line
+// .list file is wired independently.
+func TestAPTWireRepoContent_MultipleOneLine(t *testing.T) {
+	keyring := APTKeyringPath("multi")
+	content := "deb http://a bookworm main\ndeb-src http://a bookworm main\n"
+	got := APTWireRepoContent(content, "multi")
+	if strings.Count(got, "signed-by="+keyring) != 2 {
+		t.Errorf("expected both deb and deb-src lines wired:\n%s", got)
 	}
 }
 

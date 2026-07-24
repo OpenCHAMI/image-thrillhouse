@@ -5,6 +5,7 @@
 package apt
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/travisbcotton/image-thrillhouse/internal/config"
@@ -403,6 +404,30 @@ func TestOutputWriter(t *testing.T) {
 	writer := backend.OutputWriter()
 	if writer == nil {
 		t.Error("OutputWriter() returned nil")
+	}
+}
+
+func TestWireRepoContent(t *testing.T) {
+	backend := New(nil)
+
+	// With no key name, content is untouched.
+	const oneLine = "deb http://deb.debian.org/debian bookworm main\n"
+	if got := backend.WireRepoContent(oneLine, ""); got != oneLine {
+		t.Errorf("empty keyName should leave content unchanged, got %q", got)
+	}
+
+	// With a key name, apt injects a signed-by pointing at the keyring for
+	// that name. We don't hardcode the full path (that's cmdutil's contract,
+	// tested there) — just that the linkage is added and references keyrings.
+	got := backend.WireRepoContent(oneLine, "toolchain")
+	if !strings.Contains(got, "signed-by=/etc/apt/keyrings/toolchain.gpg") {
+		t.Errorf("expected signed-by wired to the keyring, got %q", got)
+	}
+
+	// A user-pinned keyring must win.
+	pinned := "deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://x bookworm main\n"
+	if got := backend.WireRepoContent(pinned, "toolchain"); got != pinned {
+		t.Errorf("user-pinned signed-by should be preserved, got %q", got)
 	}
 }
 

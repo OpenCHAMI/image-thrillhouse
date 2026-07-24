@@ -163,8 +163,9 @@ func (fakeBackendBase) RemovePackagesCommand(packages []string, rootPath string)
 	return nil
 }
 func (fakeBackendBase) ImportGPGKeyCommand(keyName, keyPath, rootPath string) []string { return nil }
-func (fakeBackendBase) OutputWriter() container.OutputWriter                  { return &container.NopWriter{} }
-func (fakeBackendBase) IsAcceptableExitCode(exitCode int, output string) bool { return false }
+func (fakeBackendBase) WireRepoContent(content, keyName string) string                 { return content }
+func (fakeBackendBase) OutputWriter() container.OutputWriter                           { return &container.NopWriter{} }
+func (fakeBackendBase) IsAcceptableExitCode(exitCode int, output string) bool          { return false }
 
 // fakeBackendNoConfigPath simulates a backend (like mmdebstrap) that has no
 // persistent config file. The builder must refuse to apply

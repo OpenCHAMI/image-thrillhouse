@@ -1,0 +1,32 @@
+# Parent build that adds an apt repository file in the correct location
+# (/etc/apt/sources.list.d/*.list) with a user-pinned `signed-by=` keyring that
+# ships in the base image. This exercises:
+#   - repo path/extension validation accepting a .list file
+#   - a user-supplied signed-by= being preserved (not clobbered) by the builder
+#   - apt-get update/install actually reading the added repo
+#
+# The repo points at jammy-backports on the Ubuntu archive the base image
+# already trusts, so the build needs no external third-party network or extra
+# keys. Backports is NOT enabled in the stock ubuntu:22.04 sources, so the added
+# repo is genuinely new — no "configured multiple times" duplicate-target
+# warnings against the base /etc/apt/sources.list.
+meta:
+  name: ubuntu-parent-repo
+  tags:
+    - "22.04-repo"
+  from: docker://ubuntu:22.04
+
+layer:
+  manager:
+    name: apt
+  repos:
+    - path: /etc/apt/sources.list.d/ubuntu-backports.list
+      content: |
+        deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http://archive.ubuntu.com/ubuntu jammy-backports main universe
+  actions:
+    install:
+      packages:
+        - vim
+
+publish:
+  - type: local

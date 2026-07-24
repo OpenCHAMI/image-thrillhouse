@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/travisbcotton/image-thrillhouse/internal/backend"
+	"github.com/travisbcotton/image-thrillhouse/internal/backend/apt"
 	"github.com/travisbcotton/image-thrillhouse/internal/config"
 	"github.com/travisbcotton/image-thrillhouse/internal/container"
 	"github.com/travisbcotton/image-thrillhouse/internal/publisher"
@@ -141,6 +142,94 @@ func TestWriteRepos_PropagatesWriteFileError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "write repo") {
 		t.Errorf("error should be wrapped with 'write repo': %v", err)
+	}
+}
+
+func TestWriteRepos_WiresSignedByForAptKeyedRepo(t *testing.T) {
+	// An apt repo that declares a `gpg:` key must have its source entry wired
+	// to the keyring the builder will import that key into, so apt actually
+	// trusts it. The wiring happens on the *written* content, and the gpg URL
+	// must not leak into the repo file.
+	b := &Builder{
+		cfg: &config.Config{
+			Meta: config.Meta{Name: "t", Tags: []string{"1"}, From: "debian:bookworm"},
+			Layer: config.Layer{
+				Manager: config.Manager{Name: "apt"},
+				Repos: []config.Repo{
+					{
+						Path:    "/etc/apt/sources.list.d/toolchain.sources",
+						Content: "Types: deb\nURIs: http://x\nSuites: bookworm\nComponents: main\n",
+						GPGKey:  "https://example.com/key.asc",
+					},
+				},
+			},
+		},
+		backend: apt.New(nil),
+	}
+	c := &fakeContainer{}
+	if err := b.writeRepos(context.Background(), c); err != nil {
+		t.Fatalf("writeRepos: %v", err)
+	}
+	if len(c.WriteFileCalls) != 1 {
+		t.Fatalf("expected 1 WriteFile call, got %d", len(c.WriteFileCalls))
+	}
+	got := c.WriteFileCalls[0]
+	if got.Path != "/etc/apt/sources.list.d/toolchain.sources" {
+		t.Errorf("path = %q", got.Path)
+	}
+	if !strings.Contains(got.Content, "Signed-By: /etc/apt/keyrings/toolchain.gpg") {
+		t.Errorf("expected signed-by wiring in written content, got %q", got.Content)
+	}
+	if strings.Contains(got.Content, "example.com") {
+		t.Errorf("gpg url leaked into repo content: %q", got.Content)
+	}
+}
+
+func TestWriteRepos_NonKeyedRepoWrittenVerbatim(t *testing.T) {
+	// A repo without a `gpg:` key takes the untouched path: Content/URL/Src are
+	// forwarded to WriteFile as-is, with no backend rewrite. Uses the apt
+	// backend to prove even apt leaves keyless repos alone.
+	b := &Builder{
+		cfg: &config.Config{
+			Meta:  config.Meta{Name: "t", Tags: []string{"1"}, From: "debian:bookworm"},
+			Layer: config.Layer{Manager: config.Manager{Name: "apt"}, Repos: []config.Repo{{Path: "/etc/apt/sources.list.d/x.list", URL: "https://example.com/x.list"}}},
+		},
+		backend: apt.New(nil),
+	}
+	c := &fakeContainer{}
+	if err := b.writeRepos(context.Background(), c); err != nil {
+		t.Fatalf("writeRepos: %v", err)
+	}
+	if len(c.WriteFileCalls) != 1 || c.WriteFileCalls[0].URL != "https://example.com/x.list" {
+		t.Fatalf("keyless repo should be forwarded verbatim (URL preserved), got %+v", c.WriteFileCalls)
+	}
+}
+
+func TestRepoKeyNames(t *testing.T) {
+	// repoKeyNames maps each repo to a stable keyName ("" when no gpg key) and
+	// disambiguates repos whose paths share a basename, deterministically.
+	b := builderWithLayer(config.Layer{
+		Repos: []config.Repo{
+			{Path: "/etc/apt/sources.list.d/a.sources", Content: "x"},                        // no key
+			{Path: "/etc/apt/sources.list.d/tool.sources", GPGKey: "http://k", Content: "x"}, // -> tool
+			{Path: "/opt/tool.sources", GPGKey: "http://k2", Content: "x"},                   // same basename -> disambiguated
+		},
+	})
+	names := b.repoKeyNames()
+	if names[0] != "" {
+		t.Errorf("repo without gpg should map to empty keyName, got %q", names[0])
+	}
+	if names[1] != "tool" {
+		t.Errorf("names[1] = %q, want tool", names[1])
+	}
+	if names[2] == "" || names[2] == names[1] {
+		t.Errorf("colliding basename must disambiguate: names[2]=%q names[1]=%q", names[2], names[1])
+	}
+	again := b.repoKeyNames()
+	for i := range names {
+		if names[i] != again[i] {
+			t.Errorf("repoKeyNames not deterministic at %d: %q vs %q", i, names[i], again[i])
+		}
 	}
 }
 

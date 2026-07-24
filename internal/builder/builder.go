@@ -247,10 +247,35 @@ func (b *Builder) applyManagerConfig(ctx context.Context, c container.Container)
 // writeRepos writes all repository configuration files to the container.
 // Repositories can be specified as inline content, local files, or URLs.
 // The actual path where repos are written depends on the package manager.
+//
+// When a repo declares a `gpg:` key, the builder imports that key into a
+// dedicated keyring (see importGPGKeys) and must make the repo's source entry
+// reference it. For apt that means injecting `signed-by=<keyring>` into the
+// file content, which requires the content in-hand — so such repos are
+// resolved here (inline/URL/host file) and rewritten via the backend's
+// WireRepoContent before being written. Repos without a managed key are
+// written as-is, letting c.WriteFile resolve URL/Src as before.
 func (b *Builder) writeRepos(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
-	for _, repo := range b.cfg.Layer.Repos {
+	keyNames := b.repoKeyNames()
+	for i, repo := range b.cfg.Layer.Repos {
 		log.Info("writing repo", "repo", repo.Path)
+
+		if keyNames[i] != "" {
+			raw, err := b.resolveRepoContent(ctx, repo)
+			if err != nil {
+				return fmt.Errorf("resolve repo %s: %w", repo.Path, err)
+			}
+			wired := b.backend.WireRepoContent(raw, keyNames[i])
+			if wired != raw {
+				log.Debug("wired repo to its gpg keyring", "repo", repo.Path)
+			}
+			if err := c.WriteFile(ctx, config.File{Path: repo.Path, Content: wired}); err != nil {
+				return fmt.Errorf("write repo %s: %w", repo.Path, err)
+			}
+			continue
+		}
+
 		file := config.File{
 			Path:    repo.Path,
 			Content: repo.Content,
@@ -262,6 +287,51 @@ func (b *Builder) writeRepos(ctx context.Context, c container.Container) error {
 		}
 	}
 	return nil
+}
+
+// resolveRepoContent returns the repository file's text, reading it from
+// whichever source the repo specifies (inline content, a host file, or a URL).
+// It mirrors container.WriteFile's source precedence so a repo produces the
+// same bytes whether or not the builder rewrites it. URL fetches are
+// ctx-aware; the exactly-one-source invariant is guaranteed by config
+// validation, so the final branch is defensive.
+func (b *Builder) resolveRepoContent(ctx context.Context, repo config.Repo) (string, error) {
+	switch {
+	case repo.Content != "":
+		return repo.Content, nil
+	case repo.Src != "":
+		data, err := os.ReadFile(repo.Src)
+		if err != nil {
+			return "", fmt.Errorf("read src %s: %w", repo.Src, err)
+		}
+		return string(data), nil
+	case repo.URL != "":
+		data, err := fetch.Get(ctx, repo.URL)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	default:
+		return "", fmt.Errorf("repo %s: one of content, src, or url is required", repo.Path)
+	}
+}
+
+// repoKeyNames returns, for each repo (by index), the stable keyName the
+// builder uses for its imported GPG key — or "" when the repo declares no
+// `gpg:` key. writeRepos (signed-by wiring) and importGPGKeys (key placement)
+// both call this so a repo's source entry and its keyring always agree on the
+// name; computing it in one place keeps the collision-disambiguation
+// (gpgKeyName's `used` map) deterministic and identical across both passes.
+func (b *Builder) repoKeyNames() []string {
+	names := make([]string, len(b.cfg.Layer.Repos))
+	used := make(map[string]bool)
+	for i, repo := range b.cfg.Layer.Repos {
+		if repo.GPGKey == "" {
+			continue
+		}
+		names[i] = gpgKeyName(repo.Path, i, used)
+	}
+	return names
 }
 
 // importGPGKeys imports GPG keys for repositories that specify them.
@@ -290,12 +360,11 @@ func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) erro
 		rootPath = c.MountPath()
 	}
 
-	// usedNames disambiguates the per-repo key filename that deb-based
-	// backends derive from keyName. Two repos whose paths share a basename
-	// (e.g. /a/x.sources and /b/x.sources) would otherwise map to the same
-	// keyring file and reintroduce the very collision this loop guards
-	// against, so the second one gets an index suffix.
-	usedNames := make(map[string]bool)
+	// keyNames is shared with writeRepos so the keyring a repo's source entry
+	// references (signed-by=) matches where the key is actually placed. It
+	// also carries the collision-disambiguation for repos whose paths share a
+	// basename.
+	keyNames := b.repoKeyNames()
 
 	for i, repo := range b.cfg.Layer.Repos {
 		if repo.GPGKey == "" {
@@ -316,7 +385,7 @@ func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) erro
 			continue
 		}
 
-		keyName := gpgKeyName(repo.Path, i, usedNames)
+		keyName := keyNames[i]
 		cmd := b.backend.ImportGPGKeyCommand(keyName, keyPath, rootPath)
 		if cmd == nil {
 			log.Warn("backend does not support gpg key import", "backend", b.cfg.Layer.Manager.Name)
@@ -343,8 +412,9 @@ func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) erro
 // gpgKeyName derives a stable, human-readable identifier for a repo's imported
 // GPG key from the repo's destination path (its basename, minus extension). A
 // deb-based backend turns this into the keyring filename under
-// /etc/apt/trusted.gpg.d/, so /etc/apt/sources.list.d/toolchain.sources yields
-// a "toolchain" key rather than the old shared name every repo collided on.
+// /etc/apt/keyrings/, so /etc/apt/sources.list.d/toolchain.sources yields a
+// "toolchain" key (referenced from the repo as signed-by=/etc/apt/keyrings/
+// toolchain.gpg) rather than the old shared name every repo collided on.
 //
 // used tracks names already handed out in this build; a duplicate (two repos
 // with the same basename in different directories) falls back to an

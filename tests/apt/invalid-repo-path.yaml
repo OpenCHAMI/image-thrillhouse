@@ -1,0 +1,23 @@
+# Negative test: an apt repo file with a .repo extension (an RPM-ism) lands
+# where apt will never read it. Validation must reject this up front rather
+# than let the build silently ignore the repo.
+meta:
+  name: invalid-repo-path
+  tags:
+    - "test"
+  from: docker://ubuntu:22.04
+
+layer:
+  manager:
+    name: apt
+  repos:
+    - path: /etc/apt/sources.list.d/toolchain.repo
+      content: |
+        deb http://ppa.example.com/toolchain/ubuntu jammy main
+  actions:
+    install:
+      packages:
+        - vim
+
+publish:
+  - type: local
