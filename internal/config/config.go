@@ -77,6 +77,7 @@ type File struct {
 	Src     string `yaml:"src"`     // Source file path on host
 	URL     string `yaml:"url"`     // URL to download file from
 	Mode    string `yaml:"mode"`    // Optional: File permissions mode (e.g., "0755", "0644")
+	Owner   string `yaml:"owner"`   // Optional: "uid:gid" or "user:group"
 }
 
 // Directory represents a host directory to recursively copy into the image
