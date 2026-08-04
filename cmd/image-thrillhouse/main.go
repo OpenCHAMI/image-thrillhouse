@@ -14,12 +14,14 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"go.podman.io/buildah"
+	"go.podman.io/storage"
 	"go.podman.io/storage/pkg/reexec"
 	"go.podman.io/storage/pkg/unshare"
 
@@ -28,6 +30,7 @@ import (
 	"github.com/travisbcotton/image-thrillhouse/internal/backend/dnf"
 	"github.com/travisbcotton/image-thrillhouse/internal/backend/mmdebstrap"
 	"github.com/travisbcotton/image-thrillhouse/internal/backend/zypper"
+	ibuildah "github.com/travisbcotton/image-thrillhouse/internal/buildah"
 	"github.com/travisbcotton/image-thrillhouse/internal/builder"
 	"github.com/travisbcotton/image-thrillhouse/internal/config"
 	"github.com/travisbcotton/image-thrillhouse/internal/container"
@@ -53,6 +56,7 @@ var (
 	layerName      string   // Layer name (within the manifest) to build
 	archName       string   // Target architecture for a multi-arch manifest build (defaults to host arch)
 	skipIfExists   bool     // Skip build when every configured publisher reports the image already exists
+	tempStorage    bool     // Use temporary isolated storage that is automatically cleaned up after the build
 
 	// promote-specific flags
 	releaseTag   string // Human-readable tag to publish under (e.g. release-0.0.1)
@@ -655,6 +659,7 @@ func init() {
 	buildCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
 	buildCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 	buildCmd.Flags().BoolVar(&skipIfExists, "skip-if-exists", false, "skip the build when all publishers report the image already exists")
+	buildCmd.Flags().BoolVar(&tempStorage, "temp-storage", false, "use temporary isolated storage that is automatically cleaned up after the build")
 
 	// Validate-specific flags. Mirrors the build/render shape so users can
 	// dry-run a manifest layer's rendered config — picking validate over
@@ -732,6 +737,63 @@ func buildContext() (context.Context, context.CancelFunc) {
 	return ctx, stop
 }
 
+// setupTempStorage creates a temporary isolated storage directory for
+// container images and layers. The directory is created under the system's
+// temp directory and should be cleaned up with cleanupTempStorage when done.
+//
+// Returns the storage path and a cleanup function, or an error if creation fails.
+// The cleanup function is safe to call even if setup failed (it's a no-op).
+func setupTempStorage() (string, func(), error) {
+	log := slog.With("component", "storage")
+
+	// Create temp directory for container storage
+	tempDir, err := os.MkdirTemp("", "image-thrillhouse-storage-*")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("create temp storage dir: %w", err)
+	}
+
+	log.Info("using temporary storage", "path", tempDir)
+
+	// Create subdirectories for graphroot and runroot
+	graphRoot := filepath.Join(tempDir, "storage")
+	runRoot := filepath.Join(tempDir, "run")
+
+	if err := os.MkdirAll(graphRoot, 0755); err != nil {
+		os.RemoveAll(tempDir)
+		return "", func() {}, fmt.Errorf("create graphroot: %w", err)
+	}
+	if err := os.MkdirAll(runRoot, 0755); err != nil {
+		os.RemoveAll(tempDir)
+		return "", func() {}, fmt.Errorf("create runroot: %w", err)
+	}
+
+	// Configure buildah to use temp storage
+	opts := &storage.StoreOptions{
+		GraphRoot:       graphRoot,
+		RunRoot:         runRoot,
+		GraphDriverName: "overlay",
+		GraphDriverOptions: []string{
+			"mount_program=/usr/bin/fuse-overlayfs",
+		},
+	}
+
+	ibuildah.SetStorageOptions(opts)
+
+	cleanup := func() {
+		log.Debug("cleaning up temporary storage", "path", tempDir)
+		// Reset to default storage
+		ibuildah.SetStorageOptions(nil)
+		// Remove the entire temp directory
+		if err := os.RemoveAll(tempDir); err != nil {
+			log.Warn("failed to remove temp storage", "path", tempDir, "error", err)
+		} else {
+			log.Info("temporary storage cleaned up", "path", tempDir)
+		}
+	}
+
+	return tempDir, cleanup, nil
+}
+
 // runBuild is the main execution function for the build command.
 // It orchestrates the entire image building process:
 //  1. Setup logging
@@ -747,6 +809,15 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	// Configure logging first so we can log everything else
 	if err := setupLogger(logLevel, logFormat); err != nil {
 		return err
+	}
+
+	// Setup temp storage if requested
+	if tempStorage {
+		_, cleanup, err := setupTempStorage()
+		if err != nil {
+			return fmt.Errorf("setup temp storage: %w", err)
+		}
+		defer cleanup()
 	}
 
 	// Validate mutually-exclusive flag combinations. Either a single config
