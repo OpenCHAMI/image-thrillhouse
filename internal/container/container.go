@@ -145,6 +145,13 @@ type Container interface {
 	// GetParent returns the source/from image for the container.
 	GetParent() string
 
+	// PulledParentID returns the ID of the base image if and only if
+	// creating this container pulled it into local storage. It is empty for
+	// scratch builds and whenever the base image was already present, so a
+	// caller pruning on this value never removes an image that predates the
+	// build.
+	PulledParentID() string
+
 	// GetName returns the container name
 	GetName() string
 

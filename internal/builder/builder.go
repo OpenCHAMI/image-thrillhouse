@@ -41,6 +41,9 @@ type Builder struct {
 	newContainer func(context.Context, string, bool) (container.Container, error)
 	publishers   []publisher.Publisher
 	skipIfExists bool
+
+	pruneParent bool               // remove the base image afterwards if this run pulled it
+	pruneImage  func(string) error // seam for tests; defaults to buildah.PruneImage
 }
 
 // New constructs a Builder. cfgPath is the path to the config file that
@@ -57,7 +60,21 @@ func New(cfg *config.Config, cfgPath string, b backend.Backend, p []publisher.Pu
 			return ibuildah.NewContainer(ctx, from, tlsverify)
 		},
 		publishers: p,
+		pruneImage: ibuildah.PruneImage,
 	}
+}
+
+// SetPruneParent toggles removal of the base image once the build is done.
+// It only ever removes an image this run pulled — see
+// container.Container.PulledParentID — so a host that already had the base
+// image keeps it.
+//
+// This runs whether the build succeeded or failed. A build that dies halfway
+// has still pulled the image, and leaving it behind is exactly the
+// accumulation the flag exists to stop; the cost of being wrong is one
+// re-pull on the next run.
+func (b *Builder) SetPruneParent(v bool) {
+	b.pruneParent = v
 }
 
 // SetSkipIfExists toggles the skip-if-exists guard. When true, Build will
@@ -117,6 +134,10 @@ func (b *Builder) Build(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create container: %w", err)
 	}
+	// Registered before c.Delete so that it runs *after* it (defers are
+	// LIFO). The base image can't be removed while the working container
+	// built on top of it still exists.
+	defer b.prunePulledParent(c)
 	defer c.Delete() // Always clean up the container when done
 
 	log.Debug("created container", "id", c.GetID(), "name", c.GetName(), "from", c.GetParent())
@@ -217,6 +238,39 @@ func (b *Builder) Build(ctx context.Context) error {
 		"duration", time.Since(buildStart).Round(time.Millisecond),
 	)
 	return nil
+}
+
+// prunePulledParent removes the base image from local container storage when
+// --prune-parent is set and this run is the one that pulled it.
+//
+// Without this, every build that layers on a remote parent leaves a full copy
+// of that parent in the store forever. On a CI runner doing many builds
+// against many parents that is the dominant source of growth, and nothing in
+// the normal build path ever reclaims it: the working container is deleted,
+// but the image it was created from is not.
+//
+// Failures are logged, not returned. The image is published by this point (or
+// the build already failed for its own reasons); turning a cleanup problem
+// into a build failure would trade a disk-space issue for a pipeline outage.
+func (b *Builder) prunePulledParent(c container.Container) {
+	if !b.pruneParent {
+		return
+	}
+	id := c.PulledParentID()
+	if id == "" {
+		// Scratch build, or the host already had this base image — either
+		// way there is nothing this run introduced to take away.
+		return
+	}
+
+	log := slog.With("component", "builder")
+	log.Debug("pruning pulled base image", "from", b.cfg.Meta.From, "image_id", id)
+	if err := b.pruneImage(id); err != nil {
+		log.Warn("failed to prune pulled base image (continuing)",
+			"from", b.cfg.Meta.From, "image_id", id, "error", err)
+		return
+	}
+	log.Info("pruned pulled base image", "from", b.cfg.Meta.From, "image_id", id)
 }
 
 // applyManagerConfig writes the package manager configuration file if specified.
