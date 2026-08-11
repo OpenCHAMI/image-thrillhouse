@@ -23,8 +23,8 @@ import (
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/container"
-	"github.com/travisbcotton/image-thrillhouse/internal/fsutil"
+	"github.com/openchami/image-thrillhouse/internal/container"
+	"github.com/openchami/image-thrillhouse/internal/fsutil"
 )
 
 // S3Publisher uploads boot images to S3-compatible storage.

@@ -11,9 +11,9 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/backend/cmdutil"
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
-	"github.com/travisbcotton/image-thrillhouse/internal/container"
+	"github.com/openchami/image-thrillhouse/internal/backend/cmdutil"
+	"github.com/openchami/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/container"
 )
 
 // AptBackend implements the Backend interface for APT-based distributions.

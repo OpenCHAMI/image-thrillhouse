@@ -14,9 +14,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/backend/cmdutil"
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
-	"github.com/travisbcotton/image-thrillhouse/internal/container"
+	"github.com/openchami/image-thrillhouse/internal/backend/cmdutil"
+	"github.com/openchami/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/container"
 )
 
 // MmdebstrapBackend implements the Backend interface for mmdebstrap.

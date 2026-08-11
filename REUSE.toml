@@ -1,7 +1,7 @@
 version = 1
 SPDX-PackageName = "image-thrillhouse"
 SPDX-PackageSupplier = "OpenCHAMI <info@openchami.org>"
-SPDX-PackageDownloadLocation = "https://github.com/travisbcotton/image-thrillhouse"
+SPDX-PackageDownloadLocation = "https://github.com/openchami/image-thrillhouse"
 
 # Documentation and Markdown files (no clean comment syntax for inline headers).
 [[annotations]]

@@ -7,7 +7,7 @@ package promote
 import (
 	"testing"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/config"
 )
 
 func TestRegistrySourceRef(t *testing.T) {

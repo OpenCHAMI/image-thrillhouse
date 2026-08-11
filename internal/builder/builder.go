@@ -20,15 +20,15 @@ import (
 	"time"
 
 	"github.com/mattn/go-shellwords"
-	"github.com/travisbcotton/image-thrillhouse/internal/backend"
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
-	"github.com/travisbcotton/image-thrillhouse/internal/container"
-	"github.com/travisbcotton/image-thrillhouse/internal/fetch"
-	"github.com/travisbcotton/image-thrillhouse/internal/labels"
-	"github.com/travisbcotton/image-thrillhouse/internal/oscap"
-	"github.com/travisbcotton/image-thrillhouse/internal/publisher"
+	"github.com/openchami/image-thrillhouse/internal/backend"
+	"github.com/openchami/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/container"
+	"github.com/openchami/image-thrillhouse/internal/fetch"
+	"github.com/openchami/image-thrillhouse/internal/labels"
+	"github.com/openchami/image-thrillhouse/internal/oscap"
+	"github.com/openchami/image-thrillhouse/internal/publisher"
 
-	ibuildah "github.com/travisbcotton/image-thrillhouse/internal/buildah"
+	ibuildah "github.com/openchami/image-thrillhouse/internal/buildah"
 )
 
 // Builder orchestrates the image building process.

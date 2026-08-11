@@ -9,7 +9,7 @@ Version:        0.1.0
 Release:        1%{?dist}
 Summary:        Go-based image builder wrapping buildah
 License:        MIT
-URL:            https://github.com/travisbcotton/image-thrillhouse
+URL:            https://github.com/openchami/image-thrillhouse
 Source0:        %{name}-%{version}.tar.gz
 
 # BuildRequires intentionally left empty - Go is installed via GitHub Actions

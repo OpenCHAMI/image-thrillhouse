@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/config"
 )
 
 // minimalConfig is just enough YAML to pass config validation during tag

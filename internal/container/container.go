@@ -10,7 +10,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/config"
 	"go.podman.io/buildah/define"
 )
 

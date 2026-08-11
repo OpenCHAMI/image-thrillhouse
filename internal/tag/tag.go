@@ -17,7 +17,7 @@ import (
 
 	"go.podman.io/storage/pkg/fileutils"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/config"
 )
 
 // SelfTagSentinel is the value bound to {{ .tag }} when a config is rendered

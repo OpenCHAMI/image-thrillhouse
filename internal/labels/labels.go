@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/config"
 )
 
 // Generator creates image labels based on configuration.

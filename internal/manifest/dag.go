@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
-	"github.com/travisbcotton/image-thrillhouse/internal/tag"
+	"github.com/openchami/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/tag"
 )
 
 type DAG struct {
