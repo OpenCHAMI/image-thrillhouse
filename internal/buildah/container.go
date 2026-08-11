@@ -382,6 +382,10 @@ func (c *Container) RunScript(ctx context.Context, script string, out container.
 //  2. Src: Path to a file on the host filesystem
 //  3. URL: HTTP URL to fetch the content from
 //
+// Optional file properties:
+//   - Mode: File permissions (e.g., "0755", "0644")
+//   - Owner: Ownership as "uid:gid" or "user:group"
+//
 // The file is written through a temporary file on the host and then added
 // to the container using Buildah's Add method.
 func (c *Container) WriteFile(ctx context.Context, file config.File) error {
@@ -429,10 +433,13 @@ func (c *Container) WriteFile(ctx context.Context, file config.File) error {
 		return fmt.Errorf("close temp file: %w", err)
 	}
 
-	// Set up AddAndCopyOptions with chmod if specified
+	// Set up AddAndCopyOptions with chmod and chown if specified
 	addOpts := buildah.AddAndCopyOptions{}
 	if file.Mode != "" {
 		addOpts.Chmod = file.Mode
+	}
+	if file.Owner != "" {
+		addOpts.Chown = file.Owner
 	}
 
 	if err := c.Builder.Add(file.Path, false, addOpts, tmp.Name()); err != nil {
