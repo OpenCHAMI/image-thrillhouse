@@ -11,8 +11,10 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 
 	"go.podman.io/storage/pkg/fileutils"
@@ -102,6 +104,33 @@ func hashLayer(h io.Writer, layer LayerInput) error {
 	for _, d := range layer.Cfg.Layer.Directories {
 		if err := hashDirectory(h, d); err != nil {
 			return fmt.Errorf("hash directory %s: %w", d.Src, err)
+		}
+	}
+
+	// Hash Ansible content paths (playbooks, roles, inventory) - these are
+	// bind-mounted at runtime so not committed to the layer, but their
+	// content must still affect the tag since they influence the build result.
+	// If the path is a git submodule, hash its commit SHA; otherwise hash
+	// the directory contents.
+	for _, cmd := range layer.Cfg.Layer.Actions.Commands {
+		if cmd.Ansible != nil {
+			if cmd.Ansible.Playbook != "" {
+				// Hash the directory containing the playbook
+				playbookDir := filepath.Dir(cmd.Ansible.Playbook)
+				if err := hashPathOrSubmodule(h, playbookDir); err != nil {
+					return fmt.Errorf("hash ansible playbook dir %s: %w", playbookDir, err)
+				}
+			}
+			if cmd.Ansible.Roles != "" {
+				if err := hashPathOrSubmodule(h, cmd.Ansible.Roles); err != nil {
+					return fmt.Errorf("hash ansible roles %s: %w", cmd.Ansible.Roles, err)
+				}
+			}
+			if cmd.Ansible.Inventory != "" {
+				if err := hashPathOrSubmodule(h, cmd.Ansible.Inventory); err != nil {
+					return fmt.Errorf("hash ansible inventory %s: %w", cmd.Ansible.Inventory, err)
+				}
+			}
 		}
 	}
 
@@ -288,4 +317,73 @@ func hashFile(h io.Writer, path string) error {
 	}
 	_, err = io.Copy(h, f)
 	return err
+}
+
+// isGitSubmodule checks if the given path is a git submodule by examining
+// whether .git is a file (submodule gitdir pointer) rather than a directory
+// (regular repository).
+func isGitSubmodule(path string) bool {
+	gitPath := filepath.Join(path, ".git")
+	info, err := os.Lstat(gitPath)
+	if err != nil {
+		return false
+	}
+	// In a submodule, .git is a file containing "gitdir: <path>"
+	// In a regular repo, .git is a directory
+	return !info.IsDir()
+}
+
+// getSubmoduleCommit returns the current commit SHA of the git submodule at
+// the given path. It uses 'git rev-parse HEAD' to get the commit.
+func getSubmoduleCommit(path string) (string, error) {
+	cmd := exec.Command("git", "-C", path, "rev-parse", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse failed: %w", err)
+	}
+	commit := strings.TrimSpace(string(output))
+	if commit == "" {
+		return "", fmt.Errorf("git rev-parse returned empty commit")
+	}
+	return commit, nil
+}
+
+// hashPathOrSubmodule hashes a path, using the git commit SHA if it's a
+// submodule, or falling back to hashing the directory contents otherwise.
+// This ensures that submodule updates (which change the commit SHA but not
+// necessarily the filesystem mtime) properly invalidate the layer cache.
+func hashPathOrSubmodule(h io.Writer, path string) error {
+	if path == "" {
+		return nil
+	}
+
+	// Check if path exists
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+
+	// If it's a file (e.g., a single playbook), hash it directly
+	if !info.IsDir() {
+		return hashFile(h, path)
+	}
+
+	// If it's a git submodule, hash its commit SHA
+	if isGitSubmodule(path) {
+		commit, err := getSubmoduleCommit(path)
+		if err != nil {
+			// If we can't get the commit (e.g., git not available),
+			// fall back to hashing directory contents
+			return hashDirectory(h, config.Directory{Src: path})
+		}
+		// Hash the commit SHA prefixed with a marker to distinguish
+		// it from regular directory content hashes
+		if err := writeLengthPrefixedString(h, "git-submodule-commit"); err != nil {
+			return err
+		}
+		return writeLengthPrefixedString(h, commit)
+	}
+
+	// Default: hash the directory contents
+	return hashDirectory(h, config.Directory{Src: path})
 }

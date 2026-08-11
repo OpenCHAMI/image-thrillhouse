@@ -346,3 +346,274 @@ layer:
 		t.Error("src file content change should change hash")
 	}
 }
+
+// TestCompute_AnsibleRolesHashed verifies that Ansible roles directory
+// content is hashed, so changes to roles affect the layer tag.
+func TestCompute_AnsibleRolesHashed(t *testing.T) {
+	dir := t.TempDir()
+	rolesDir := filepath.Join(dir, "roles")
+	if err := os.Mkdir(rolesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chronyDir := filepath.Join(rolesDir, "chrony", "tasks")
+	if err := os.MkdirAll(chronyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mainYaml := filepath.Join(chronyDir, "main.yaml")
+	if err := os.WriteFile(mainYaml, []byte("# chrony role v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := `meta:
+  name: test
+  tags: ["1"]
+layer:
+  manager:
+    name: dnf
+  actions:
+    commands:
+      - ansible:
+          playbook: ` + filepath.Join(dir, "playbook.yaml") + `
+          roles: ` + rolesDir + `
+          groups: [compute]
+`
+	layer1 := input(t, cfg)
+	h1, err := Compute(layer1, nil)
+	if err != nil {
+		t.Fatalf("Compute 1: %v", err)
+	}
+
+	// Change role content
+	if err := os.WriteFile(mainYaml, []byte("# chrony role v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	layer2 := input(t, cfg)
+	h2, err := Compute(layer2, nil)
+	if err != nil {
+		t.Fatalf("Compute 2: %v", err)
+	}
+
+	if h1 == h2 {
+		t.Errorf("ansible roles content change should change hash, both = %s", h1)
+	}
+}
+
+// TestCompute_AnsibleInventoryHashed verifies that Ansible inventory
+// directory content is hashed.
+func TestCompute_AnsibleInventoryHashed(t *testing.T) {
+	dir := t.TempDir()
+	invDir := filepath.Join(dir, "inventory")
+	if err := os.Mkdir(invDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hostsFile := filepath.Join(invDir, "hosts")
+	if err := os.WriteFile(hostsFile, []byte("[compute]\nlocalhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := `meta:
+  name: test
+  tags: ["1"]
+layer:
+  manager:
+    name: dnf
+  actions:
+    commands:
+      - ansible:
+          playbook: ` + filepath.Join(dir, "playbook.yaml") + `
+          inventory: ` + invDir + `
+          groups: [compute]
+`
+	layer1 := input(t, cfg)
+	h1, err := Compute(layer1, nil)
+	if err != nil {
+		t.Fatalf("Compute 1: %v", err)
+	}
+
+	// Change inventory content
+	if err := os.WriteFile(hostsFile, []byte("[compute]\nlocalhost\nnode1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	layer2 := input(t, cfg)
+	h2, err := Compute(layer2, nil)
+	if err != nil {
+		t.Fatalf("Compute 2: %v", err)
+	}
+
+	if h1 == h2 {
+		t.Errorf("ansible inventory content change should change hash, both = %s", h1)
+	}
+}
+
+// TestCompute_AnsiblePlaybookDirHashed verifies that the directory containing
+// the playbook is hashed (not just the playbook file itself).
+func TestCompute_AnsiblePlaybookDirHashed(t *testing.T) {
+	dir := t.TempDir()
+	playbooksDir := filepath.Join(dir, "playbooks")
+	if err := os.Mkdir(playbooksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	playbook := filepath.Join(playbooksDir, "compute.yaml")
+	if err := os.WriteFile(playbook, []byte("---\n- name: test\n  hosts: all\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := `meta:
+  name: test
+  tags: ["1"]
+layer:
+  manager:
+    name: dnf
+  actions:
+    commands:
+      - ansible:
+          playbook: ` + playbook + `
+          groups: [compute]
+`
+	layer1 := input(t, cfg)
+	h1, err := Compute(layer1, nil)
+	if err != nil {
+		t.Fatalf("Compute 1: %v", err)
+	}
+
+	// Add another playbook in the same directory
+	newPlaybook := filepath.Join(playbooksDir, "common.yaml")
+	if err := os.WriteFile(newPlaybook, []byte("---\n- name: common\n  hosts: all\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	layer2 := input(t, cfg)
+	h2, err := Compute(layer2, nil)
+	if err != nil {
+		t.Fatalf("Compute 2: %v", err)
+	}
+
+	if h1 == h2 {
+		t.Errorf("adding file to playbook dir should change hash, both = %s", h1)
+	}
+}
+
+// TestIsGitSubmodule verifies the git submodule detection logic.
+func TestIsGitSubmodule(t *testing.T) {
+	dir := t.TempDir()
+
+	// Regular directory (not a git repo) should not be a submodule
+	if isGitSubmodule(dir) {
+		t.Error("non-git directory detected as submodule")
+	}
+
+	// Create a regular git repo (not a submodule)
+	gitDir := filepath.Join(dir, "regular-repo")
+	if err := os.MkdirAll(filepath.Join(gitDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if isGitSubmodule(gitDir) {
+		t.Error("regular git repo detected as submodule")
+	}
+
+	// Create a simulated submodule (.git is a file, not a directory)
+	submoduleDir := filepath.Join(dir, "submodule-repo")
+	if err := os.Mkdir(submoduleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitFile := filepath.Join(submoduleDir, ".git")
+	if err := os.WriteFile(gitFile, []byte("gitdir: ../.git/modules/submodule-repo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !isGitSubmodule(submoduleDir) {
+		t.Error("simulated submodule not detected as submodule")
+	}
+}
+
+// TestHashPathOrSubmodule_RegularDirectory verifies that regular directories
+// (non-submodules) are hashed by their contents.
+func TestHashPathOrSubmodule_RegularDirectory(t *testing.T) {
+	dir := t.TempDir()
+	rolesDir := filepath.Join(dir, "roles")
+	if err := os.Mkdir(rolesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rolesDir, "role.yaml"), []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := `meta:
+  name: test
+  tags: ["1"]
+layer:
+  manager:
+    name: dnf
+  actions:
+    commands:
+      - ansible:
+          playbook: /tmp/playbook.yaml
+          roles: ` + rolesDir + `
+          groups: [compute]
+`
+	layer1 := input(t, cfg)
+	h1, err := Compute(layer1, nil)
+	if err != nil {
+		t.Fatalf("Compute 1: %v", err)
+	}
+
+	// Modify file content
+	if err := os.WriteFile(filepath.Join(rolesDir, "role.yaml"), []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	layer2 := input(t, cfg)
+	h2, err := Compute(layer2, nil)
+	if err != nil {
+		t.Fatalf("Compute 2: %v", err)
+	}
+
+	if h1 == h2 {
+		t.Error("regular directory content change should change hash")
+	}
+}
+
+// TestGetSubmoduleCommit verifies that we can extract the commit SHA from
+// a git submodule.
+func TestGetSubmoduleCommit(t *testing.T) {
+	// This test requires git to be available
+	if _, err := os.Stat("/usr/bin/git"); err != nil {
+		if _, err := os.Stat("/usr/local/bin/git"); err != nil {
+			t.Skip("git not available")
+		}
+	}
+
+	// Use the current repo (which is a git repo) as the test subject
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Navigate up to the repo root
+	repoRoot := filepath.Join(cwd, "..", "..")
+	
+	// Check if it's a git repo
+	if _, err := os.Stat(filepath.Join(repoRoot, ".git")); err != nil {
+		t.Skip("not in a git repository")
+	}
+
+	// Get commit from the actual repo (not a submodule, but tests the git command)
+	commit, err := getSubmoduleCommit(repoRoot)
+	if err != nil {
+		t.Fatalf("getSubmoduleCommit failed: %v", err)
+	}
+
+	// Verify it looks like a commit SHA (40 hex chars)
+	if len(commit) != 40 {
+		t.Errorf("expected 40-char commit SHA, got %d-char %q", len(commit), commit)
+	}
+
+	for _, c := range commit {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			t.Errorf("commit SHA contains non-hex char: %q", commit)
+			break
+		}
+	}
+}
+
