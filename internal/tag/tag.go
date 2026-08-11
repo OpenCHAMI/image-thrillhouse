@@ -10,14 +10,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"syscall"
 
 	"go.podman.io/storage/pkg/fileutils"
-	"gopkg.in/yaml.v3"
 
 	"github.com/openchami/image-thrillhouse/internal/config"
 )
@@ -113,8 +111,12 @@ func hashLayer(h io.Writer, layer LayerInput) error {
 	//
 	// We hash:
 	// - The playbook file itself
-	// - Each role directory referenced in the playbook
+	// - The entire roles directory (default or specified)
 	// - The inventory directory
+	//
+	// This means unrelated role changes may invalidate the cache, but trying
+	// to parse playbook role dependencies would require reimplementing
+	// Ansible's logic (include_role, roles from within roles, etc).
 	for _, cmd := range layer.Cfg.Layer.Actions.Commands {
 		if cmd.Ansible != nil {
 			if err := hashAnsibleCommand(h, cmd.Ansible); err != nil {
@@ -308,44 +310,32 @@ func hashFile(h io.Writer, path string) error {
 	return err
 }
 
-// hashAnsibleCommand hashes all Ansible content referenced by a command:
-// the playbook file, roles referenced in the playbook, and the inventory.
+// hashAnsibleCommand hashes all Ansible content:
+// - The playbook file itself
+// - The entire roles directory (default "roles" or as specified)
+// - The inventory directory or file
 func hashAnsibleCommand(h io.Writer, ansible *config.AnsibleCommand) error {
-	// Hash the playbook file directly
+	// Hash the playbook file
 	if ansible.Playbook != "" {
 		if err := hashFile(h, ansible.Playbook); err != nil {
 			return fmt.Errorf("hash playbook %s: %w", ansible.Playbook, err)
 		}
-
-		// Parse playbook to find referenced roles
-		roles, err := extractRolesFromPlaybook(ansible.Playbook)
-		if err != nil {
-			return fmt.Errorf("extract roles from playbook %s: %w", ansible.Playbook, err)
-		}
-
-		// Determine roles directory
-		rolesDir := ansible.Roles
-		if rolesDir == "" {
-			rolesDir = "roles" // Default roles directory
-		}
-
-		// Hash each role directory referenced in the playbook
-		for _, roleName := range roles {
-			roleDir := filepath.Join(rolesDir, roleName)
-			if _, err := os.Stat(roleDir); err != nil {
-				if os.IsNotExist(err) {
-					slog.Warn("ansible role directory not found", "role", roleName, "path", roleDir)
-					continue
-				}
-				return fmt.Errorf("stat role directory %s: %w", roleDir, err)
-			}
-			if err := hashDirectory(h, config.Directory{Src: roleDir}); err != nil {
-				return fmt.Errorf("hash role directory %s: %w", roleDir, err)
-			}
-		}
 	}
 
-	// Hash inventory directory if specified
+	// Hash the roles directory (entire directory, not selective)
+	rolesDir := ansible.Roles
+	if rolesDir == "" {
+		rolesDir = "roles" // Default roles directory per Ansible convention
+	}
+	if _, err := os.Stat(rolesDir); err == nil {
+		// Roles directory exists, hash it
+		if err := hashDirectory(h, config.Directory{Src: rolesDir}); err != nil {
+			return fmt.Errorf("hash roles directory %s: %w", rolesDir, err)
+		}
+	}
+	// If roles directory doesn't exist, that's fine - skip it silently
+
+	// Hash inventory directory or file
 	if ansible.Inventory != "" {
 		info, err := os.Stat(ansible.Inventory)
 		if err != nil {
@@ -364,104 +354,4 @@ func hashAnsibleCommand(h io.Writer, ansible *config.AnsibleCommand) error {
 	}
 
 	return nil
-}
-
-// extractRolesFromPlaybook parses an Ansible playbook YAML file and extracts
-// all role names referenced in it. It handles multiple syntaxes:
-// - roles: [role1, role2]
-// - roles: [{name: role1}, {name: role2}]
-// - tasks: [{include_role: {name: role1}}]
-// - tasks: [{import_role: {name: role1}}]
-func extractRolesFromPlaybook(playbookPath string) ([]string, error) {
-	data, err := os.ReadFile(playbookPath)
-	if err != nil {
-		return nil, err
-	}
-
-	var plays []map[string]interface{}
-	if err := yaml.Unmarshal(data, &plays); err != nil {
-		return nil, fmt.Errorf("parse playbook yaml: %w", err)
-	}
-
-	roleSet := make(map[string]bool)
-	for _, play := range plays {
-		// Extract from roles section
-		if rolesRaw, ok := play["roles"]; ok {
-			extractRolesFromSection(rolesRaw, roleSet)
-		}
-
-		// Extract from pre_tasks, tasks, post_tasks
-		for _, taskSection := range []string{"pre_tasks", "tasks", "post_tasks"} {
-			if tasksRaw, ok := play[taskSection]; ok {
-				extractRolesFromTasks(tasksRaw, roleSet)
-			}
-		}
-	}
-
-	// Convert set to sorted slice for deterministic hashing
-	roles := make([]string, 0, len(roleSet))
-	for role := range roleSet {
-		roles = append(roles, role)
-	}
-	sort.Strings(roles)
-	return roles, nil
-}
-
-// extractRolesFromSection extracts role names from a roles: section
-func extractRolesFromSection(rolesRaw interface{}, roleSet map[string]bool) {
-	switch roles := rolesRaw.(type) {
-	case []interface{}:
-		for _, roleRaw := range roles {
-			switch role := roleRaw.(type) {
-			case string:
-				// Simple string: roles: [role1, role2]
-				roleSet[role] = true
-			case map[string]interface{}:
-				// Object form: roles: [{name: role1, ...}]
-				if name, ok := role["name"].(string); ok {
-					roleSet[name] = true
-				}
-				// Also check "role" key (alternative syntax)
-				if name, ok := role["role"].(string); ok {
-					roleSet[name] = true
-				}
-			}
-		}
-	}
-}
-
-// extractRolesFromTasks extracts role names from task lists
-func extractRolesFromTasks(tasksRaw interface{}, roleSet map[string]bool) {
-	tasks, ok := tasksRaw.([]interface{})
-	if !ok {
-		return
-	}
-
-	for _, taskRaw := range tasks {
-		task, ok := taskRaw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		// Check for include_role or import_role
-		for _, key := range []string{"include_role", "import_role", "ansible.builtin.include_role", "ansible.builtin.import_role"} {
-			if roleInfo, ok := task[key]; ok {
-				switch ri := roleInfo.(type) {
-				case string:
-					// Direct string: include_role: role1
-					roleSet[ri] = true
-				case map[string]interface{}:
-					// Object: include_role: {name: role1}
-					if name, ok := ri["name"].(string); ok {
-						roleSet[name] = true
-					}
-				}
-			}
-		}
-
-		// Handle block recursively
-		if blockRaw, ok := task["block"]; ok {
-			extractRolesFromTasks(blockRaw, roleSet)
-		}
-	}
 }

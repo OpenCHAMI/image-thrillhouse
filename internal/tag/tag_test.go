@@ -347,8 +347,8 @@ layer:
 	}
 }
 
-// TestCompute_AnsibleRolesHashed verifies that Ansible roles referenced
-// in playbooks are hashed, so changes to role content affect the layer tag.
+// TestCompute_AnsibleRolesHashed verifies that Ansible roles directory
+// content is hashed, so changes to any role affect the layer tag.
 func TestCompute_AnsibleRolesHashed(t *testing.T) {
 	dir := t.TempDir()
 	rolesDir := filepath.Join(dir, "roles")
@@ -364,15 +364,15 @@ func TestCompute_AnsibleRolesHashed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create playbook that references the chrony role
+	// Create a simple playbook
 	playbook := filepath.Join(dir, "playbook.yaml")
 	playbookContent := `---
 - name: test
   hosts: all
   tasks:
-    - name: Include chrony role
-      ansible.builtin.include_role:
-        name: chrony
+    - name: test task
+      debug:
+        msg: hello
 `
 	if err := os.WriteFile(playbook, []byte(playbookContent), 0o644); err != nil {
 		t.Fatal(err)
@@ -468,7 +468,7 @@ layer:
 }
 
 // TestCompute_AnsiblePlaybookHashed verifies that the playbook file itself
-// is hashed (not the directory).
+// is hashed.
 func TestCompute_AnsiblePlaybookHashed(t *testing.T) {
 	dir := t.TempDir()
 	playbook := filepath.Join(dir, "compute.yaml")
@@ -508,27 +508,11 @@ layer:
 	if h1 == h2 {
 		t.Errorf("playbook content change should change hash, both = %s", h1)
 	}
-
-	// Now add another playbook in the same directory (should NOT affect hash)
-	anotherPlaybook := filepath.Join(dir, "common.yaml")
-	if err := os.WriteFile(anotherPlaybook, []byte("---\n- name: common\n  hosts: all\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	layer3 := input(t, cfg)
-	h3, err := Compute(layer3, nil)
-	if err != nil {
-		t.Fatalf("Compute 3: %v", err)
-	}
-
-	if h2 != h3 {
-		t.Errorf("adding unreferenced playbook should NOT change hash: h2=%s h3=%s", h2, h3)
-	}
 }
 
-// TestCompute_AnsibleOnlyReferencedRoles verifies that only roles actually
-// referenced in the playbook are hashed, not all roles in the roles directory.
-func TestCompute_AnsibleOnlyReferencedRoles(t *testing.T) {
+// TestCompute_AnsibleAllRolesHashed verifies that ALL roles in the roles
+// directory are hashed, even if not referenced in the playbook.
+func TestCompute_AnsibleAllRolesHashed(t *testing.T) {
 	dir := t.TempDir()
 	rolesDir := filepath.Join(dir, "roles")
 	
@@ -549,14 +533,14 @@ func TestCompute_AnsibleOnlyReferencedRoles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Playbook only references chrony, not ntp
+	// Playbook doesn't reference either role
 	playbook := filepath.Join(dir, "playbook.yaml")
 	playbookContent := `---
 - name: test
   hosts: all
   tasks:
-    - include_role:
-        name: chrony
+    - debug:
+        msg: hello
 `
 	if err := os.WriteFile(playbook, []byte(playbookContent), 0o644); err != nil {
 		t.Fatal(err)
@@ -581,7 +565,7 @@ layer:
 		t.Fatalf("Compute 1: %v", err)
 	}
 
-	// Modify the ntp role (which is NOT referenced) - hash should NOT change
+	// Modify ANY role - hash should change even if not referenced
 	if err := os.WriteFile(filepath.Join(ntpDir, "main.yaml"), []byte("# ntp modified\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -592,23 +576,8 @@ layer:
 		t.Fatalf("Compute 2: %v", err)
 	}
 
-	if h1 != h2 {
-		t.Errorf("unreferenced role change should NOT change hash: h1=%s h2=%s", h1, h2)
-	}
-
-	// Modify the chrony role (which IS referenced) - hash SHOULD change
-	if err := os.WriteFile(filepath.Join(chronyDir, "main.yaml"), []byte("# chrony modified\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	layer3 := input(t, cfg)
-	h3, err := Compute(layer3, nil)
-	if err != nil {
-		t.Fatalf("Compute 3: %v", err)
-	}
-
-	if h2 == h3 {
-		t.Errorf("referenced role change should change hash, both = %s", h2)
+	if h1 == h2 {
+		t.Errorf("any role change should change hash (entire roles dir is hashed), both = %s", h1)
 	}
 }
 
@@ -627,14 +596,14 @@ func TestCompute_AnsibleDefaultRolesDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Playbook references chrony
+	// Playbook
 	playbook := filepath.Join(dir, "playbook.yaml")
 	playbookContent := `---
 - name: test
   hosts: all
   tasks:
-    - include_role:
-        name: chrony
+    - debug:
+        msg: hello
 `
 	if err := os.WriteFile(playbook, []byte(playbookContent), 0o644); err != nil {
 		t.Fatal(err)
@@ -686,102 +655,42 @@ layer:
 	}
 }
 
-// TestExtractRolesFromPlaybook verifies the role extraction logic handles
-// various Ansible syntaxes.
-func TestExtractRolesFromPlaybook(t *testing.T) {
-	tests := []struct {
-		name          string
-		playbook      string
-		expectedRoles []string
-	}{
-		{
-			name: "roles section with strings",
-			playbook: `---
-- name: test
-  hosts: all
-  roles:
-    - chrony
-    - ntp
-`,
-			expectedRoles: []string{"chrony", "ntp"},
-		},
-		{
-			name: "roles section with objects",
-			playbook: `---
-- name: test
-  hosts: all
-  roles:
-    - name: chrony
-    - name: ntp
-`,
-			expectedRoles: []string{"chrony", "ntp"},
-		},
-		{
-			name: "include_role in tasks",
-			playbook: `---
+// TestCompute_AnsibleMissingRolesDir verifies that missing roles directory
+// doesn't cause an error (it's optional).
+func TestCompute_AnsibleMissingRolesDir(t *testing.T) {
+	dir := t.TempDir()
+
+	// Playbook exists, but no roles directory
+	playbook := filepath.Join(dir, "playbook.yaml")
+	playbookContent := `---
 - name: test
   hosts: all
   tasks:
-    - include_role:
-        name: chrony
-    - import_role:
-        name: ntp
-`,
-			expectedRoles: []string{"chrony", "ntp"},
-		},
-		{
-			name: "ansible.builtin namespace",
-			playbook: `---
-- name: test
-  hosts: all
-  tasks:
-    - ansible.builtin.include_role:
-        name: chrony
-`,
-			expectedRoles: []string{"chrony"},
-		},
-		{
-			name: "mixed syntax",
-			playbook: `---
-- name: play1
-  hosts: all
-  roles:
-    - chrony
-  tasks:
-    - include_role:
-        name: ntp
-- name: play2
-  hosts: all
-  roles:
-    - name: sshd
-`,
-			expectedRoles: []string{"chrony", "ntp", "sshd"},
-		},
+    - debug:
+        msg: hello
+`
+	if err := os.WriteFile(playbook, []byte(playbookContent), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			playbook := filepath.Join(dir, "playbook.yaml")
-			if err := os.WriteFile(playbook, []byte(tt.playbook), 0o644); err != nil {
-				t.Fatal(err)
-			}
-
-			roles, err := extractRolesFromPlaybook(playbook)
-			if err != nil {
-				t.Fatalf("extractRolesFromPlaybook failed: %v", err)
-			}
-
-			if len(roles) != len(tt.expectedRoles) {
-				t.Errorf("expected %d roles, got %d: %v", len(tt.expectedRoles), len(roles), roles)
-			}
-
-			for i, expected := range tt.expectedRoles {
-				if i >= len(roles) || roles[i] != expected {
-					t.Errorf("expected role[%d] = %s, got %v", i, expected, roles)
-				}
-			}
-		})
+	cfg := `meta:
+  name: test
+  tags: ["1"]
+layer:
+  manager:
+    name: dnf
+  actions:
+    commands:
+      - ansible:
+          playbook: ` + playbook + `
+          roles: ` + filepath.Join(dir, "nonexistent-roles") + `
+          groups: [compute]
+`
+	
+	layer := input(t, cfg)
+	_, err := Compute(layer, nil)
+	if err != nil {
+		t.Errorf("missing roles directory should not cause error: %v", err)
 	}
 }
 
