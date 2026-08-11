@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: image-thrillhouse
-Upstream-Contact: Travis Cotton <travis@example.com>
-Source: https://github.com/travisbcotton/image-thrillhouse
+Upstream-Contact: Travis Cotton <trcotton@lanl.gov>
+Source: https://github.com/openchami/image-thrillhouse
 
 Files: *
 Copyright: 2026 OpenCHAMI a Series of LF Projects, LLC

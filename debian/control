@@ -1,14 +1,14 @@
 Source: image-thrillhouse
 Section: admin
 Priority: optional
-Maintainer: Travis Cotton <travis@example.com>
+Maintainer: Travis Cotton <trcotton@lanl.gov>
 Build-Depends: debhelper-compat (= 13),
                pkg-config,
                libgpgme-dev
 Standards-Version: 4.6.2
-Homepage: https://github.com/travisbcotton/image-thrillhouse
-Vcs-Browser: https://github.com/travisbcotton/image-thrillhouse
-Vcs-Git: https://github.com/travisbcotton/image-thrillhouse.git
+Homepage: https://github.com/openchami/image-thrillhouse
+Vcs-Browser: https://github.com/openchami/image-thrillhouse
+Vcs-Git: https://github.com/openchami/image-thrillhouse.git
 Rules-Requires-Root: no
 
 Package: image-thrillhouse
