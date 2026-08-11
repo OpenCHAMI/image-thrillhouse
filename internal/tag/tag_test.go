@@ -347,8 +347,8 @@ layer:
 	}
 }
 
-// TestCompute_AnsibleRolesHashed verifies that Ansible roles directory
-// content is hashed, so changes to roles affect the layer tag.
+// TestCompute_AnsibleRolesHashed verifies that Ansible roles referenced
+// in playbooks are hashed, so changes to role content affect the layer tag.
 func TestCompute_AnsibleRolesHashed(t *testing.T) {
 	dir := t.TempDir()
 	rolesDir := filepath.Join(dir, "roles")
@@ -364,6 +364,20 @@ func TestCompute_AnsibleRolesHashed(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Create playbook that references the chrony role
+	playbook := filepath.Join(dir, "playbook.yaml")
+	playbookContent := `---
+- name: test
+  hosts: all
+  tasks:
+    - name: Include chrony role
+      ansible.builtin.include_role:
+        name: chrony
+`
+	if err := os.WriteFile(playbook, []byte(playbookContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	cfg := `meta:
   name: test
   tags: ["1"]
@@ -373,7 +387,7 @@ layer:
   actions:
     commands:
       - ansible:
-          playbook: ` + filepath.Join(dir, "playbook.yaml") + `
+          playbook: ` + playbook + `
           roles: ` + rolesDir + `
           groups: [compute]
 `
@@ -412,6 +426,12 @@ func TestCompute_AnsibleInventoryHashed(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Create minimal playbook
+	playbook := filepath.Join(dir, "playbook.yaml")
+	if err := os.WriteFile(playbook, []byte("---\n- name: test\n  hosts: all\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	cfg := `meta:
   name: test
   tags: ["1"]
@@ -421,7 +441,7 @@ layer:
   actions:
     commands:
       - ansible:
-          playbook: ` + filepath.Join(dir, "playbook.yaml") + `
+          playbook: ` + playbook + `
           inventory: ` + invDir + `
           groups: [compute]
 `
@@ -447,15 +467,11 @@ layer:
 	}
 }
 
-// TestCompute_AnsiblePlaybookDirHashed verifies that the directory containing
-// the playbook is hashed (not just the playbook file itself).
-func TestCompute_AnsiblePlaybookDirHashed(t *testing.T) {
+// TestCompute_AnsiblePlaybookHashed verifies that the playbook file itself
+// is hashed (not the directory).
+func TestCompute_AnsiblePlaybookHashed(t *testing.T) {
 	dir := t.TempDir()
-	playbooksDir := filepath.Join(dir, "playbooks")
-	if err := os.Mkdir(playbooksDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	playbook := filepath.Join(playbooksDir, "compute.yaml")
+	playbook := filepath.Join(dir, "compute.yaml")
 	if err := os.WriteFile(playbook, []byte("---\n- name: test\n  hosts: all\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -478,9 +494,8 @@ layer:
 		t.Fatalf("Compute 1: %v", err)
 	}
 
-	// Add another playbook in the same directory
-	newPlaybook := filepath.Join(playbooksDir, "common.yaml")
-	if err := os.WriteFile(newPlaybook, []byte("---\n- name: common\n  hosts: all\n"), 0o644); err != nil {
+	// Modify the playbook content
+	if err := os.WriteFile(playbook, []byte("---\n- name: test updated\n  hosts: all\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -491,51 +506,59 @@ layer:
 	}
 
 	if h1 == h2 {
-		t.Errorf("adding file to playbook dir should change hash, both = %s", h1)
+		t.Errorf("playbook content change should change hash, both = %s", h1)
+	}
+
+	// Now add another playbook in the same directory (should NOT affect hash)
+	anotherPlaybook := filepath.Join(dir, "common.yaml")
+	if err := os.WriteFile(anotherPlaybook, []byte("---\n- name: common\n  hosts: all\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	layer3 := input(t, cfg)
+	h3, err := Compute(layer3, nil)
+	if err != nil {
+		t.Fatalf("Compute 3: %v", err)
+	}
+
+	if h2 != h3 {
+		t.Errorf("adding unreferenced playbook should NOT change hash: h2=%s h3=%s", h2, h3)
 	}
 }
 
-// TestIsGitSubmodule verifies the git submodule detection logic.
-func TestIsGitSubmodule(t *testing.T) {
-	dir := t.TempDir()
-
-	// Regular directory (not a git repo) should not be a submodule
-	if isGitSubmodule(dir) {
-		t.Error("non-git directory detected as submodule")
-	}
-
-	// Create a regular git repo (not a submodule)
-	gitDir := filepath.Join(dir, "regular-repo")
-	if err := os.MkdirAll(filepath.Join(gitDir, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if isGitSubmodule(gitDir) {
-		t.Error("regular git repo detected as submodule")
-	}
-
-	// Create a simulated submodule (.git is a file, not a directory)
-	submoduleDir := filepath.Join(dir, "submodule-repo")
-	if err := os.Mkdir(submoduleDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	gitFile := filepath.Join(submoduleDir, ".git")
-	if err := os.WriteFile(gitFile, []byte("gitdir: ../.git/modules/submodule-repo\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if !isGitSubmodule(submoduleDir) {
-		t.Error("simulated submodule not detected as submodule")
-	}
-}
-
-// TestHashPathOrSubmodule_RegularDirectory verifies that regular directories
-// (non-submodules) are hashed by their contents.
-func TestHashPathOrSubmodule_RegularDirectory(t *testing.T) {
+// TestCompute_AnsibleOnlyReferencedRoles verifies that only roles actually
+// referenced in the playbook are hashed, not all roles in the roles directory.
+func TestCompute_AnsibleOnlyReferencedRoles(t *testing.T) {
 	dir := t.TempDir()
 	rolesDir := filepath.Join(dir, "roles")
-	if err := os.Mkdir(rolesDir, 0o755); err != nil {
+	
+	// Create two roles
+	chronyDir := filepath.Join(rolesDir, "chrony", "tasks")
+	if err := os.MkdirAll(chronyDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(rolesDir, "role.yaml"), []byte("v1"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(chronyDir, "main.yaml"), []byte("# chrony\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ntpDir := filepath.Join(rolesDir, "ntp", "tasks")
+	if err := os.MkdirAll(ntpDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ntpDir, "main.yaml"), []byte("# ntp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Playbook only references chrony, not ntp
+	playbook := filepath.Join(dir, "playbook.yaml")
+	playbookContent := `---
+- name: test
+  hosts: all
+  tasks:
+    - include_role:
+        name: chrony
+`
+	if err := os.WriteFile(playbook, []byte(playbookContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -548,7 +571,7 @@ layer:
   actions:
     commands:
       - ansible:
-          playbook: /tmp/playbook.yaml
+          playbook: ` + playbook + `
           roles: ` + rolesDir + `
           groups: [compute]
 `
@@ -558,8 +581,97 @@ layer:
 		t.Fatalf("Compute 1: %v", err)
 	}
 
-	// Modify file content
-	if err := os.WriteFile(filepath.Join(rolesDir, "role.yaml"), []byte("v2"), 0o644); err != nil {
+	// Modify the ntp role (which is NOT referenced) - hash should NOT change
+	if err := os.WriteFile(filepath.Join(ntpDir, "main.yaml"), []byte("# ntp modified\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	layer2 := input(t, cfg)
+	h2, err := Compute(layer2, nil)
+	if err != nil {
+		t.Fatalf("Compute 2: %v", err)
+	}
+
+	if h1 != h2 {
+		t.Errorf("unreferenced role change should NOT change hash: h1=%s h2=%s", h1, h2)
+	}
+
+	// Modify the chrony role (which IS referenced) - hash SHOULD change
+	if err := os.WriteFile(filepath.Join(chronyDir, "main.yaml"), []byte("# chrony modified\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	layer3 := input(t, cfg)
+	h3, err := Compute(layer3, nil)
+	if err != nil {
+		t.Fatalf("Compute 3: %v", err)
+	}
+
+	if h2 == h3 {
+		t.Errorf("referenced role change should change hash, both = %s", h2)
+	}
+}
+
+// TestCompute_AnsibleDefaultRolesDir verifies that "roles" is used as the
+// default directory when no roles path is specified.
+func TestCompute_AnsibleDefaultRolesDir(t *testing.T) {
+	dir := t.TempDir()
+	
+	// Create roles directory in default location
+	rolesDir := filepath.Join(dir, "roles")
+	chronyDir := filepath.Join(rolesDir, "chrony", "tasks")
+	if err := os.MkdirAll(chronyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(chronyDir, "main.yaml"), []byte("# chrony v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Playbook references chrony
+	playbook := filepath.Join(dir, "playbook.yaml")
+	playbookContent := `---
+- name: test
+  hosts: all
+  tasks:
+    - include_role:
+        name: chrony
+`
+	if err := os.WriteFile(playbook, []byte(playbookContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Config doesn't specify roles directory - should default to "roles"
+	cfg := `meta:
+  name: test
+  tags: ["1"]
+layer:
+  manager:
+    name: dnf
+  actions:
+    commands:
+      - ansible:
+          playbook: ` + playbook + `
+          groups: [compute]
+`
+	
+	// Change to the dir so relative "roles" path resolves correctly
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	layer1 := input(t, cfg)
+	h1, err := Compute(layer1, nil)
+	if err != nil {
+		t.Fatalf("Compute 1: %v", err)
+	}
+
+	// Modify the role
+	if err := os.WriteFile(filepath.Join(chronyDir, "main.yaml"), []byte("# chrony v2\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -570,50 +682,106 @@ layer:
 	}
 
 	if h1 == h2 {
-		t.Error("regular directory content change should change hash")
+		t.Errorf("role in default roles dir should affect hash, both = %s", h1)
 	}
 }
 
-// TestGetSubmoduleCommit verifies that we can extract the commit SHA from
-// a git submodule.
-func TestGetSubmoduleCommit(t *testing.T) {
-	// This test requires git to be available
-	if _, err := os.Stat("/usr/bin/git"); err != nil {
-		if _, err := os.Stat("/usr/local/bin/git"); err != nil {
-			t.Skip("git not available")
-		}
+// TestExtractRolesFromPlaybook verifies the role extraction logic handles
+// various Ansible syntaxes.
+func TestExtractRolesFromPlaybook(t *testing.T) {
+	tests := []struct {
+		name          string
+		playbook      string
+		expectedRoles []string
+	}{
+		{
+			name: "roles section with strings",
+			playbook: `---
+- name: test
+  hosts: all
+  roles:
+    - chrony
+    - ntp
+`,
+			expectedRoles: []string{"chrony", "ntp"},
+		},
+		{
+			name: "roles section with objects",
+			playbook: `---
+- name: test
+  hosts: all
+  roles:
+    - name: chrony
+    - name: ntp
+`,
+			expectedRoles: []string{"chrony", "ntp"},
+		},
+		{
+			name: "include_role in tasks",
+			playbook: `---
+- name: test
+  hosts: all
+  tasks:
+    - include_role:
+        name: chrony
+    - import_role:
+        name: ntp
+`,
+			expectedRoles: []string{"chrony", "ntp"},
+		},
+		{
+			name: "ansible.builtin namespace",
+			playbook: `---
+- name: test
+  hosts: all
+  tasks:
+    - ansible.builtin.include_role:
+        name: chrony
+`,
+			expectedRoles: []string{"chrony"},
+		},
+		{
+			name: "mixed syntax",
+			playbook: `---
+- name: play1
+  hosts: all
+  roles:
+    - chrony
+  tasks:
+    - include_role:
+        name: ntp
+- name: play2
+  hosts: all
+  roles:
+    - name: sshd
+`,
+			expectedRoles: []string{"chrony", "ntp", "sshd"},
+		},
 	}
 
-	// Use the current repo (which is a git repo) as the test subject
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			playbook := filepath.Join(dir, "playbook.yaml")
+			if err := os.WriteFile(playbook, []byte(tt.playbook), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	// Navigate up to the repo root
-	repoRoot := filepath.Join(cwd, "..", "..")
-	
-	// Check if it's a git repo
-	if _, err := os.Stat(filepath.Join(repoRoot, ".git")); err != nil {
-		t.Skip("not in a git repository")
-	}
+			roles, err := extractRolesFromPlaybook(playbook)
+			if err != nil {
+				t.Fatalf("extractRolesFromPlaybook failed: %v", err)
+			}
 
-	// Get commit from the actual repo (not a submodule, but tests the git command)
-	commit, err := getSubmoduleCommit(repoRoot)
-	if err != nil {
-		t.Fatalf("getSubmoduleCommit failed: %v", err)
-	}
+			if len(roles) != len(tt.expectedRoles) {
+				t.Errorf("expected %d roles, got %d: %v", len(tt.expectedRoles), len(roles), roles)
+			}
 
-	// Verify it looks like a commit SHA (40 hex chars)
-	if len(commit) != 40 {
-		t.Errorf("expected 40-char commit SHA, got %d-char %q", len(commit), commit)
-	}
-
-	for _, c := range commit {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			t.Errorf("commit SHA contains non-hex char: %q", commit)
-			break
-		}
+			for i, expected := range tt.expectedRoles {
+				if i >= len(roles) || roles[i] != expected {
+					t.Errorf("expected role[%d] = %s, got %v", i, expected, roles)
+				}
+			}
+		})
 	}
 }
 

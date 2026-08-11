@@ -10,14 +10,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
-	"strings"
 	"syscall"
 
 	"go.podman.io/storage/pkg/fileutils"
+	"gopkg.in/yaml.v3"
 
 	"github.com/openchami/image-thrillhouse/internal/config"
 )
@@ -107,29 +107,18 @@ func hashLayer(h io.Writer, layer LayerInput) error {
 		}
 	}
 
-	// Hash Ansible content paths (playbooks, roles, inventory) - these are
-	// bind-mounted at runtime so not committed to the layer, but their
-	// content must still affect the tag since they influence the build result.
-	// If the path is a git submodule, hash its commit SHA; otherwise hash
-	// the directory contents.
+	// Hash Ansible content paths. Unlike other content, Ansible files are
+	// bind-mounted at runtime and not committed to the layer, but they still
+	// affect the build result so must influence the tag.
+	//
+	// We hash:
+	// - The playbook file itself
+	// - Each role directory referenced in the playbook
+	// - The inventory directory
 	for _, cmd := range layer.Cfg.Layer.Actions.Commands {
 		if cmd.Ansible != nil {
-			if cmd.Ansible.Playbook != "" {
-				// Hash the directory containing the playbook
-				playbookDir := filepath.Dir(cmd.Ansible.Playbook)
-				if err := hashPathOrSubmodule(h, playbookDir); err != nil {
-					return fmt.Errorf("hash ansible playbook dir %s: %w", playbookDir, err)
-				}
-			}
-			if cmd.Ansible.Roles != "" {
-				if err := hashPathOrSubmodule(h, cmd.Ansible.Roles); err != nil {
-					return fmt.Errorf("hash ansible roles %s: %w", cmd.Ansible.Roles, err)
-				}
-			}
-			if cmd.Ansible.Inventory != "" {
-				if err := hashPathOrSubmodule(h, cmd.Ansible.Inventory); err != nil {
-					return fmt.Errorf("hash ansible inventory %s: %w", cmd.Ansible.Inventory, err)
-				}
+			if err := hashAnsibleCommand(h, cmd.Ansible); err != nil {
+				return fmt.Errorf("hash ansible command: %w", err)
 			}
 		}
 	}
@@ -319,71 +308,160 @@ func hashFile(h io.Writer, path string) error {
 	return err
 }
 
-// isGitSubmodule checks if the given path is a git submodule by examining
-// whether .git is a file (submodule gitdir pointer) rather than a directory
-// (regular repository).
-func isGitSubmodule(path string) bool {
-	gitPath := filepath.Join(path, ".git")
-	info, err := os.Lstat(gitPath)
-	if err != nil {
-		return false
-	}
-	// In a submodule, .git is a file containing "gitdir: <path>"
-	// In a regular repo, .git is a directory
-	return !info.IsDir()
-}
+// hashAnsibleCommand hashes all Ansible content referenced by a command:
+// the playbook file, roles referenced in the playbook, and the inventory.
+func hashAnsibleCommand(h io.Writer, ansible *config.AnsibleCommand) error {
+	// Hash the playbook file directly
+	if ansible.Playbook != "" {
+		if err := hashFile(h, ansible.Playbook); err != nil {
+			return fmt.Errorf("hash playbook %s: %w", ansible.Playbook, err)
+		}
 
-// getSubmoduleCommit returns the current commit SHA of the git submodule at
-// the given path. It uses 'git rev-parse HEAD' to get the commit.
-func getSubmoduleCommit(path string) (string, error) {
-	cmd := exec.Command("git", "-C", path, "rev-parse", "HEAD")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("git rev-parse failed: %w", err)
-	}
-	commit := strings.TrimSpace(string(output))
-	if commit == "" {
-		return "", fmt.Errorf("git rev-parse returned empty commit")
-	}
-	return commit, nil
-}
-
-// hashPathOrSubmodule hashes a path, using the git commit SHA if it's a
-// submodule, or falling back to hashing the directory contents otherwise.
-// This ensures that submodule updates (which change the commit SHA but not
-// necessarily the filesystem mtime) properly invalidate the layer cache.
-func hashPathOrSubmodule(h io.Writer, path string) error {
-	if path == "" {
-		return nil
-	}
-
-	// Check if path exists
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-
-	// If it's a file (e.g., a single playbook), hash it directly
-	if !info.IsDir() {
-		return hashFile(h, path)
-	}
-
-	// If it's a git submodule, hash its commit SHA
-	if isGitSubmodule(path) {
-		commit, err := getSubmoduleCommit(path)
+		// Parse playbook to find referenced roles
+		roles, err := extractRolesFromPlaybook(ansible.Playbook)
 		if err != nil {
-			// If we can't get the commit (e.g., git not available),
-			// fall back to hashing directory contents
-			return hashDirectory(h, config.Directory{Src: path})
+			return fmt.Errorf("extract roles from playbook %s: %w", ansible.Playbook, err)
 		}
-		// Hash the commit SHA prefixed with a marker to distinguish
-		// it from regular directory content hashes
-		if err := writeLengthPrefixedString(h, "git-submodule-commit"); err != nil {
-			return err
+
+		// Determine roles directory
+		rolesDir := ansible.Roles
+		if rolesDir == "" {
+			rolesDir = "roles" // Default roles directory
 		}
-		return writeLengthPrefixedString(h, commit)
+
+		// Hash each role directory referenced in the playbook
+		for _, roleName := range roles {
+			roleDir := filepath.Join(rolesDir, roleName)
+			if _, err := os.Stat(roleDir); err != nil {
+				if os.IsNotExist(err) {
+					slog.Warn("ansible role directory not found", "role", roleName, "path", roleDir)
+					continue
+				}
+				return fmt.Errorf("stat role directory %s: %w", roleDir, err)
+			}
+			if err := hashDirectory(h, config.Directory{Src: roleDir}); err != nil {
+				return fmt.Errorf("hash role directory %s: %w", roleDir, err)
+			}
+		}
 	}
 
-	// Default: hash the directory contents
-	return hashDirectory(h, config.Directory{Src: path})
+	// Hash inventory directory if specified
+	if ansible.Inventory != "" {
+		info, err := os.Stat(ansible.Inventory)
+		if err != nil {
+			return fmt.Errorf("stat inventory %s: %w", ansible.Inventory, err)
+		}
+		if info.IsDir() {
+			if err := hashDirectory(h, config.Directory{Src: ansible.Inventory}); err != nil {
+				return fmt.Errorf("hash inventory directory %s: %w", ansible.Inventory, err)
+			}
+		} else {
+			// Single inventory file
+			if err := hashFile(h, ansible.Inventory); err != nil {
+				return fmt.Errorf("hash inventory file %s: %w", ansible.Inventory, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// extractRolesFromPlaybook parses an Ansible playbook YAML file and extracts
+// all role names referenced in it. It handles multiple syntaxes:
+// - roles: [role1, role2]
+// - roles: [{name: role1}, {name: role2}]
+// - tasks: [{include_role: {name: role1}}]
+// - tasks: [{import_role: {name: role1}}]
+func extractRolesFromPlaybook(playbookPath string) ([]string, error) {
+	data, err := os.ReadFile(playbookPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var plays []map[string]interface{}
+	if err := yaml.Unmarshal(data, &plays); err != nil {
+		return nil, fmt.Errorf("parse playbook yaml: %w", err)
+	}
+
+	roleSet := make(map[string]bool)
+	for _, play := range plays {
+		// Extract from roles section
+		if rolesRaw, ok := play["roles"]; ok {
+			extractRolesFromSection(rolesRaw, roleSet)
+		}
+
+		// Extract from pre_tasks, tasks, post_tasks
+		for _, taskSection := range []string{"pre_tasks", "tasks", "post_tasks"} {
+			if tasksRaw, ok := play[taskSection]; ok {
+				extractRolesFromTasks(tasksRaw, roleSet)
+			}
+		}
+	}
+
+	// Convert set to sorted slice for deterministic hashing
+	roles := make([]string, 0, len(roleSet))
+	for role := range roleSet {
+		roles = append(roles, role)
+	}
+	sort.Strings(roles)
+	return roles, nil
+}
+
+// extractRolesFromSection extracts role names from a roles: section
+func extractRolesFromSection(rolesRaw interface{}, roleSet map[string]bool) {
+	switch roles := rolesRaw.(type) {
+	case []interface{}:
+		for _, roleRaw := range roles {
+			switch role := roleRaw.(type) {
+			case string:
+				// Simple string: roles: [role1, role2]
+				roleSet[role] = true
+			case map[string]interface{}:
+				// Object form: roles: [{name: role1, ...}]
+				if name, ok := role["name"].(string); ok {
+					roleSet[name] = true
+				}
+				// Also check "role" key (alternative syntax)
+				if name, ok := role["role"].(string); ok {
+					roleSet[name] = true
+				}
+			}
+		}
+	}
+}
+
+// extractRolesFromTasks extracts role names from task lists
+func extractRolesFromTasks(tasksRaw interface{}, roleSet map[string]bool) {
+	tasks, ok := tasksRaw.([]interface{})
+	if !ok {
+		return
+	}
+
+	for _, taskRaw := range tasks {
+		task, ok := taskRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Check for include_role or import_role
+		for _, key := range []string{"include_role", "import_role", "ansible.builtin.include_role", "ansible.builtin.import_role"} {
+			if roleInfo, ok := task[key]; ok {
+				switch ri := roleInfo.(type) {
+				case string:
+					// Direct string: include_role: role1
+					roleSet[ri] = true
+				case map[string]interface{}:
+					// Object: include_role: {name: role1}
+					if name, ok := ri["name"].(string); ok {
+						roleSet[name] = true
+					}
+				}
+			}
+		}
+
+		// Handle block recursively
+		if blockRaw, ok := task["block"]; ok {
+			extractRolesFromTasks(blockRaw, roleSet)
+		}
+	}
 }
