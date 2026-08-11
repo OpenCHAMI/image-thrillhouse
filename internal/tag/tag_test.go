@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/config"
 )
 
 // input parses rendered config YAML into a LayerInput ready for Compute.

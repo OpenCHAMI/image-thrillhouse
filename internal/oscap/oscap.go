@@ -15,9 +15,9 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
-	"github.com/travisbcotton/image-thrillhouse/internal/container"
-	"github.com/travisbcotton/image-thrillhouse/internal/fetch"
+	"github.com/openchami/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/container"
+	"github.com/openchami/image-thrillhouse/internal/fetch"
 )
 
 // Scanner handles OpenSCAP security scanning operations.

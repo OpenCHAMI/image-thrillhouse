@@ -16,8 +16,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
-	"github.com/travisbcotton/image-thrillhouse/internal/container"
+	"github.com/openchami/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/container"
 )
 
 // ansibleANSIRe matches CSI ANSI escape sequences that ansible emits when it

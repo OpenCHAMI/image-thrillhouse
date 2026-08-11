@@ -10,8 +10,8 @@ package backend
 import (
 	"context"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
-	"github.com/travisbcotton/image-thrillhouse/internal/container"
+	"github.com/openchami/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/container"
 )
 
 // Backend is the interface that all package manager backends must implement.

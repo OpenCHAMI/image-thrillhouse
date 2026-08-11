@@ -9,7 +9,7 @@ package publisher
 import (
 	"context"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/container"
+	"github.com/openchami/image-thrillhouse/internal/container"
 )
 
 // Publisher is the interface that all image publishers must implement.

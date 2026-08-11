@@ -24,9 +24,9 @@ import (
 	"go.podman.io/image/v5/types"
 	"go.podman.io/storage"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
-	"github.com/travisbcotton/image-thrillhouse/internal/container"
-	"github.com/travisbcotton/image-thrillhouse/internal/fetch"
+	"github.com/openchami/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/container"
+	"github.com/openchami/image-thrillhouse/internal/fetch"
 )
 
 // annotateRunErr adds a one-line hint to buildah.Run errors that match a

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/config"
 )
 
 // TestGenerate tests basic label generation

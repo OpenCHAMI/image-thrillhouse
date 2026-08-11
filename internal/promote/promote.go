@@ -23,10 +23,10 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/buildah"
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
-	"github.com/travisbcotton/image-thrillhouse/internal/publisher"
-	"github.com/travisbcotton/image-thrillhouse/internal/publisher/registry"
+	"github.com/openchami/image-thrillhouse/internal/buildah"
+	"github.com/openchami/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/publisher"
+	"github.com/openchami/image-thrillhouse/internal/publisher/registry"
 )
 
 // RegistrySource identifies a tested artifact already published to an OCI

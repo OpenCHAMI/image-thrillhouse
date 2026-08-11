@@ -9,8 +9,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
-	"github.com/travisbcotton/image-thrillhouse/internal/container"
+	"github.com/openchami/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/container"
 )
 
 // RPMMacrosPath is the canonical destination for the shared image-thrillhouse RPM

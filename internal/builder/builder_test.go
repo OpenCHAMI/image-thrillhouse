@@ -16,10 +16,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/travisbcotton/image-thrillhouse/internal/backend"
-	"github.com/travisbcotton/image-thrillhouse/internal/config"
-	"github.com/travisbcotton/image-thrillhouse/internal/container"
-	"github.com/travisbcotton/image-thrillhouse/internal/publisher"
+	"github.com/openchami/image-thrillhouse/internal/backend"
+	"github.com/openchami/image-thrillhouse/internal/config"
+	"github.com/openchami/image-thrillhouse/internal/container"
+	"github.com/openchami/image-thrillhouse/internal/publisher"
 )
 
 // builderWithLayer constructs a minimal Builder pointed at the given Layer
