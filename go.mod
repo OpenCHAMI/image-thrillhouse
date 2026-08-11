@@ -1,4 +1,4 @@
-module github.com/travisbcotton/image-thrillhouse
+module github.com/openchami/image-thrillhouse
 
 go 1.26.5
 
