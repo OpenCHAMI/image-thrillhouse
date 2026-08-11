@@ -452,6 +452,7 @@ image-thrillhouse build|validate|render \
   [--arch <arch>]           # required for multi-arch, defaults to host
   [--var-file <path>] [--var key=value]
   [--skip-if-exists]        # build only; skip when publishers report the image exists
+  [--prune-parent]          # build only; drop the base image afterwards if this run pulled it
 ```
 
 - `--layer` names a **logical** layer. In a multi-arch manifest, passing a concrete arch-suffixed name is rejected — the error message will point at the correct `--layer + --arch` pair.

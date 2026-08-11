@@ -35,6 +35,7 @@ type fakeContainer struct {
 	RunScriptErr       error
 	CopyDirectoryErr   error
 	MountPathReturn    string
+	PulledParent       string // image ID reported by PulledParentID ("" = nothing was pulled)
 }
 
 // copyDirectoryCall records a single CopyDirectory invocation so builder
@@ -97,8 +98,9 @@ func (f *fakeContainer) SetLabels(labels map[string]string) {
 
 func (f *fakeContainer) GetID() string                                                    { return "fake-id" }
 func (f *fakeContainer) GetParent() string                                                { return "scratch" }
+func (f *fakeContainer) PulledParentID() string                                           { return f.PulledParent }
 func (f *fakeContainer) GetName() string                                                  { return "fake" }
-func (f *fakeContainer) Delete()                                                          {}
+func (f *fakeContainer) Delete()                                                          { f.Events = append(f.Events, "delete") }
 func (f *fakeContainer) MountPath() string                                                { return f.MountPathReturn }
 func (f *fakeContainer) GetIsolation() define.Isolation                                   { return define.IsolationDefault }
 func (f *fakeContainer) CommitToRegistry(ctx context.Context, ref string, tls bool) error { return nil }

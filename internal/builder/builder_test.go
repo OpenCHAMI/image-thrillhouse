@@ -325,6 +325,10 @@ func buildableBuilder(cfg *config.Config, fc *fakeContainer, be backend.Backend,
 			return fc, nil
 		},
 		publishers: pubs,
+		// The prune seam is gated behind its flag, but wiring a no-op keeps
+		// a test that flips the flag without supplying a double from
+		// panicking on a nil func.
+		pruneImage: func(string) error { return nil },
 	}
 }
 

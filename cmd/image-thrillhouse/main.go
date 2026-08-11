@@ -53,6 +53,7 @@ var (
 	layerName      string   // Layer name (within the manifest) to build
 	archName       string   // Target architecture for a multi-arch manifest build (defaults to host arch)
 	skipIfExists   bool     // Skip build when every configured publisher reports the image already exists
+	pruneParent    bool     // Remove the base image after the build when this run pulled it
 
 	// promote-specific flags
 	releaseTag   string // Human-readable tag to publish under (e.g. release-0.0.1)
@@ -655,6 +656,7 @@ func init() {
 	buildCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
 	buildCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 	buildCmd.Flags().BoolVar(&skipIfExists, "skip-if-exists", false, "skip the build when all publishers report the image already exists")
+	buildCmd.Flags().BoolVar(&pruneParent, "prune-parent", false, "remove the base image from local storage after the build, if this run pulled it")
 
 	// Validate-specific flags. Mirrors the build/render shape so users can
 	// dry-run a manifest layer's rendered config — picking validate over
@@ -804,6 +806,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	bldr := builder.New(cfg, cfgPath, b, p)
 	bldr.SetSkipIfExists(skipIfExists)
+	bldr.SetPruneParent(pruneParent)
 	return bldr.Build(ctx)
 }
 
@@ -857,6 +860,7 @@ func buildLayer(
 
 	bldr := builder.New(cfg, configPath, b, p)
 	bldr.SetSkipIfExists(skipIfExists)
+	bldr.SetPruneParent(pruneParent)
 	return bldr.Build(ctx)
 }
 

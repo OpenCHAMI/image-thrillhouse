@@ -141,10 +141,11 @@ func newSystemContext(tlsVerify bool) *types.SystemContext {
 // Container wraps a Buildah builder and implements the container.Container interface.
 // It provides methods for running commands, writing files, and committing images.
 type Container struct {
-	fromScratch bool             // True if building from scratch
-	mountPath   string           // Path where the container filesystem is mounted on the host
-	Builder     *buildah.Builder // Underlying Buildah builder instance
-	Store       storage.Store    // Container storage backend
+	fromScratch    bool             // True if building from scratch
+	mountPath      string           // Path where the container filesystem is mounted on the host
+	pulledParentID string           // Base image ID, set only when THIS run pulled it into the store
+	Builder        *buildah.Builder // Underlying Buildah builder instance
+	Store          storage.Store    // Container storage backend
 }
 
 // NewContainer creates a new container from the specified base image.
@@ -165,6 +166,18 @@ func NewContainer(ctx context.Context, from string, tlsverify bool) (container.C
 	store, err := openStore()
 	if err != nil {
 		return nil, fmt.Errorf("Container Store: %w", err)
+	}
+
+	// Snapshot the image IDs before the builder runs so we can tell a base
+	// image this build pulled from one the host already had. Comparing IDs
+	// (rather than probing the name up front) sidesteps every shortname,
+	// transport-prefix and tag-normalisation difference between what the
+	// user wrote in `from:` and what buildah resolved it to. A failure here
+	// only costs us the ability to prune: an empty snapshot is treated as
+	// "we don't know", which errs toward keeping the image.
+	before, snapErr := imageIDSet(store)
+	if snapErr != nil {
+		slog.With("component", "buildah").Debug("could not snapshot images before pull", "error", snapErr)
 	}
 
 	// create new builder
@@ -196,11 +209,21 @@ func NewContainer(ctx context.Context, from string, tlsverify bool) (container.C
 		return nil, fmt.Errorf("mount: %w", err)
 	}
 
+	pulledParentID := ""
+	if snapErr == nil && builder.FromImageID != "" {
+		if _, existed := before[builder.FromImageID]; !existed {
+			pulledParentID = builder.FromImageID
+			slog.With("component", "buildah").Debug("pulled base image into local storage",
+				"from", from, "image_id", pulledParentID)
+		}
+	}
+
 	return &Container{
-		fromScratch: from == "scratch",
-		mountPath:   mountPath,
-		Builder:     builder,
-		Store:       store,
+		fromScratch:    from == "scratch",
+		mountPath:      mountPath,
+		pulledParentID: pulledParentID,
+		Builder:        builder,
+		Store:          store,
 	}, nil
 }
 
@@ -569,10 +592,10 @@ func (c *Container) SetLabels(labels map[string]string) {
 // This unmounts the container filesystem, deletes the container, and shuts down the storage.
 // Should be called when the container is no longer needed.
 //
-// All three operations are best-effort: if one fails (typically Unmount, when
-// something else is holding the mount), the remaining steps still run so we
-// don't compound a partial leak. Failures are logged at WARN — silent failure
-// here was masking storage leaks that only surfaced as disk pressure days later.
+// Every step is best-effort: if one fails (typically Unmount, when something
+// else is holding the mount), the remaining steps still run so we don't
+// compound a partial leak. Failures are logged at WARN — silent failure here
+// was masking storage leaks that only surfaced as disk pressure days later.
 func (c *Container) Delete() {
 	log := slog.With("component", "buildah")
 	log.Debug("deleting container", "id", c.GetID(), "container", c.GetName())
@@ -585,6 +608,24 @@ func (c *Container) Delete() {
 	}
 	if err := c.Builder.Unmount(); err != nil {
 		log.Warn("unmount container", "id", c.GetID(), "error", err)
+	}
+	// Builder.Unmount is store.Unmount(containerID, force=false): it
+	// decrements the layer's mount count by one and, when the count is still
+	// above zero afterwards, reports SUCCESS while the layer remains mounted.
+	// It discards the "still mounted" flag that says so. Nested mounts are
+	// routine — each buildah Run mounts the rootfs again — so a build could
+	// finish "cleanly" and still leave a live overlay mount plus its diff
+	// directory pinned on the runner, which is the leak that only shows up
+	// days later as disk pressure.
+	//
+	// Forcing the count to zero is what actually releases it. This is scoped
+	// to our own container's layer, never the whole store, so it stays safe
+	// on a store shared with podman or with a concurrent build. It is also
+	// idempotent: on an already-unmounted layer the driver's Put is a no-op.
+	if stillMounted, err := c.Store.Unmount(c.GetID(), true); err != nil {
+		log.Warn("force unmount container layer", "id", c.GetID(), "error", err)
+	} else if stillMounted {
+		log.Warn("container layer still mounted after forced unmount", "id", c.GetID())
 	}
 	if err := c.Builder.Delete(); err != nil {
 		log.Warn("delete container", "id", c.GetID(), "error", err)
@@ -617,6 +658,14 @@ func (c *Container) MountPath() string {
 func (c *Container) GetID() string {
 
 	return c.Builder.ContainerID
+}
+
+// PulledParentID returns the ID of the base image if and only if this run
+// pulled it into local storage. It is empty for scratch builds and for a base
+// image that was already present — a caller that prunes on this value can
+// never remove an image the host had before the build started.
+func (c *Container) PulledParentID() string {
+	return c.pulledParentID
 }
 
 // GetParent returns the source ("from") image used to create this container.

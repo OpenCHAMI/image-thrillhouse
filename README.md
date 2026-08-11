@@ -123,6 +123,11 @@ For multi-arch manifests, pass `--arch <x86_64|aarch64|…>`; it defaults to the
 
 Once a content-tagged image has been built and tested, `promote` gives it a human-readable release tag without rebuilding. See [Promoting a release tag](docs/promote.md).
 
+Build flags:
+
+- `--skip-if-exists` — skip the build when every configured publisher reports the image already exists.
+- `--prune-parent` — remove the base image from local container storage after the build, but only if this run pulled it. Recommended in CI; see [Storage and cleanup in CI](docs/container-usage.md#storage-and-cleanup-in-ci).
+
 Global flags:
 
 - `--log-level` — `debug` | `info` | `warn` | `error` (default `info`). `debug` adds build detail (created containers, written files, full package lists) without container-runtime internals.

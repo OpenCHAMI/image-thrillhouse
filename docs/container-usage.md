@@ -42,6 +42,75 @@ For S3 publish targets, add credentials:
 | `-v ...:/config.yaml:Z` | Mounts the config (`:Z` for SELinux relabeling) |
 | `-v ...:/output:Z` | Mounts the output directory for SquashFS images |
 
+## Storage and cleanup in CI
+
+A build writes more to container storage than the image it produces, and not
+all of it is reclaimed on its own. On a long-lived CI runner that shows up as
+`/var/lib/containers` growing without bound.
+
+| Left behind | Reclaimed by |
+| --- | --- |
+| The working container, its rootfs, and its mount | Automatic — released at the end of every build, success or failure |
+| The **base image** pulled for `from:` | `--prune-parent` |
+| The image committed by the **local publisher** | Nothing yet — remove it with `podman rmi` when no layer parents off it |
+| The **job container's** own writable layer on the host | The container runtime — see below |
+
+### `--prune-parent`
+
+Every build that layers on a remote parent (`from: docker://rockylinux:9`)
+pulls a full copy of that parent into local storage and leaves it there; the
+working container is deleted at the end of the build, but the image it was
+created from is not. Across many builds against many parents, that is the
+dominant source of growth.
+
+```bash
+image-thrillhouse build --config /config.yaml --prune-parent
+```
+
+The flag only removes an image **this run pulled**. The build snapshots the
+store's image IDs before creating the container and compares against the ID
+buildah resolved `from:` to, so a base image that was already present is left
+alone — safe on a shared runner, and it never invalidates a warm cache someone
+else populated. It runs whether the build succeeded or failed, since a build
+that dies halfway has still done the pull. A prune failure is logged, not
+fatal: the image already reached every destination the build promised.
+
+Scratch builds (`from: scratch`) pull nothing, so the flag is a no-op for them.
+
+### The part the flag cannot fix
+
+If your runner starts job containers as root, the host's graphroot *is*
+`/var/lib/containers/storage`, and everything the build writes inside the job
+container lands in that container's writable layer at
+`/var/lib/containers/storage/overlay/<id>/diff/…` on the host. When a job
+container is not reaped — a cancelled job, a runner restart, a container
+started without `--rm` — that whole tree stays behind owned by root, no matter
+how carefully the build cleaned up inside it. In-process cleanup also cannot
+run when the process is `SIGKILL`ed or OOM-killed, which is a normal way for CI
+jobs to end.
+
+So pair the flag with an ephemeral store at the runtime layer:
+
+- give each job an anonymous volume or tmpfs on `/var/lib/containers/storage`
+  (note that a path listed in gitlab-runner's `[runners.docker] volumes`
+  becomes a *persistent* named cache volume unless `disable_cache = true` —
+  check the behaviour of your runner version), and
+- run a periodic `podman system prune --external --volumes` on the runner host
+  as a backstop.
+
+To see which of the two you are actually hitting:
+
+```bash
+podman ps -a --external --format '{{.ID}} {{.Names}} {{.Status}} {{.Size}}'
+```
+
+```bash
+sudo du -xhd1 /var/lib/containers/storage | sort -h | tail -20
+```
+
+Bulk under `overlay/` matching dead job containers is the runtime-layer
+problem; bulk under `volumes/` is a mount that persists by design.
+
 ## Multi-version DNF builds
 
 The unified image can build any RHEL-family version by setting `releasever` on the manager:
