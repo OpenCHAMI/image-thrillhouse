@@ -96,6 +96,13 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	tag := tags[0]
 
 	log := slog.With("component", "publisher.s3")
+	// Say so out loud rather than dropping them silently: one build writes one
+	// self-contained directory keyed by the primary tag, and Exists probes that
+	// same key. Matches the squashfs publisher's behaviour and message.
+	if len(tags) > 1 {
+		log.Info("multiple tags configured; using the first for the s3 key layout",
+			"primary", tag, "ignored_tags", tags[1:])
+	}
 	log.Info("publishing to s3", "bucket", s.bucket, "prefix", s.prefix)
 
 	mountPath := c.MountPath()
@@ -261,10 +268,17 @@ func (s *S3Publisher) uploadFile(ctx context.Context, uploader *manager.Uploader
 	return nil
 }
 
-// Exists reports whether every tag is already materialized in S3. It probes the
-// rootfs key for each tag (objectKeys) — the tag-identifying artifact — and
-// short-circuits on the first missing one. The key is fully determined by
-// prefix + tag + arch, so no container is needed.
+// Exists reports whether this image is already materialized in S3. It probes
+// the rootfs key for the primary (first) tag — the tag-identifying artifact —
+// which is fully determined by prefix + tag + arch, so no container is needed.
+//
+// Only tags[0] is probed because only tags[0] is ever written: Publish
+// materializes one self-contained directory per build (see objectKeys) rather
+// than duplicating a multi-gigabyte rootfs under every tag. Probing every tag
+// here meant --skip-if-exists could never succeed for a config with more than
+// one tag — the second tag's key was asked for but never uploaded, so the guard
+// reported "missing" forever and every run rebuilt and re-uploaded. This
+// mirrors the squashfs publisher, which keys off tags[0] the same way.
 //
 // A missing object surfaces as (false, nil); any other error (auth, DNS, TLS,
 // 5xx) surfaces as (false, err) so callers fail loud rather than silently
@@ -278,17 +292,8 @@ func (s *S3Publisher) Exists(ctx context.Context, name string, tags []string) (b
 	if err != nil {
 		return false, fmt.Errorf("create S3 client: %w", err)
 	}
-	for _, tag := range tags {
-		rootfsKey, _, _ := s.objectKeys(tag)
-		ok, err := s.objectExists(ctx, client, rootfsKey)
-		if err != nil {
-			return false, err
-		}
-		if !ok {
-			return false, nil
-		}
-	}
-	return true, nil
+	rootfsKey, _, _ := s.objectKeys(tags[0])
+	return s.objectExists(ctx, client, rootfsKey)
 }
 
 // objectExists reports whether key is present in the bucket via HeadObject. A
