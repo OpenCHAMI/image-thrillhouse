@@ -16,6 +16,61 @@ func (c *Config) Validate() error {
 	if err := c.Layer.Validate(); err != nil {
 		return err
 	}
+	for i, p := range c.Publish {
+		if err := p.Validate(); err != nil {
+			return fmt.Errorf("publish %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// validPublisherTypes is the set of publisher types the CLI knows how to
+// construct (see newPublishers in cmd/image-thrillhouse). Kept here so the
+// `validate` subcommand rejects a bad type without needing to build the
+// publishers — which would require credentials the validating host may not have.
+var validPublisherTypes = map[string]bool{
+	"local":    true, // Commit to local podman/buildah storage
+	"squashfs": true, // Write a SquashFS filesystem image
+	"registry": true, // Push to an OCI registry
+	"s3":       true, // Upload boot artifacts to S3-compatible storage
+}
+
+// Validate checks a Publish block's type and the fields that type requires.
+// Requirements:
+//   - type must be one of local, squashfs, registry, s3
+//   - squashfs requires path
+//   - registry requires url
+//   - s3 requires url and bucket
+//
+// Credentials are deliberately NOT checked here. S3_ACCESS / S3_SECRET are a
+// build-time concern, and requiring them would make `validate` unusable in the
+// CI lint step it exists for. This mirrors newPublishers' structural checks so
+// a malformed publish block fails at validate time rather than after a build
+// has already run.
+func (p *Publish) Validate() error {
+	if p.Type == "" {
+		return fmt.Errorf("type is required")
+	}
+	if !validPublisherTypes[p.Type] {
+		return fmt.Errorf("publisher type %q is not supported", p.Type)
+	}
+	switch p.Type {
+	case "squashfs":
+		if p.Path == "" {
+			return fmt.Errorf("squashfs publisher requires path")
+		}
+	case "registry":
+		if p.URL == "" {
+			return fmt.Errorf("registry publisher requires url")
+		}
+	case "s3":
+		if p.URL == "" {
+			return fmt.Errorf("s3 publisher requires url")
+		}
+		if p.Bucket == "" {
+			return fmt.Errorf("s3 publisher requires bucket")
+		}
+	}
 	return nil
 }
 

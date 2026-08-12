@@ -946,9 +946,11 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		mergedVars = cliVars
 	}
 
+	// No "invalid config" prefix here: ParseAndValidate already applies one,
+	// and wrapping again produced "invalid config: invalid config: ...".
 	cfg, err := config.LoadConfigWithVars(validateConfigPath, mergedVars)
 	if err != nil {
-		return fmt.Errorf("invalid config: %w", err)
+		return err
 	}
 
 	// Verify the backend is supported
