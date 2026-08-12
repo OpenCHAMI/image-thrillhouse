@@ -6,6 +6,7 @@ package cmdutil
 
 import (
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -471,6 +472,31 @@ func TestBuildRPMMacros(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestBuildRPMMacros_Deterministic pins byte-for-byte stable output. The
+// implementation walks a map, so without an explicit sort the macro file
+// written into the image differed between two builds of an identical config.
+func TestBuildRPMMacros_Deterministic(t *testing.T) {
+	custom := map[string]string{
+		"_dbpath":       "/var/lib/rpm",
+		"_dbpath_trans": "/var/lib/rpm",
+		"zzz_last":      "1",
+		"aaa_first":     "1",
+	}
+
+	first := BuildRPMMacros(custom)
+	for i := 0; i < 50; i++ {
+		if got := BuildRPMMacros(custom); got != first {
+			t.Fatalf("BuildRPMMacros() is not deterministic\nfirst:\n%s\ngot:\n%s", first, got)
+		}
+	}
+
+	// And the order is the sorted one, not merely stable-by-accident.
+	lines := strings.Split(strings.TrimSpace(first), "\n")
+	if !sort.StringsAreSorted(lines) {
+		t.Errorf("Expected macro lines in sorted order, got:\n%s", first)
 	}
 }
 
