@@ -164,6 +164,8 @@ Fields:
 
 **Caching:** the layer tag hash includes the contents and structure of `src` (filtered by `excludes`), plus host modes when `mode` is unset and host ownership when `preserve_ownership` is true and `owner` is empty. Editing a file under `src` invalidates the cache and triggers a rebuild; editing an excluded file does not. Mtimes are deliberately ignored so a fresh `git clone` doesn't invalidate every cache.
 
+**If `src` is a git working tree**, add `.git` to `excludes`. Nothing filters it by default, so otherwise `.git` is both copied into the image and hashed into the tag — meaning every fetch, checkout, and `git gc` produces a new tag and a rebuild with no source change behind it. Excluding it fixes both at once: buildah applies the same list at copy time, so the tag keeps describing what actually landed in the image. (Ansible's roles and inventory trees are the one place `.git` is dropped automatically — see [Ansible content and the tag](#ansible-content-and-the-tag) — because those are bind-mounted rather than copied, so there is no image content to stay in sync with.)
+
 **URL/tarball sources are not supported** — use `layer.files` with a `url:` if you need to drop a downloaded archive, then extract it via a `command:` step.
 
 ### `layer.actions`
@@ -323,7 +325,7 @@ The S3 publisher extracts the rootfs (SquashFS), kernel, and initramfs and uploa
 
 A **manifest** is a YAML file that describes a DAG of layers. Each layer references a config file (of the shape above) and declares which other layers it depends on. `image-thrillhouse` computes a deterministic hash tag for each layer, so a child layer's `from:` can pin the exact parent it was built against via `{{ .parent_tag }}` — no manual tag bookkeeping.
 
-The tag is a truncated (128-bit) sha256 over the layer's **rendered** config — the template after applying var files, CLI `--var` overrides, and computed vars — plus the contents of any `src:` files/repos and `directories` trees the rendered config references, referenced URLs, and the tags of the layer's direct parents (which chain the full ancestry, so any change in an ancestor produces a new tag for every descendant).
+The tag is a truncated (128-bit) sha256 over the layer's **rendered** config — the template after applying var files, CLI `--var` overrides, and computed vars — plus the contents of any `src:` files/repos and `directories` trees the rendered config references, referenced URLs, the ansible content any `ansible:` command references, and the tags of the layer's direct parents (which chain the full ancestry, so any change in an ancestor produces a new tag for every descendant).
 
 Because the hash covers the render's *output*, a variable participates in a layer's tag exactly when the layer's rendered config consumes it:
 
@@ -331,6 +333,17 @@ Because the hash covers the render's *output*, a variable participates in a laye
 - Two builds differing in a `--var` the template consumes get distinct tags (important with `--skip-if-exists`); a `--var` nothing references leaves tags unchanged, which is correct — the images are identical.
 - Templated `src:` paths (e.g. `src: "{{ .payload_dir }}/foo"`) resolve before hashing, so edits to the referenced file's contents change the tag like any literal `src:`.
 - `src:` entries inside an active `{{ if }}`/`{{ range }}` block are resolved and content-hashed like any other. A branch that renders to nothing contributes nothing to the hash — flipping the condition changes the rendered output, and therefore the tag.
+
+### Ansible content and the tag
+
+An `ansible:` command's playbook, roles tree, and inventory are bind-mounted at run time rather than committed into the layer, but they decide what the build does — so they feed the tag like any `src:` file. Editing a role, a playbook task, or an inventory host produces a new tag and a rebuild.
+
+Granularity is coarse on purpose: the **entire** roles tree is hashed, not just the roles a playbook reaches. Narrowing it would mean reimplementing ansible's own resolution (`include_role`, roles depending on roles, dynamic includes), and guessing wrong there would reuse a stale image. So an unrelated role edit can trigger a rebuild — the cost of never shipping a stale one. If a roles tree is large enough for that to hurt, split it so unrelated layers point at different roles directories.
+
+Two details worth knowing:
+
+- **Version-control metadata is excluded.** `.git` is skipped anywhere in a hashed roles or inventory tree. A roles tree checked out as a plain `git clone` rewrites `.git` on every fetch, checkout, and gc; hashing it would churn the tag with no role change behind it. Roles vendored as **submodules** are hashed normally — the working tree is what counts, and the submodule's `.git` pointer file is the only thing dropped. This is automatic here and *only* here: `layer.directories` copies `src` into the image, so a `.git` under it is real layer content and has to be hashed unless you exclude it from the copy too. Ansible's trees are bind-mounted read-only and only ansible reads them, and it never looks at `.git`.
+- **The paths must exist where tags are computed.** Playbook and inventory paths resolve against the working directory, same as during a build, and a missing one fails tag computation — including for commands like `promote` that compute tags without building. A missing roles directory is not an error: the build skips the mount in that case, so the tag skips it too.
 
 Since `{{ .tag }}` is the layer's own hash, it can't feed its own computation: the hash-input render binds it to a fixed sentinel, and the real value is substituted for the actual build render. It's the only variable the two renders differ on.
 

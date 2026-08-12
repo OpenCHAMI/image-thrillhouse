@@ -7,6 +7,7 @@ package tag
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/openchami/image-thrillhouse/internal/config"
@@ -45,13 +46,17 @@ layer:
     name: dnf
 `
 
-func writeFile(t *testing.T, dir, name, content string) string {
+// writeFile writes content to path, creating parent directories as needed,
+// and returns path.
+func writeFile(t *testing.T, path, content string) string {
 	t.Helper()
-	p := filepath.Join(dir, name)
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", p, err)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir for %s: %v", path, err)
 	}
-	return p
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	return path
 }
 
 func TestCompute_Deterministic(t *testing.T) {
@@ -303,7 +308,7 @@ func TestCompute_HashesSrcFilesAndURLs(t *testing.T) {
 	// Configs with Files/Repos that reference src paths must include those
 	// src bytes in the hash, and URLs must be included as strings.
 	dir := t.TempDir()
-	src := writeFile(t, dir, "payload.txt", "hello\n")
+	src := writeFile(t, filepath.Join(dir, "payload.txt"), "hello\n")
 	layerSrc := input(t, `meta:
   name: test
   tags: ["1"]
@@ -347,38 +352,11 @@ layer:
 	}
 }
 
-// TestCompute_AnsibleRolesHashed verifies that Ansible roles directory
-// content is hashed, so changes to any role affect the layer tag.
-func TestCompute_AnsibleRolesHashed(t *testing.T) {
-	dir := t.TempDir()
-	rolesDir := filepath.Join(dir, "roles")
-	if err := os.Mkdir(rolesDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	chronyDir := filepath.Join(rolesDir, "chrony", "tasks")
-	if err := os.MkdirAll(chronyDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	mainYaml := filepath.Join(chronyDir, "main.yaml")
-	if err := os.WriteFile(mainYaml, []byte("# chrony role v1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create a simple playbook
-	playbook := filepath.Join(dir, "playbook.yaml")
-	playbookContent := `---
-- name: test
-  hosts: all
-  tasks:
-    - name: test task
-      debug:
-        msg: hello
-`
-	if err := os.WriteFile(playbook, []byte(playbookContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := `meta:
+// ansibleCfg returns a rendered config with a single ansible command running
+// playbook, plus any extra ansible option lines (indented to sit under the
+// ansible: mapping).
+func ansibleCfg(playbook, optionLines string) string {
+	return `meta:
   name: test
   tags: ["1"]
 layer:
@@ -388,196 +366,138 @@ layer:
     commands:
       - ansible:
           playbook: ` + playbook + `
-          roles: ` + rolesDir + `
           groups: [compute]
-`
-	layer1 := input(t, cfg)
-	h1, err := Compute(layer1, nil)
-	if err != nil {
-		t.Fatalf("Compute 1: %v", err)
-	}
-
-	// Change role content
-	if err := os.WriteFile(mainYaml, []byte("# chrony role v2\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	layer2 := input(t, cfg)
-	h2, err := Compute(layer2, nil)
-	if err != nil {
-		t.Fatalf("Compute 2: %v", err)
-	}
-
-	if h1 == h2 {
-		t.Errorf("ansible roles content change should change hash, both = %s", h1)
-	}
+` + optionLines
 }
 
-// TestCompute_AnsibleInventoryHashed verifies that Ansible inventory
-// directory content is hashed.
-func TestCompute_AnsibleInventoryHashed(t *testing.T) {
-	dir := t.TempDir()
-	invDir := filepath.Join(dir, "inventory")
-	if err := os.Mkdir(invDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	hostsFile := filepath.Join(invDir, "hosts")
-	if err := os.WriteFile(hostsFile, []byte("[compute]\nlocalhost\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create minimal playbook
-	playbook := filepath.Join(dir, "playbook.yaml")
-	if err := os.WriteFile(playbook, []byte("---\n- name: test\n  hosts: all\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := `meta:
-  name: test
-  tags: ["1"]
-layer:
-  manager:
-    name: dnf
-  actions:
-    commands:
-      - ansible:
-          playbook: ` + playbook + `
-          inventory: ` + invDir + `
-          groups: [compute]
-`
-	layer1 := input(t, cfg)
-	h1, err := Compute(layer1, nil)
+// computeOrFail renders cfg and returns its tag.
+func computeOrFail(t *testing.T, cfg string) string {
+	t.Helper()
+	h, err := Compute(input(t, cfg), nil)
 	if err != nil {
-		t.Fatalf("Compute 1: %v", err)
+		t.Fatalf("Compute: %v", err)
 	}
+	return h
+}
 
-	// Change inventory content
-	if err := os.WriteFile(hostsFile, []byte("[compute]\nlocalhost\nnode1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	layer2 := input(t, cfg)
-	h2, err := Compute(layer2, nil)
-	if err != nil {
-		t.Fatalf("Compute 2: %v", err)
-	}
-
-	if h1 == h2 {
-		t.Errorf("ansible inventory content change should change hash, both = %s", h1)
-	}
+// ansiblePlaybook writes a minimal valid playbook and returns its path.
+func ansiblePlaybook(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "playbook.yaml")
+	writeFile(t, path, "---\n- name: test\n  hosts: all\n  tasks:\n    - debug:\n        msg: hello\n")
+	return path
 }
 
 // TestCompute_AnsiblePlaybookHashed verifies that the playbook file itself
 // is hashed.
 func TestCompute_AnsiblePlaybookHashed(t *testing.T) {
 	dir := t.TempDir()
-	playbook := filepath.Join(dir, "compute.yaml")
-	if err := os.WriteFile(playbook, []byte("---\n- name: test\n  hosts: all\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	playbook := ansiblePlaybook(t, dir)
+	cfg := ansibleCfg(playbook, "")
 
-	cfg := `meta:
-  name: test
-  tags: ["1"]
-layer:
-  manager:
-    name: dnf
-  actions:
-    commands:
-      - ansible:
-          playbook: ` + playbook + `
-          groups: [compute]
-`
-	layer1 := input(t, cfg)
-	h1, err := Compute(layer1, nil)
-	if err != nil {
-		t.Fatalf("Compute 1: %v", err)
-	}
+	h1 := computeOrFail(t, cfg)
 
-	// Modify the playbook content
-	if err := os.WriteFile(playbook, []byte("---\n- name: test updated\n  hosts: all\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeFile(t, playbook, "---\n- name: test updated\n  hosts: all\n")
 
-	layer2 := input(t, cfg)
-	h2, err := Compute(layer2, nil)
-	if err != nil {
-		t.Fatalf("Compute 2: %v", err)
-	}
-
-	if h1 == h2 {
+	if h2 := computeOrFail(t, cfg); h1 == h2 {
 		t.Errorf("playbook content change should change hash, both = %s", h1)
 	}
 }
 
+// TestCompute_AnsibleRolesHashed verifies that Ansible roles directory
+// content is hashed, so changes to any role affect the layer tag.
+func TestCompute_AnsibleRolesHashed(t *testing.T) {
+	dir := t.TempDir()
+	rolesDir := filepath.Join(dir, "roles")
+	mainYaml := filepath.Join(rolesDir, "chrony", "tasks", "main.yaml")
+	writeFile(t, mainYaml, "# chrony role v1\n")
+	cfg := ansibleCfg(ansiblePlaybook(t, dir), "          roles: "+rolesDir+"\n")
+
+	h1 := computeOrFail(t, cfg)
+
+	writeFile(t, mainYaml, "# chrony role v2\n")
+
+	if h2 := computeOrFail(t, cfg); h1 == h2 {
+		t.Errorf("ansible roles content change should change hash, both = %s", h1)
+	}
+}
+
 // TestCompute_AnsibleAllRolesHashed verifies that ALL roles in the roles
-// directory are hashed, even if not referenced in the playbook.
+// directory are hashed, even ones the playbook never references — the
+// deliberate over-hash that avoids reimplementing ansible's role resolution.
 func TestCompute_AnsibleAllRolesHashed(t *testing.T) {
 	dir := t.TempDir()
 	rolesDir := filepath.Join(dir, "roles")
-	
-	// Create two roles
-	chronyDir := filepath.Join(rolesDir, "chrony", "tasks")
-	if err := os.MkdirAll(chronyDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(chronyDir, "main.yaml"), []byte("# chrony\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeFile(t, filepath.Join(rolesDir, "chrony", "tasks", "main.yaml"), "# chrony\n")
+	ntpMain := filepath.Join(rolesDir, "ntp", "tasks", "main.yaml")
+	writeFile(t, ntpMain, "# ntp\n")
 
-	ntpDir := filepath.Join(rolesDir, "ntp", "tasks")
-	if err := os.MkdirAll(ntpDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(ntpDir, "main.yaml"), []byte("# ntp\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// The playbook references neither role.
+	cfg := ansibleCfg(ansiblePlaybook(t, dir), "          roles: "+rolesDir+"\n")
 
-	// Playbook doesn't reference either role
-	playbook := filepath.Join(dir, "playbook.yaml")
-	playbookContent := `---
-- name: test
-  hosts: all
-  tasks:
-    - debug:
-        msg: hello
-`
-	if err := os.WriteFile(playbook, []byte(playbookContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	h1 := computeOrFail(t, cfg)
 
-	cfg := `meta:
-  name: test
-  tags: ["1"]
-layer:
-  manager:
-    name: dnf
-  actions:
-    commands:
-      - ansible:
-          playbook: ` + playbook + `
-          roles: ` + rolesDir + `
-          groups: [compute]
-`
-	layer1 := input(t, cfg)
-	h1, err := Compute(layer1, nil)
-	if err != nil {
-		t.Fatalf("Compute 1: %v", err)
-	}
+	writeFile(t, ntpMain, "# ntp modified\n")
 
-	// Modify ANY role - hash should change even if not referenced
-	if err := os.WriteFile(filepath.Join(ntpDir, "main.yaml"), []byte("# ntp modified\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	layer2 := input(t, cfg)
-	h2, err := Compute(layer2, nil)
-	if err != nil {
-		t.Fatalf("Compute 2: %v", err)
-	}
-
-	if h1 == h2 {
+	if h2 := computeOrFail(t, cfg); h1 == h2 {
 		t.Errorf("any role change should change hash (entire roles dir is hashed), both = %s", h1)
+	}
+}
+
+// TestCompute_AnsibleRolesVCSMetadataIgnored verifies that git bookkeeping
+// inside a roles tree does not move the tag. A roles tree that is a plain git
+// clone rewrites .git on every fetch, checkout, and gc; hashing that would
+// invalidate the cache without any role content having changed.
+func TestCompute_AnsibleRolesVCSMetadataIgnored(t *testing.T) {
+	dir := t.TempDir()
+	rolesDir := filepath.Join(dir, "roles")
+	writeFile(t, filepath.Join(rolesDir, "chrony", "tasks", "main.yaml"), "# chrony\n")
+
+	// .git at the root of the roles tree (a clone of a roles repo) and inside
+	// a single role (a clone of one role).
+	rootLog := filepath.Join(rolesDir, ".git", "logs", "HEAD")
+	writeFile(t, rootLog, "0000 aaaa checkout: moving to main\n")
+	roleLog := filepath.Join(rolesDir, "chrony", ".git", "logs", "HEAD")
+	writeFile(t, roleLog, "0000 aaaa checkout: moving to main\n")
+
+	cfg := ansibleCfg(ansiblePlaybook(t, dir), "          roles: "+rolesDir+"\n")
+
+	h1 := computeOrFail(t, cfg)
+
+	writeFile(t, rootLog, "0000 aaaa checkout: moving to main\naaaa bbbb checkout: moving to main\n")
+	writeFile(t, roleLog, "0000 aaaa checkout: moving to main\naaaa bbbb checkout: moving to main\n")
+
+	if h2 := computeOrFail(t, cfg); h1 != h2 {
+		t.Errorf("git bookkeeping churn should not change hash: %s -> %s", h1, h2)
+	}
+
+	// Role content still moves the tag with the exclusion in place.
+	writeFile(t, filepath.Join(rolesDir, "chrony", "tasks", "main.yaml"), "# chrony v2\n")
+
+	if h3 := computeOrFail(t, cfg); h1 == h3 {
+		t.Errorf("role content change should still change hash, both = %s", h1)
+	}
+}
+
+// TestCompute_AnsibleSubmoduleRolesHashed verifies that a role vendored as a
+// git submodule participates in the tag: its .git is a pointer file that the
+// VCS exclusion drops, but its working tree is hashed like any other role.
+func TestCompute_AnsibleSubmoduleRolesHashed(t *testing.T) {
+	dir := t.TempDir()
+	rolesDir := filepath.Join(dir, "roles")
+	writeFile(t, filepath.Join(rolesDir, "chrony", ".git"), "gitdir: ../../.git/modules/roles/chrony\n")
+	roleMain := filepath.Join(rolesDir, "chrony", "tasks", "main.yaml")
+	writeFile(t, roleMain, "# chrony from submodule\n")
+
+	cfg := ansibleCfg(ansiblePlaybook(t, dir), "          roles: "+rolesDir+"\n")
+
+	h1 := computeOrFail(t, cfg)
+
+	// A submodule bump changes the checked-out working tree.
+	writeFile(t, roleMain, "# chrony from submodule, newer pin\n")
+
+	if h2 := computeOrFail(t, cfg); h1 == h2 {
+		t.Errorf("submodule role content change should change hash, both = %s", h1)
 	}
 }
 
@@ -585,94 +505,149 @@ layer:
 // default directory when no roles path is specified.
 func TestCompute_AnsibleDefaultRolesDir(t *testing.T) {
 	dir := t.TempDir()
-	
-	// Create roles directory in default location
-	rolesDir := filepath.Join(dir, "roles")
-	chronyDir := filepath.Join(rolesDir, "chrony", "tasks")
-	if err := os.MkdirAll(chronyDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(chronyDir, "main.yaml"), []byte("# chrony v1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	roleMain := filepath.Join(dir, "roles", "chrony", "tasks", "main.yaml")
+	writeFile(t, roleMain, "# chrony v1\n")
+	cfg := ansibleCfg(ansiblePlaybook(t, dir), "")
 
-	// Playbook
-	playbook := filepath.Join(dir, "playbook.yaml")
-	playbookContent := `---
-- name: test
-  hosts: all
-  tasks:
-    - debug:
-        msg: hello
-`
-	if err := os.WriteFile(playbook, []byte(playbookContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// Relative "roles" resolves against the working directory, so run from dir.
+	t.Chdir(dir)
 
-	// Config doesn't specify roles directory - should default to "roles"
-	cfg := `meta:
-  name: test
-  tags: ["1"]
-layer:
-  manager:
-    name: dnf
-  actions:
-    commands:
-      - ansible:
-          playbook: ` + playbook + `
-          groups: [compute]
-`
-	
-	// Change to the dir so relative "roles" path resolves correctly
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(oldWd)
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
+	h1 := computeOrFail(t, cfg)
 
-	layer1 := input(t, cfg)
-	h1, err := Compute(layer1, nil)
-	if err != nil {
-		t.Fatalf("Compute 1: %v", err)
-	}
+	writeFile(t, roleMain, "# chrony v2\n")
 
-	// Modify the role
-	if err := os.WriteFile(filepath.Join(chronyDir, "main.yaml"), []byte("# chrony v2\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	layer2 := input(t, cfg)
-	h2, err := Compute(layer2, nil)
-	if err != nil {
-		t.Fatalf("Compute 2: %v", err)
-	}
-
-	if h1 == h2 {
+	if h2 := computeOrFail(t, cfg); h1 == h2 {
 		t.Errorf("role in default roles dir should affect hash, both = %s", h1)
 	}
 }
 
-// TestCompute_AnsibleMissingRolesDir verifies that missing roles directory
-// doesn't cause an error (it's optional).
+// TestCompute_AnsibleMissingRolesDir verifies that a missing roles directory
+// is not an error — it's optional, and the builder skips the mount too.
 func TestCompute_AnsibleMissingRolesDir(t *testing.T) {
 	dir := t.TempDir()
+	cfg := ansibleCfg(ansiblePlaybook(t, dir), "          roles: "+filepath.Join(dir, "nonexistent-roles")+"\n")
 
-	// Playbook exists, but no roles directory
-	playbook := filepath.Join(dir, "playbook.yaml")
-	playbookContent := `---
-- name: test
-  hosts: all
-  tasks:
-    - debug:
-        msg: hello
-`
-	if err := os.WriteFile(playbook, []byte(playbookContent), 0o644); err != nil {
-		t.Fatal(err)
+	if _, err := Compute(input(t, cfg), nil); err != nil {
+		t.Errorf("missing roles directory should not cause error: %v", err)
 	}
+}
 
+// TestCompute_AnsibleRolesNotADirectory verifies that a roles path pointing at
+// a file is skipped rather than failing. The builder skips the bind mount in
+// exactly this case, so the tag has to agree.
+func TestCompute_AnsibleRolesNotADirectory(t *testing.T) {
+	dir := t.TempDir()
+	rolesFile := filepath.Join(dir, "roles")
+	writeFile(t, rolesFile, "not a directory\n")
+	cfg := ansibleCfg(ansiblePlaybook(t, dir), "          roles: "+rolesFile+"\n")
+
+	if _, err := Compute(input(t, cfg), nil); err != nil {
+		t.Errorf("roles path that is not a directory should not cause error: %v", err)
+	}
+}
+
+// TestCompute_AnsibleInventoryHashed verifies that Ansible inventory
+// directory content is hashed.
+func TestCompute_AnsibleInventoryHashed(t *testing.T) {
+	dir := t.TempDir()
+	hostsFile := filepath.Join(dir, "inventory", "hosts")
+	writeFile(t, hostsFile, "[compute]\nlocalhost\n")
+	cfg := ansibleCfg(ansiblePlaybook(t, dir), "          inventory: "+filepath.Join(dir, "inventory")+"\n")
+
+	h1 := computeOrFail(t, cfg)
+
+	writeFile(t, hostsFile, "[compute]\nlocalhost\nnode1\n")
+
+	if h2 := computeOrFail(t, cfg); h1 == h2 {
+		t.Errorf("ansible inventory content change should change hash, both = %s", h1)
+	}
+}
+
+// TestCompute_AnsibleInventoryFileHashed covers the single-file inventory
+// branch, which takes a different code path from an inventory directory.
+func TestCompute_AnsibleInventoryFileHashed(t *testing.T) {
+	dir := t.TempDir()
+	hostsFile := filepath.Join(dir, "hosts.ini")
+	writeFile(t, hostsFile, "[compute]\nlocalhost\n")
+	cfg := ansibleCfg(ansiblePlaybook(t, dir), "          inventory: "+hostsFile+"\n")
+
+	h1 := computeOrFail(t, cfg)
+
+	writeFile(t, hostsFile, "[compute]\nlocalhost\nnode1\n")
+
+	if h2 := computeOrFail(t, cfg); h1 == h2 {
+		t.Errorf("inventory file content change should change hash, both = %s", h1)
+	}
+}
+
+// TestCompute_AnsibleMissingInventory verifies that a declared-but-absent
+// inventory fails tag computation rather than hashing nothing. The builder
+// refuses to run in this case, so a tag would describe a build that can't
+// happen.
+func TestCompute_AnsibleMissingInventory(t *testing.T) {
+	dir := t.TempDir()
+	cfg := ansibleCfg(ansiblePlaybook(t, dir), "          inventory: "+filepath.Join(dir, "nonexistent-inventory")+"\n")
+
+	if _, err := Compute(input(t, cfg), nil); err == nil {
+		t.Error("missing inventory should cause an error")
+	}
+}
+
+// TestCompute_AnsibleMissingPlaybook verifies that an absent playbook fails
+// tag computation with a message that explains path resolution.
+func TestCompute_AnsibleMissingPlaybook(t *testing.T) {
+	dir := t.TempDir()
+	cfg := ansibleCfg(filepath.Join(dir, "nonexistent.yaml"), "")
+
+	_, err := Compute(input(t, cfg), nil)
+	if err == nil {
+		t.Fatal("missing playbook should cause an error")
+	}
+	if !strings.Contains(err.Error(), "playbook file not found") {
+		t.Errorf("error should name the missing playbook, got: %v", err)
+	}
+}
+
+// TestCompute_AnsibleRelativeAndAbsolutePathsAgree verifies that referring to
+// the same roles tree by relative and absolute path hashes the same content.
+func TestCompute_AnsibleRelativeAndAbsolutePathsAgree(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "roles", "chrony", "tasks", "main.yaml"), "# chrony\n")
+	playbook := ansiblePlaybook(t, dir)
+
+	t.Chdir(dir)
+
+	// Same tree, two spellings. The rendered config differs (the paths are in
+	// the YAML), so the tags differ — but both must hash the tree, meaning a
+	// role edit has to move both.
+	relCfg := ansibleCfg(playbook, "          roles: roles\n")
+	absCfg := ansibleCfg(playbook, "          roles: "+filepath.Join(dir, "roles")+"\n")
+
+	relBefore, absBefore := computeOrFail(t, relCfg), computeOrFail(t, absCfg)
+
+	writeFile(t, filepath.Join(dir, "roles", "chrony", "tasks", "main.yaml"), "# chrony v2\n")
+
+	if relAfter := computeOrFail(t, relCfg); relBefore == relAfter {
+		t.Error("role edit should change the relative-path tag")
+	}
+	if absAfter := computeOrFail(t, absCfg); absBefore == absAfter {
+		t.Error("role edit should change the absolute-path tag")
+	}
+}
+
+// TestCompute_AnsibleSharedRolesTreeHashedOnce verifies that several ansible
+// commands sharing a roles tree still track its content. The tree is walked
+// once per layer as an optimisation; that dedupe must not drop it from the
+// hash.
+func TestCompute_AnsibleSharedRolesTreeHashedOnce(t *testing.T) {
+	dir := t.TempDir()
+	roleMain := filepath.Join(dir, "roles", "chrony", "tasks", "main.yaml")
+	writeFile(t, roleMain, "# chrony v1\n")
+	first := ansiblePlaybook(t, dir)
+	second := filepath.Join(dir, "second.yaml")
+	writeFile(t, second, "---\n- name: second\n  hosts: all\n")
+
+	rolesDir := filepath.Join(dir, "roles")
 	cfg := `meta:
   name: test
   tags: ["1"]
@@ -682,15 +657,19 @@ layer:
   actions:
     commands:
       - ansible:
-          playbook: ` + playbook + `
-          roles: ` + filepath.Join(dir, "nonexistent-roles") + `
+          playbook: ` + first + `
+          roles: ` + rolesDir + `
+          groups: [compute]
+      - ansible:
+          playbook: ` + second + `
+          roles: ` + rolesDir + `
           groups: [compute]
 `
-	
-	layer := input(t, cfg)
-	_, err := Compute(layer, nil)
-	if err != nil {
-		t.Errorf("missing roles directory should not cause error: %v", err)
+	h1 := computeOrFail(t, cfg)
+
+	writeFile(t, roleMain, "# chrony v2\n")
+
+	if h2 := computeOrFail(t, cfg); h1 == h2 {
+		t.Errorf("shared roles tree content change should change hash, both = %s", h1)
 	}
 }
-
