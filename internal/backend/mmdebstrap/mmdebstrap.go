@@ -28,15 +28,8 @@ type MmdebstrapBackend struct {
 	mode    string // Execution mode: fakechroot, fakeroot, etc. (default: fakechroot)
 }
 
-// New creates a new mmdebstrap backend instance with the provided options.
-//
-// Required options:
-//   - suite: Debian/Ubuntu release codename (e.g., bookworm, jammy)
-//   - mirror: Package mirror URL
-//
-// Optional options:
-//   - variant: Bootstrap variant (default: minbase)
-//   - mode: Execution mode (default: fakechroot)
+// New creates an mmdebstrap backend. See MmdebstrapBackend for the supported
+// options; suite and mirror are required and enforced by ValidateOptions.
 func New(options map[string]string) *MmdebstrapBackend {
 	variant := options["variant"]
 	if variant == "" {
@@ -111,16 +104,9 @@ func (m *MmdebstrapBackend) InstallRootCommands(install config.Install, rootPath
 	return [][]string{cmd}
 }
 
-// ValidateOptions checks that the required mmdebstrap options are provided
-// and that only known options are present.
-//
-// Required options:
-//   - suite (e.g., bookworm, bullseye, jammy)
-//   - mirror (e.g., http://deb.debian.org/debian)
-//
-// Optional options:
-//   - variant (e.g., minbase, buildd)
-//   - mode (e.g., fakechroot, unshare)
+// ValidateOptions enforces the required suite/mirror pair and rejects unknown
+// keys. The schema below is the enforcement point for the option list
+// documented on MmdebstrapBackend.
 func (m *MmdebstrapBackend) ValidateOptions(options map[string]string) error {
 	if options["suite"] == "" {
 		return fmt.Errorf("mmdebstrap requires options.suite (e.g. bookworm)")

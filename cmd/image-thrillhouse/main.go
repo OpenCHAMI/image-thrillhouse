@@ -205,16 +205,9 @@ promotes just that one.`,
 	RunE: runPromote,
 }
 
-// newBackend creates the appropriate package manager backend based on the configuration.
-// Each backend knows how to install packages using its specific package manager.
-//
-// Supported backends:
-//   - dnf: Red Hat, Rocky, AlmaLinux, Fedora (supports scratch and parent builds)
-//   - zypper: openSUSE, SLES (supports scratch and parent builds)
-//   - apt: Debian, Ubuntu (only parent builds, use mmdebstrap for scratch)
-//   - mmdebstrap: Debian, Ubuntu (only scratch builds using debootstrap)
-//
-// Returns an error if the package manager name is not recognized or if options are invalid.
+// newBackend constructs the package-manager backend named by the config and
+// runs its option validation. See internal/backend for which backends support
+// scratch vs parent builds.
 func newBackend(manager config.Manager) (backend.Backend, error) {
 	var b backend.Backend
 
@@ -239,20 +232,9 @@ func newBackend(manager config.Manager) (backend.Backend, error) {
 	return b, nil
 }
 
-// newPublishers creates a list of publishers based on the configuration.
-// Publishers determine where the built image will be stored or uploaded.
-//
-// If no publishers are specified in the config, defaults to local publisher
-// which commits the image to the local container storage.
-//
-// Supported publisher types:
-//   - local: Commit to local podman/buildah storage
-//   - squashfs: Create a SquashFS filesystem image (requires path)
-//   - registry: Push to OCI container registry (requires url)
-//   - s3: Upload to S3-compatible storage (requires url, bucket, access (env provided)
-//     and secret (env provided))
-//
-// Returns an error if a publisher type is not supported or missing required fields.
+// newPublishers constructs the publishers a build should write to. Structural
+// validation of each block happens in config.Publish.Validate; what's left here
+// is construction plus the credential lookup that only build-time needs.
 func newPublishers(publishes []config.Publish, arch string) ([]publisher.Publisher, error) {
 	// Drop promote-only blocks: they describe where `promote` materializes to,
 	// not somewhere `build` writes. Filtering here (rather than in each case)
@@ -575,22 +557,12 @@ func promoteLayer(ctx context.Context, dag *manifest.DAG, cliVars map[string]int
 	return nil
 }
 
-// setupLogger configures the global logger with the specified level and format.
+// setupLogger installs the default slog handler and configures the logrus logger
+// that buildah and the container libraries use.
 //
-// Parameters:
-//   - level: Log level as string (debug, info, warn, error)
-//   - format: Output format (json, text, textblock)
-//
-// The logger is set as the default slog logger and will be used by all packages.
-// JSON format is recommended for production and parsing, while text is more human-readable,
-// and textblock formats all output in human-readable blocks.
-//
-// This function also configures the logrus logger used by buildah and other
-// container libraries. Their logs are pinned at WARN regardless of the app
-// log level: --log-level debug means "tell me more about my build", not
-// "dump every bind mount and blob-cache lookup buildah performs". Users who
-// actually need the container-runtime firehose (typically developers
-// debugging storage/isolation issues) opt in explicitly with
+// The logrus level is deliberately NOT tied to --log-level: `--log-level debug`
+// means "tell me more about my build", not "dump every bind mount and blob-cache
+// lookup buildah performs". The container-runtime firehose is opt-in via
 // --container-debug.
 func setupLogger(level, format string) error {
 	var lvl slog.Level
@@ -620,13 +592,8 @@ func setupLogger(level, format string) error {
 	slog.SetDefault(slog.New(handler))
 	container.SetLogFormat(format)
 
-	// Configure logrus (used by buildah and container libraries).
-	// Deliberately NOT tied to the app log level: at WARN the libraries
-	// still surface real problems, but their internal chatter (bind
-	// mounts, overlay mount_data, blob-cache lookups, OCI manifest dumps)
-	// stays out of --log-level debug output. Note the logrus level also
-	// propagates to buildah's chroot reexec child via LOGLEVEL, so this
-	// single knob controls both the parent and child firehoses.
+	// This level also propagates to buildah's chroot reexec child via LOGLEVEL,
+	// so the one knob controls both the parent and child firehoses.
 	switch {
 	case containerDebug:
 		logrus.SetLevel(logrus.DebugLevel)
@@ -734,14 +701,8 @@ func buildContext() (context.Context, context.CancelFunc) {
 	return ctx, stop
 }
 
-// runBuild is the main execution function for the build command.
-// It orchestrates the entire image building process:
-//  1. Setup logging
-//  2. Load and validate configuration
-//  3. Create appropriate backend (package manager)
-//  4. Create publishers (destinations for the image)
-//  5. Execute the build
-//  6. Publish to configured destinations
+// runBuild resolves the config — either a standalone --config or a --manifest
+// layer — and hands it to the builder.
 func runBuild(cmd *cobra.Command, args []string) error {
 	ctx, stop := buildContext()
 	defer stop()
@@ -889,22 +850,11 @@ func prepareLayerRender(
 	return layer.Config, mergedVars, nil
 }
 
-// runValidate validates a configuration file without building the image.
-// This is useful for:
-//   - CI/CD pipelines to catch errors early
-//   - Quick syntax checking during development
-//   - Ensuring backend/publisher types are supported
+// runValidate loads and validates a config without building it.
 //
-// It checks:
-//   - YAML syntax and structure
-//   - Required fields are present
-//   - Package manager backend is supported
-//   - Publisher configuration is valid
-//
-// Supports the same input modes as build/render: standalone --config OR
-// --manifest + --layer. Manifest mode loads the layer-specific var files and
-// injects computed tags before rendering, so "validate" gives the same answer
-// build would for that layer.
+// It supports the same input modes as build (standalone --config, or --manifest
+// + --layer) and resolves them the same way, so manifest mode gives the answer
+// build would for that layer rather than a looser one.
 func runValidate(cmd *cobra.Command, args []string) error {
 	if err := setupLogger(logLevel, logFormat); err != nil {
 		return err
@@ -1037,36 +987,25 @@ func runRender(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// main is the application entry point.
-// It handles buildah/podman reexec initialization and user namespace setup,
-// then executes the cobra CLI.
+// main initialises buildah's reexec hooks and the rootless user namespace, then
+// runs the CLI.
 //
-// The reexec and unshare calls are necessary for:
-//   - Buildah's internal operations that need to re-execute the binary
-//   - Rootless container operations using user namespaces
-//
-// These must be called before any other operations.
+// The reexec calls must come first and must be able to return early: buildah and
+// containers-storage re-execute this same binary for privileged operations, and
+// those child invocations have to exit through Init rather than falling into the
+// cobra command tree.
 func main() {
-	// Handle buildah storage reexec - this allows the storage library
-	// to re-execute itself for certain privileged operations
 	if reexec.Init() {
 		return
 	}
-
-	// Handle buildah reexec - this allows buildah to re-execute itself
-	// for container operations that need different privileges
 	if buildah.InitReexec() {
 		return
 	}
 
-	// Setup user namespace for rootless operation
-	// This allows running containers without root privileges
 	unshare.MaybeReexecUsingUserNamespace(false)
 
-	// Execute the CLI and handle any errors
 	if err := rootCmd.Execute(); err != nil {
-		// Print the error to stderr in a simple format
-		// We've already set SilenceErrors: true on rootCmd so Cobra won't print it
+		// rootCmd sets SilenceErrors, so printing here is what surfaces it.
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

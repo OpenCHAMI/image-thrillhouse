@@ -100,35 +100,25 @@ type CopyDirectoryOptions struct {
 	ContentsOnly      bool
 }
 
-// Container provides an abstraction for container operations.
-// It encapsulates buildah functionality for creating, modifying, and committing containers.
+// Container abstracts the buildah operations a build performs, so the builder
+// can be tested without a container runtime.
 type Container interface {
-	// Run executes a command in the container or on the host. Optional
-	// RunOptions (e.g. WithEnv) configure per-invocation behavior.
 	Run(ctx context.Context, cmd []string, mode RunMode, out OutputWriter, opts ...RunOption) error
 
-	// RunScript writes a script to the container and executes it. Optional
-	// RunOptions (e.g. WithEnv) are forwarded to the underlying script
-	// execution step.
 	RunScript(ctx context.Context, script string, out OutputWriter, opts ...RunOption) error
 
-	// WriteFile writes a file into the container filesystem. The context is
-	// used for any network fetches (when File.URL is set) and for cancellation
-	// of the underlying buildah Add operation.
+	// WriteFile resolves File.Content/Src/URL and writes it into the container.
+	// ctx covers the network fetch when URL is set.
 	WriteFile(ctx context.Context, file config.File) error
 
-	// CopyDirectory copies an entire directory from the host to the container
-	// in one buildah operation. srcDir is the source directory path on the
-	// host; destDir is the destination directory path in the container.
-	//
-	// See CopyDirectoryOptions for the per-call knobs (mode, ownership,
-	// excludes, contents-only vs subdir).
+	// CopyDirectory copies a host directory into the container in one buildah
+	// operation. See CopyDirectoryOptions for the per-call knobs.
 	CopyDirectory(ctx context.Context, srcDir, destDir string, opts CopyDirectoryOptions) error
 
-	// SetLabels applies OCI image labels to the container's image config so
-	// that every subsequent commit — local or direct-to-registry — carries
-	// them. The builder calls this once before the publish loop; publishers
-	// must not rely on each other to have applied labels.
+	// SetLabels applies OCI labels to the image config so that every subsequent
+	// commit — local or direct-to-registry — carries them. The builder calls
+	// this once before the publish loop; publishers must not rely on each other
+	// to have applied labels.
 	SetLabels(labels map[string]string)
 
 	// CommitWithLabelsTags commits the container once and applies all tags at
@@ -136,7 +126,6 @@ type Container interface {
 	// each commit re-serializes the layer to storage.
 	CommitWithLabelsTags(ctx context.Context, name string, tags []string, labels map[string]string) (string, error)
 
-	// GetID returns the container ID
 	GetID() string
 
 	// GetParent returns the source/from image for the container.
@@ -149,19 +138,16 @@ type Container interface {
 	// build.
 	PulledParentID() string
 
-	// GetName returns the container name
 	GetName() string
 
-	// Delete removes the container and frees resources
+	// Delete unmounts and removes the container and releases the store handle.
 	Delete()
 
-	// MountPath returns the filesystem path where the container is mounted
+	// MountPath is the host path the container filesystem is mounted at.
 	MountPath() string
 
-	// GetIsolation returns the isolation mode for running commands
 	GetIsolation() define.Isolation
 
-	// CommitToRegistry commits the container directly to a remote registry
 	CommitToRegistry(ctx context.Context, ref string, tlsVerify bool) error
 }
 

@@ -25,21 +25,8 @@ func New(cfg *config.Config) *Generator {
 	return &Generator{cfg: cfg}
 }
 
-// Generate creates a map of all labels for the image.
-// This includes both automatically generated labels and custom labels from the config.
-//
-// Automatic labels follow the org.openchami.image.* naming convention:
-//   - org.openchami.image.name: Image name
-//   - org.openchami.image.type: Layer type (currently always "base")
-//   - org.openchami.image.package-manager: Package manager used
-//   - org.openchami.image.parent: Parent image
-//   - org.openchami.image.tags: Image tag(s)
-//   - org.openchami.image.build-date: ISO 8601 timestamp
-//   - org.openchami.image.repositories: Comma-separated repo aliases
-//   - org.openchami.image.packages: Comma-separated package list
-//   - org.openchami.image.package-groups: Comma-separated group list
-//
-// Custom labels from meta.labels override automatic labels if there are conflicts.
+// Generate builds the org.openchami.image.* label set from the config. Custom
+// meta.labels entries are applied last and override any generated key.
 func (g *Generator) Generate() map[string]string {
 	labels := make(map[string]string)
 

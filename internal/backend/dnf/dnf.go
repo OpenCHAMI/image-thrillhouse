@@ -39,15 +39,7 @@ type DnfBackend struct {
 	customMacros    map[string]string
 }
 
-// New creates a new DNF backend instance.
-// The options parameter can configure DNF behavior:
-//   - install-weak-deps: Whether to install weak dependencies (default: true)
-//   - best: Use best package versions (default: true)
-//   - skip-broken: Skip packages with unsolvable dependencies (default: false)
-//   - allowerasing: Allow erasing packages to resolve dependencies (default: false)
-//   - nobest: Do not limit to best candidates (default: false)
-//   - releasever: Override the distro release version (e.g., "9", "10")
-//   - macro.*: Custom RPM macros (e.g., macro._dbpath: "/var/lib/rpm")
+// New creates a DNF backend. See DnfBackend for the supported options.
 func New(options map[string]string) *DnfBackend {
 	backend := &DnfBackend{
 		installWeakDeps: true, // DNF default
@@ -87,16 +79,9 @@ func (d *DnfBackend) ConfigFilePath() string {
 	return "/etc/dnf/dnf.conf"
 }
 
-// InstallCommands generates DNF commands to run inside a container.
-// This is used for parent image builds where DNF is already installed.
-//
-// Generates commands for:
-//   - Installing individual packages: dnf install -y <packages>
-//   - Installing package groups: dnf groupinstall -y <groups>
-//   - Module operations: dnf module <action> <module:stream>
-//
-// All commands use -q for quiet output and -y for automatic yes.
-// Additional flags are added based on configured options.
+// InstallCommands generates the parent-build commands, where dnf already exists
+// in the image. Module operations run first so any streams they enable are in
+// effect for the package and group installs that follow.
 func (d *DnfBackend) InstallCommands(install config.Install) [][]string {
 	var cmds [][]string
 
@@ -192,17 +177,8 @@ func (d *DnfBackend) InstallRootCommands(install config.Install, rootPath string
 	return cmds
 }
 
-// ValidateOptions validates DNF-specific options.
-// Valid options:
-//   - install-weak-deps: "true" or "false"
-//   - best: "true" or "false"
-//   - skip-broken: "true" or "false"
-//   - allowerasing: "true" or "false"
-//   - nobest: "true" or "false"
-//   - releasever: string (any value, e.g., "9", "10", "40")
-//   - macro.*: string (any RPM macro definition)
-//
-// Returns an error if an unknown option is provided or if a value is invalid.
+// ValidateOptions rejects unknown keys and bad values. The schema below is the
+// enforcement point for the option list documented on DnfBackend.
 func (d *DnfBackend) ValidateOptions(options map[string]string) error {
 	schema := map[string]cmdutil.OptionKind{
 		"install-weak-deps": cmdutil.OptionBool,

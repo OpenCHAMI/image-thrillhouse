@@ -29,11 +29,7 @@ type AptBackend struct {
 	allowUnauthenticated bool
 }
 
-// New creates a new APT backend instance.
-// The options parameter can configure APT behavior:
-//   - install-recommends: Whether to install recommended packages (default: false)
-//   - install-suggests: Whether to install suggested packages (default: false)
-//   - allow-unauthenticated: Whether to allow unauthenticated packages (default: false)
+// New creates an APT backend. See AptBackend for the supported options.
 func New(options map[string]string) *AptBackend {
 	backend := &AptBackend{
 		installRecommends:    false,
@@ -55,13 +51,8 @@ func New(options map[string]string) *AptBackend {
 	return backend
 }
 
-// ValidateOptions checks if the provided options are valid for the APT backend.
-// Valid options:
-//   - install-recommends: "true" or "false"
-//   - install-suggests: "true" or "false"
-//   - allow-unauthenticated: "true" or "false"
-//
-// Returns an error if an unknown option is provided or if a value is invalid.
+// ValidateOptions rejects unknown keys and bad values. The schema below is the
+// enforcement point for the option list documented on AptBackend.
 func (a *AptBackend) ValidateOptions(options map[string]string) error {
 	schema := map[string]cmdutil.OptionKind{
 		"install-recommends":    cmdutil.OptionBool,

@@ -32,26 +32,14 @@ func New(path string) *SquashfsPublisher {
 	return &SquashfsPublisher{path: path}
 }
 
-// Publish creates a single SquashFS image from the container filesystem.
+// Publish writes one SquashFS image to <path>/<name>-<tags[0]>.squashfs.
 //
-// The output file is named "<name>-<tags[0]>.squashfs" inside s.path. The
-// SquashFS bytes are derived purely from the container mount, so running
-// mksquashfs once per tag would produce N identical files differing only
-// in filename — wasteful disk and IO with no observable benefit. We
-// instead write a single file named after the first ("primary") tag,
-// matching the S3 publisher's convention of using tags[0] as the rootfs
-// identifier.
+// The bytes derive purely from the container mount, so one file per tag would be
+// N identical files differing only in filename. tags[0] is the identifier, same
+// convention as the S3 publisher.
 //
-// Previously the publisher hard-coded "rootfs", which silently clobbered
-// the file on every build and ignored both name and tag entirely.
-//
-// Note: Labels are not embedded in SquashFS files as they are filesystem
-// images, not OCI container images. Labels are only relevant for container
-// registries.
-//
-// Requirements:
-//   - mksquashfs command must be available (install squashfs-tools)
-//   - Output directory must be writable
+// labels is ignored: a SquashFS image is a filesystem, not an OCI image.
+// Requires mksquashfs (squashfs-tools) on PATH.
 func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
 	log := slog.With("component", "publisher.squashfs")
 
