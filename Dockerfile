@@ -13,7 +13,17 @@ RUN apt-get update && apt-get install -y \
     gcc
 WORKDIR /src
 COPY . .
-RUN go mod tidy && go build -o image-thrillhouse ./cmd/image-thrillhouse/
+# Keep in sync with the Makefile's VERSION; override with
+# `docker build --build-arg VERSION=x.y.z`.
+ARG VERSION=0.1.0
+# No `go mod tidy` here: it rewrites go.mod/go.sum during the image build, so
+# the container could silently resolve a different dependency set than the one
+# committed to the repo. Build from the checked-in module graph instead.
+#
+# The version is stamped the same way the Makefile, debian/rules and the RPM
+# spec stamp it. Without it the containerised binary reported "dev", which made
+# `image-thrillhouse version` useless for identifying what an image was built by.
+RUN go build -ldflags "-X main.version=v${VERSION}" -o image-thrillhouse ./cmd/image-thrillhouse/
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y \
