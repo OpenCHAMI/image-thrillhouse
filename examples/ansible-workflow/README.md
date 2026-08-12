@@ -88,6 +88,8 @@ When the build runs, the tool:
 
 Because everything lives behind bind mounts, **nothing is written to the container's filesystem** — the playbook, inventory, and roles never end up in the committed image layer.
 
+They still count as build inputs, though: in a manifest build the playbook, the whole roles tree, and the inventory are content-hashed into the layer's tag, so editing a role forces a rebuild rather than reusing a stale image. See [Ansible content and the tag](../../docs/configuration.md#ansible-content-and-the-tag) for what is and isn't hashed.
+
 ### 4. Dynamic Localhost Inventory
 
 The tool automatically generates a `00-generated-localhost` inventory file (without extension, following Ansible conventions). The `00-` prefix ensures it's read first in alphanumeric order:

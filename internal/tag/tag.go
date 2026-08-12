@@ -7,6 +7,7 @@ package tag
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -102,6 +103,29 @@ func hashLayer(h io.Writer, layer LayerInput) error {
 	for _, d := range layer.Cfg.Layer.Directories {
 		if err := hashDirectory(h, d); err != nil {
 			return fmt.Errorf("hash directory %s: %w", d.Src, err)
+		}
+	}
+
+	// Ansible content the rendered config references. Unlike files, repos, and
+	// directories, ansible playbooks/roles/inventory are bind-mounted at run
+	// time and never committed into the layer — but they drive what the build
+	// does, so they belong in the tag just the same.
+	//
+	// Granularity is deliberately coarse: the whole roles tree is hashed, not
+	// just the roles a playbook actually reaches. Narrowing it would mean
+	// reimplementing ansible's own resolution (include_role, roles depending on
+	// roles, dynamic includes). Over-hashing costs an extra rebuild;
+	// under-hashing ships a stale image, so coarse is the safe direction.
+	//
+	// seen dedupes content shared by several ansible commands in one layer —
+	// most commonly the default "roles" tree — so a large tree is walked once.
+	seen := make(map[string]bool)
+	for _, cmd := range layer.Cfg.Layer.Actions.Commands {
+		if cmd.Ansible == nil {
+			continue
+		}
+		if err := hashAnsibleCommand(h, cmd.Ansible, seen); err != nil {
+			return fmt.Errorf("hash ansible command: %w", err)
 		}
 	}
 
@@ -288,4 +312,140 @@ func hashFile(h io.Writer, path string) error {
 	}
 	_, err = io.Copy(h, f)
 	return err
+}
+
+// defaultAnsibleRolesDir is where ansible looks for roles when the config
+// doesn't say — the same fallback the builder applies in runAnsibleCommand.
+const defaultAnsibleRolesDir = "roles"
+
+// ansibleVCSExcludes drops version-control bookkeeping from the hashed roles
+// and inventory trees. .git is rewritten by every fetch, checkout, and gc, so
+// hashing it moves the tag with no build-relevant change behind it — the same
+// spurious-rebuild problem the mtime exclusion in hashDirectory avoids. Roles
+// vendored as submodules are unaffected: their .git is a small stable pointer
+// file, and the working tree is still hashed in full.
+//
+// Note this is *not* done for layer.Directories, where a .git under src is
+// copied into the image and is therefore real layer content — excluding it
+// from the hash there would desync the tag from the image it names. Ansible's
+// trees are bind-mounted read-only and read only by ansible, which never looks
+// at .git, so dropping it here cannot cause that. (A playbook that shells out
+// to git against the mounted tree to stamp provenance would be the exception;
+// hashing .git wouldn't reliably capture that case either.)
+//
+// It is a fixed list rather than a config field for the same reason: ansible
+// demonstrably ignores .git, but nothing shows it ignores an arbitrary user
+// pattern, and an exclude that drops a role the playbook does run is
+// under-hashing — the direction that ships stale images. layer.Directories can
+// safely expose excludes because buildah applies the same list at copy time,
+// keeping hash and image in sync.
+var ansibleVCSExcludes = []string{".git", "**/.git"}
+
+// hashAnsibleCommand folds one ansible command's host-side content into h: the
+// playbook file, the roles tree (explicit or ansible's default), and the
+// inventory file or tree. Paths resolve against the process working directory
+// and are normalised to absolute form, mirroring how the builder resolves them
+// in runAnsibleCommand.
+//
+// Presence handling mirrors the builder exactly, so the tag reflects what the
+// build will actually mount: a missing roles tree — or one that isn't a
+// directory — is skipped, because the builder skips the mount in those cases
+// too; a missing inventory is an error, because the builder refuses to run.
+//
+// seen holds the absolute paths already hashed for this layer; each is hashed
+// at most once even when several commands reference it.
+func hashAnsibleCommand(h io.Writer, ansible *config.AnsibleCommand, seen map[string]bool) error {
+	if ansible.Playbook != "" {
+		playbook, err := absPath(ansible.Playbook)
+		if err != nil {
+			return fmt.Errorf("resolve playbook path: %w", err)
+		}
+		if !seen[playbook] {
+			seen[playbook] = true
+			// Reject a directory explicitly: hashFile would fail on the read
+			// with an opaque EISDIR, and tag computation runs before the
+			// builder's own check, so this is the message the user sees.
+			info, err := os.Stat(playbook)
+			switch {
+			case errors.Is(err, os.ErrNotExist):
+				return fmt.Errorf("playbook file not found: %s (paths are resolved relative to the current working directory)", playbook)
+			case err != nil:
+				return fmt.Errorf("stat playbook %s: %w", playbook, err)
+			case info.IsDir():
+				return fmt.Errorf("playbook must be a file, not a directory: %s", playbook)
+			}
+			if err := hashFile(h, playbook); err != nil {
+				return fmt.Errorf("hash playbook %s: %w", playbook, err)
+			}
+		}
+	}
+
+	rolesSrc := ansible.Roles
+	if rolesSrc == "" {
+		rolesSrc = defaultAnsibleRolesDir
+	}
+	rolesDir, err := absPath(rolesSrc)
+	if err != nil {
+		return fmt.Errorf("resolve roles path: %w", err)
+	}
+	switch info, err := os.Stat(rolesDir); {
+	case err == nil && info.IsDir():
+		if err := hashAnsibleDir(h, rolesDir, seen); err != nil {
+			return fmt.Errorf("hash roles directory %s: %w", rolesDir, err)
+		}
+	case err != nil && !errors.Is(err, os.ErrNotExist):
+		// An unreadable roles tree must not silently contribute nothing —
+		// that would hand back a tag that looks clean while the build sees
+		// content the hash never covered.
+		return fmt.Errorf("stat roles %s: %w", rolesDir, err)
+	}
+
+	if ansible.Inventory != "" {
+		inventory, err := absPath(ansible.Inventory)
+		if err != nil {
+			return fmt.Errorf("resolve inventory path: %w", err)
+		}
+		info, err := os.Stat(inventory)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("inventory path not found: %s (paths are resolved relative to the current working directory)", inventory)
+			}
+			return fmt.Errorf("stat inventory %s: %w", inventory, err)
+		}
+		switch {
+		case info.IsDir():
+			if err := hashAnsibleDir(h, inventory, seen); err != nil {
+				return fmt.Errorf("hash inventory directory %s: %w", inventory, err)
+			}
+		case !seen[inventory]:
+			seen[inventory] = true
+			if err := hashFile(h, inventory); err != nil {
+				return fmt.Errorf("hash inventory file %s: %w", inventory, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// hashAnsibleDir hashes a bind-mounted ansible tree once per layer, with VCS
+// bookkeeping excluded.
+func hashAnsibleDir(h io.Writer, dir string, seen map[string]bool) error {
+	if seen[dir] {
+		return nil
+	}
+	seen[dir] = true
+	return hashDirectory(h, config.Directory{Src: dir, Excludes: ansibleVCSExcludes})
+}
+
+// absPath returns the absolute, cleaned form of path. Config-supplied ansible
+// paths may be relative (they resolve against the working directory, same as
+// the build itself); normalising them lets the same tree referenced two ways
+// dedupe to one hash. The relative paths hashDirectory records are relative to
+// its Src, so this does not change the hashed bytes.
+func absPath(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path), nil
+	}
+	return filepath.Abs(path)
 }
