@@ -86,24 +86,14 @@ func (b *Builder) SetSkipIfExists(v bool) {
 	b.skipIfExists = v
 }
 
-// Build executes the complete image building process.
-// The build process consists of the following steps:
-//  1. Create a new container from the base image
-//  2. Apply package manager configuration
-//  3. Write repository configurations
-//  4. Write custom files
-//  5. Run package installations
-//  6. Run custom commands
-//  7. Apply image labels and publish to all configured destinations
-//  8. Clean up the container
+// Build runs the full pipeline: create the container, prepare it, install, run
+// commands, label, publish. The container is cleaned up via defer even on
+// failure.
 //
-// One ordering exception: backends whose scratch bootstrap refuses a
-// non-empty root (Backend.RequiresEmptyRoot, today mmdebstrap) run the
-// install step FIRST — writing repos/files/keys beforehand would make the
-// bootstrap fail. The write steps then run after the root exists.
-//
-// Returns an error if any step fails. The container is automatically
-// cleaned up via defer, even if the build fails.
+// One ordering exception matters: backends whose scratch bootstrap refuses a
+// non-empty root (Backend.RequiresEmptyRoot, today mmdebstrap) run the install
+// step FIRST — writing repos, files, or keys beforehand makes the bootstrap
+// fail. The write steps then run after the root exists.
 func (b *Builder) Build(ctx context.Context) error {
 	log := slog.With("component", "builder")
 	buildStart := time.Now()
@@ -273,15 +263,11 @@ func (b *Builder) prunePulledParent(c container.Container) {
 	log.Info("pruned pulled base image", "from", b.cfg.Meta.From, "image_id", id)
 }
 
-// applyManagerConfig writes the package manager configuration file if specified.
-// For example, this could write /etc/dnf/dnf.conf for DNF or /etc/zypp/zypp.conf for Zypper.
-// If no config is specified in the configuration, this is a no-op.
+// applyManagerConfig writes layer.manager.config to the backend's config path.
 //
-// Backends that don't support a persistent config file (today: mmdebstrap)
-// return "" from ConfigFilePath. If the user nevertheless set
-// layer.manager.config for one of those backends, we fail loudly rather than
-// writing the YAML to a bogus path — silent acceptance there used to mean
-// the user's config did nothing without any warning.
+// Backends with no persistent config file return "" from ConfigFilePath; setting
+// layer.manager.config for one of those is a hard error rather than a write to a
+// bogus path, which would silently do nothing.
 func (b *Builder) applyManagerConfig(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	if b.cfg.Layer.Manager.Config == "" {
@@ -298,9 +284,7 @@ func (b *Builder) applyManagerConfig(ctx context.Context, c container.Container)
 	})
 }
 
-// writeRepos writes all repository configuration files to the container.
-// Repositories can be specified as inline content, local files, or URLs.
-// The actual path where repos are written depends on the package manager.
+// writeRepos writes each configured layer.repos entry to the path it names.
 func (b *Builder) writeRepos(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	for _, repo := range b.cfg.Layer.Repos {
@@ -318,23 +302,13 @@ func (b *Builder) writeRepos(ctx context.Context, c container.Container) error {
 	return nil
 }
 
-// importGPGKeys imports GPG keys for repositories that specify them.
-// This allows automatic verification of package signatures.
+// importGPGKeys fetches each repo's GPG key and asks the backend for a command
+// to install it.
 //
-// The key bytes are fetched here in Go (ctx + timeout-aware) and written
-// to disk. The backend is then asked for a command that operates on that
-// local path — never on the URL. This is what closes the previous shell
-// injection vector where a user-supplied URL was interpolated into a
-// `sh -c "curl ..."` string.
+// The fetch happens here, in Go, and the backend only ever sees a local path —
+// never the URL. That is what keeps a user-supplied URL out of a shell string.
 //
-// For scratch builds, the key is written to a host temp file and the
-// resulting command runs on the host with --root semantics. For parent
-// builds, the key is written inside the container via c.WriteFile and
-// the command runs inside the container.
-//
-// If a repo has no GPG key, it's skipped (the user is expected to handle
-// GPG in the repo config). Per-repo failures are warnings, not errors,
-// to match prior behavior — some repos work without GPG.
+// Per-repo failures are warnings, not errors: some repos work without GPG.
 func (b *Builder) importGPGKeys(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 
@@ -465,9 +439,7 @@ func (b *Builder) placeGPGKey(ctx context.Context, c container.Container, isScra
 	return inContainer, cleanup, nil
 }
 
-// writeFiles writes all custom files to the container.
-// Files can be specified as inline content, local files, or URLs.
-// This is useful for adding configuration files, scripts, etc.
+// writeFiles writes each configured layer.files entry into the container.
 func (b *Builder) writeFiles(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	for _, file := range b.cfg.Layer.Files {
@@ -508,20 +480,10 @@ func (b *Builder) writeDirectories(ctx context.Context, c container.Container) e
 	return nil
 }
 
-// runInstall installs packages, groups, and modules using the configured backend.
-// It handles two different build modes:
-//
-//  1. Scratch builds (from == "scratch"):
-//     - Uses installroot to bootstrap a new filesystem
-//     - Runs package manager commands on the host, targeting the container mount
-//     - Not all backends support this (e.g., apt doesn't, use mmdebstrap instead)
-//
-//  2. Parent builds (from != "scratch"):
-//     - Runs package manager commands inside the container
-//     - Requires the package manager to exist in the parent image
-//     - Not all backends support this (e.g., mmdebstrap doesn't, use apt instead)
-//
-// The backend generates the appropriate commands for the selected mode.
+// runInstall asks the backend for install commands and runs them, on the host
+// against the mounted root for a scratch build or inside the container for a
+// parent build. Backends that don't support the selected mode fail here with a
+// message naming the alternative.
 func (b *Builder) runInstall(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 	log.Info("starting install", installAttrs(b.cfg.Layer.Actions.Install)...)
@@ -657,13 +619,9 @@ func (b *Builder) runInstallCommands(
 	return nil
 }
 
-// resolveEnv converts EnvConfig structs into a slice of "KEY=VALUE" strings
-// suitable for container.WithEnv(). It merges layer-level and command-level
-// env configs, with command-level taking precedence.
-//
-// Variables in Pass are read from the host environment and must exist.
-// Variables in Set are defined with explicit values in the configuration.
-// If a required variable from Pass is not found on the host, an error is returned.
+// resolveEnv merges layer- and command-level env into "KEY=VALUE" strings,
+// command-level winning. A "pass" key missing from the host environment is an
+// error rather than an empty value.
 func (b *Builder) resolveEnv(layerEnv, cmdEnv *config.EnvConfig) ([]string, error) {
 	envMap := make(map[string]string)
 
@@ -703,15 +661,8 @@ func applyEnvConfig(envMap map[string]string, e *config.EnvConfig) error {
 	return nil
 }
 
-// runCommands executes all custom commands specified in the configuration.
-// Commands can be either simple one-liners or multi-line shell scripts.
-//
-// Three command types are supported:
-//   - run: Simple command (e.g., "systemctl enable myservice")
-//   - script: Multi-line bash script
-//   - ansible: Ansible playbook execution
-//
-// All commands run inside the container using "buildah run".
+// runCommands executes the configured run/script/ansible commands in order,
+// inside the container, with layer- and command-level env merged.
 func (b *Builder) runCommands(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 
@@ -772,14 +723,11 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 	return nil
 }
 
-// removePackages removes packages from the container if specified in the configuration.
-// Uses rpm -e --nodeps for RPM-based systems or dpkg --remove for Debian-based systems.
-// This is useful for minimizing image size by removing unnecessary packages.
+// removePackages runs the backend's removal command for
+// actions.install.remove_packages.
 //
-// For scratch builds, the command runs on the host against the mounted root
-// (e.g. rpm --root <path> -e --nodeps ...) because a freshly-bootstrapped
-// scratch root may not be able to exec the package manager itself.
-// For parent builds, the command runs inside the container.
+// For scratch builds it runs on the host against the mounted root, because a
+// freshly-bootstrapped root may not be able to exec the package manager itself.
 func (b *Builder) removePackages(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 
@@ -811,15 +759,9 @@ func (b *Builder) removePackages(ctx context.Context, c container.Container) err
 	return nil
 }
 
-// runOpenSCAP executes OpenSCAP security scanning if configured.
-// This performs security compliance checking and vulnerability assessment.
-//
-// Supports:
-//   - Installing OpenSCAP tools (install_scap)
-//   - Running XCCDF security benchmark scans (scap_benchmark)
-//   - Running OVAL vulnerability evaluations (oval_eval)
-//
-// Results are saved in the container at the configured paths (default: /root/)
+// runOpenSCAP hands off to the oscap package when layer.openscap requests at
+// least one of its operations. Results land in the container at the configured
+// paths (default /root/).
 func (b *Builder) runOpenSCAP(ctx context.Context, c container.Container) error {
 	log := slog.With("component", "builder")
 

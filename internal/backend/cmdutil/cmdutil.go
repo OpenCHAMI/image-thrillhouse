@@ -74,28 +74,19 @@ func DPKGRemove(rootPath string, packages []string) []string {
 // key into /etc/apt/trusted.gpg.d/<keyName>.gpg. The key is dearmored when
 // possible and copied verbatim otherwise.
 //
-// keyName makes the destination filename unique per repository. It was
-// previously a hardcoded "image-thrillhouse-repo.gpg", which meant a build
-// with two apt repos each carrying a `gpg:` key silently clobbered the first
-// key with the second — leaving one repo unverifiable. Callers derive keyName
-// from the repo (see internal/builder). It is reduced to a safe filename
-// component here (see safeKeyName), so an empty or junk value can never
-// escape the trusted.gpg.d directory.
+// keyName makes the destination filename unique per repository — without it,
+// two apt repos each carrying a `gpg:` key overwrite one another and one repo
+// ends up unverifiable. safeKeyName reduces it to a single filename component,
+// so an empty or hostile value cannot escape trusted.gpg.d.
 //
-// The destination and key paths are passed as POSITIONAL arguments to sh
-// (referenced inside the script as $1 and $2) rather than interpolated into
-// the script text. That removes any quoting surface — even if a future
-// refactor pipes user-controlled bytes into rootPath or keyPath, the shell
-// only ever sees them as opaque argv strings, never as parseable script
-// fragments. The previous implementation used fmt.Sprintf with Go's %q
-// verb, which is NOT shell-safe (e.g. \xNN sequences mean different things
-// in Go and sh) and was a latent injection vector waiting for the inputs
-// to widen.
+// The paths are passed as POSITIONAL arguments to sh ($1, $2), never
+// interpolated into the script text. Keep it that way: it means the shell sees
+// them as opaque argv strings rather than parseable script fragments, so
+// widening the input sources later cannot open an injection hole. In particular
+// do not reach for fmt.Sprintf with %q — Go's quoting is not shell quoting.
 //
-// When rootPath is non-empty (scratch build) the destination lives under
-// that root and the command is meant to run on the host.
-//
-// Returns nil if keyPath is empty.
+// When rootPath is non-empty (scratch build) the destination lives under that
+// root and the command runs on the host. Returns nil if keyPath is empty.
 func APTImportKey(rootPath, keyName, keyPath string) []string {
 	if keyPath == "" {
 		return nil

@@ -37,11 +37,9 @@ type LineClassifier interface {
 	Done(raw string, err error)
 }
 
-// LineWriter is a reusable scaffold for the package-manager output parsers.
-// Each backend used to maintain its own tiny `bytes.Buffer + Write + Flush`
-// trio with subtle differences (trailing-CR handling, where the empty-line
-// filter lived, etc.). Putting that boilerplate here once means each backend
-// only owns its classification logic.
+// LineWriter is the shared buffer + Flush scaffold for the package-manager
+// output parsers, so each backend owns only its classification logic and they
+// can't drift on details like trailing-CR handling.
 type LineWriter struct {
 	buf bytes.Buffer
 	cls LineClassifier
@@ -65,8 +63,7 @@ func (w *LineWriter) Flush(err error) {
 	raw := w.buf.String()
 	w.buf.Reset()
 	for _, line := range strings.Split(raw, "\n") {
-		// Strip a trailing CR for Windows-style line endings — the previous
-		// dnf/zypper implementations did this on a per-line basis.
+		// Strip a trailing CR for Windows-style line endings.
 		line = strings.TrimRight(line, "\r")
 		w.cls.Line(line, err != nil)
 	}

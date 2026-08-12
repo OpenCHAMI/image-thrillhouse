@@ -37,15 +37,7 @@ type ZypperBackend struct {
 	customMacros          map[string]string
 }
 
-// New creates a new Zypper backend instance with the provided options.
-//
-// Supported options:
-//   - no-recommends: Do not install recommended packages (default: false)
-//   - no-gpg-checks: Skip GPG signature checks (default: false)
-//   - force-resolution: Force automatic resolution of conflicts (default: false)
-//   - auto-agree-with-licenses: Automatically agree to package licenses (default: false)
-//   - allow-vendor-change: Allow changing package vendors (default: false)
-//   - macro.*: Custom RPM macros (e.g., macro._dbpath: "/var/lib/rpm")
+// New creates a Zypper backend. See ZypperBackend for the supported options.
 func New(options map[string]string) *ZypperBackend {
 	backend := &ZypperBackend{
 		noRecommends:          false,
@@ -81,25 +73,9 @@ func (z *ZypperBackend) ConfigFilePath() string {
 	return "/etc/zypp/zypp.conf"
 }
 
-// InstallCommands generates zypper commands to install packages in a running container.
-// This method is used for parent image builds (from != "scratch").
-//
-// Process:
-//  1. Warns if modules are specified (Zypper doesn't support modules)
-//  2. Installs packages with 'zypper install -y'
-//  3. Installs groups (patterns) with 'zypper install -y -t pattern'
-//
-// Flags used:
-//
-//	-q: Quiet mode for cleaner output
-//	--gpg-auto-import-keys: Automatically import repository GPG keys (unless no-gpg-checks)
-//	-y: Assume "yes" to all prompts (non-interactive)
-//	-t pattern: Specifies package type for groups/patterns
-//	--no-recommends: Skip recommended packages (if configured)
-//	--no-gpg-checks: Skip GPG verification (if configured)
-//	--force-resolution: Force automatic conflict resolution (if configured)
-//	--auto-agree-with-licenses: Automatically agree to package licenses (if configured)
-//	--allow-vendor-change: Allow changing package vendors (if configured)
+// InstallCommands generates the parent-build commands. Groups map onto zypper
+// patterns (-t pattern); modules have no zypper equivalent and are warned about.
+// Flag placement matters — see addGlobalFlags vs addInstallFlags.
 func (z *ZypperBackend) InstallCommands(install config.Install) [][]string {
 	var cmds [][]string
 
@@ -130,19 +106,11 @@ func (z *ZypperBackend) InstallCommands(install config.Install) [][]string {
 	return cmds
 }
 
-// InstallRootCommands generates zypper commands for scratch builds using --root.
-// This runs zypper on the host system, installing into the specified root directory.
-// This is how we bootstrap a new openSUSE/SLES filesystem from nothing.
+// InstallRootCommands generates the scratch-build commands, run on the host
+// against the mounted root. Metadata is refreshed first.
 //
-// Process:
-//  1. Runs 'zypper refresh' to update repository metadata
-//  2. Installs packages with --root flag
-//  3. Installs groups (patterns) if specified
-//
-// The commands use --root instead of --installroot because:
-//
-//	--root: Operates on a different root directory (for scratch builds)
-//	--installroot: Shares repos with host (not suitable for scratch builds)
+// --root, not --installroot: the latter shares the host's repo definitions,
+// which is not what a scratch bootstrap wants.
 func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath string) [][]string {
 	var cmds [][]string
 
@@ -182,16 +150,8 @@ func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath str
 	return cmds
 }
 
-// ValidateOptions checks if the provided options are valid for the Zypper backend.
-// Valid options:
-//   - no-recommends: "true" or "false"
-//   - no-gpg-checks: "true" or "false"
-//   - force-resolution: "true" or "false"
-//   - auto-agree-with-licenses: "true" or "false"
-//   - allow-vendor-change: "true" or "false"
-//   - macro.*: string (any RPM macro definition)
-//
-// Returns an error if an unknown option is provided or if a value is invalid.
+// ValidateOptions rejects unknown keys and bad values. The schema below is the
+// enforcement point for the option list documented on ZypperBackend.
 func (z *ZypperBackend) ValidateOptions(options map[string]string) error {
 	schema := map[string]cmdutil.OptionKind{
 		"no-recommends":            cmdutil.OptionBool,
@@ -309,11 +269,9 @@ func (z *ZypperBackend) OutputWriter() container.OutputWriter {
 //     dbus) failed in the --root chroot. The on-disk state is correct; the
 //     scriptlets will re-run at first boot.
 //
-// Exit code 8 (ZYPPER_EXIT_ERR_COMMIT) is a real error and is NOT tolerated.
-// Older zypper versions also returned it for post-install scriptlet
-// failures; an output-sniffing heuristic for that case existed once but was
-// removed (commit 28f1e00) until a concrete case requires it again. If that
-// happens, the `output` parameter is the hook to reintroduce it.
+// Exit code 8 (ZYPPER_EXIT_ERR_COMMIT) is a real error and is NOT tolerated,
+// even though older zypper versions also used it for post-install scriptlet
+// failures. If a concrete case ever needs distinguishing, `output` is the hook.
 func (z *ZypperBackend) IsAcceptableExitCode(exitCode int, output string) bool {
 	switch exitCode {
 	case 102, 103, 107:

@@ -12,33 +12,16 @@ import (
 	"github.com/openchami/image-thrillhouse/internal/container"
 )
 
-// Publisher is the interface that all image publishers must implement.
-// A publisher takes a built container and publishes it to a specific destination.
-//
-// Implementations exist for:
-//   - Local: Commit to local container storage (podman/buildah)
-//   - SquashFS: Create a SquashFS filesystem image
-//   - Registry: Push to OCI container registry
-//   - S3: Upload to S3-compatible storage
-//
-// Multiple publishers can be used simultaneously to publish to multiple destinations.
+// Publisher is a destination a built image can be written to. A build may use
+// several at once. Implementations live in the sibling packages: local,
+// squashfs, registry, s3.
 type Publisher interface {
-	// Publish takes a built container and publishes it to the destination.
-	//
-	// Parameters:
-	//   - ctx: Context for cancellation and timeouts
-	//   - c: The container to publish
-	//   - name: Image name from configuration
-	//   - tags: Image tags from configuration
-	//   - labels: Map of image labels to apply
-	//
-	// Returns an error if publishing fails.
 	Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error
 
-	// Exists reports whether an image with the given name and tags is already
-	// present at the publish destination. Implementations may return false
-	// when existence can't be determined up-front (e.g., the s3 publisher,
-	// whose object key depends on the built filesystem) — false means
-	// "rebuild", which is the conservative direction for skip-if-exists.
+	// Exists reports whether the image is already present at the destination.
+	// When existence can't be determined up front, return false — that means
+	// "rebuild", the conservative direction for skip-if-exists. Genuine errors
+	// (auth, network) must be returned rather than reported as absent, so a
+	// build fails loud instead of silently rebuilding on an outage.
 	Exists(ctx context.Context, name string, tags []string) (bool, error)
 }
