@@ -11,6 +11,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/openchami/image-thrillhouse/internal/backend/cmdutil"
 	"github.com/openchami/image-thrillhouse/internal/config"
@@ -260,7 +261,7 @@ func (z *ZypperBackend) Bootstrap(ctx context.Context, c container.Container, ro
 	log := slog.With("component", "backend.zypper")
 
 	for _, dir := range []string{"/proc", "/sys", "/run", "/etc/rpm"} {
-		if err := os.MkdirAll(rootPath+dir, 0755); err != nil {
+		if err := os.MkdirAll(filepath.Join(rootPath, dir), 0755); err != nil {
 			log.Warn("failed to create essential directory", "dir", dir, "error", err)
 		}
 	}

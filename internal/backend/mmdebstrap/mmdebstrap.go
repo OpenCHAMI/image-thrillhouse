@@ -83,6 +83,17 @@ func (m *MmdebstrapBackend) InstallCommands(install config.Install) [][]string {
 //
 //	mmdebstrap --mode=fakechroot --variant=minbase --include=bash,coreutils bookworm /root http://deb.debian.org/debian
 func (m *MmdebstrapBackend) InstallRootCommands(install config.Install, rootPath string) [][]string {
+	// Say so rather than dropping them silently — the apt and zypper backends
+	// both warn about the install fields they can't honour, and a config whose
+	// groups quietly vanish is worse than one that says why.
+	log := slog.With("component", "backend.mmdebstrap")
+	if len(install.Groups) > 0 {
+		log.Warn("mmdebstrap does not support package groups, ignoring", "groups", install.Groups)
+	}
+	if len(install.Modules) > 0 {
+		log.Warn("mmdebstrap does not support modules, ignoring", "modules", install.Modules)
+	}
+
 	cmd := make([]string, 0)
 	cmd = append(cmd, "mmdebstrap")
 	cmd = append(cmd, "--mode="+m.mode)

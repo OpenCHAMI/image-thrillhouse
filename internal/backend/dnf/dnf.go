@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/openchami/image-thrillhouse/internal/backend/cmdutil"
 	"github.com/openchami/image-thrillhouse/internal/config"
@@ -277,7 +278,7 @@ func (d *DnfBackend) Bootstrap(ctx context.Context, c container.Container, rootP
 		"/usr/sbin", "/usr/share", "/boot", "/home", "/root", "/opt", "/srv", "/media", "/mnt",
 	}
 	for _, dir := range baseDirs {
-		if err := os.MkdirAll(rootPath+dir, 0755); err != nil {
+		if err := os.MkdirAll(filepath.Join(rootPath, dir), 0755); err != nil {
 			log.Warn("failed to create base directory", "dir", dir, "error", err)
 		}
 	}

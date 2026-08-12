@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 
@@ -357,8 +358,10 @@ func (b *Builder) stageAnsiblePayload(ansible *config.AnsibleCommand) (string, s
 		return "", "", fmt.Errorf("stage playbook: %w", err)
 	}
 
-	// Generate the localhost inventory. The 00- prefix ensures it sorts first
-	// when ansible processes the staged etc/ directory.
+	// Generate the localhost inventory. It is passed to ansible-playbook by an
+	// explicit -i ahead of any user inventory (see executeAnsiblePlaybook), so
+	// the 00- prefix is only a readability cue about which source wins — not a
+	// directory-ordering mechanism.
 	var inv strings.Builder
 	for _, group := range ansible.Groups {
 		inv.WriteString(fmt.Sprintf("[%s]\n", group))
@@ -413,8 +416,17 @@ func (b *Builder) executeAnsiblePlaybook(
 	if ansible.Verbose > 0 {
 		cmd = append(cmd, strings.Repeat("-v", ansible.Verbose))
 	}
-	for key, value := range ansible.ExtraVars {
-		cmd = append(cmd, "-e", fmt.Sprintf("%s=%s", key, value))
+	// Sorted so the argv is stable across runs. Ansible does not care about the
+	// order of distinct -e keys, but a map walk made two runs of the same
+	// config log two different command lines, which makes build logs
+	// pointlessly hard to diff.
+	extraVarKeys := make([]string, 0, len(ansible.ExtraVars))
+	for key := range ansible.ExtraVars {
+		extraVarKeys = append(extraVarKeys, key)
+	}
+	sort.Strings(extraVarKeys)
+	for _, key := range extraVarKeys {
+		cmd = append(cmd, "-e", fmt.Sprintf("%s=%s", key, ansible.ExtraVars[key]))
 	}
 	if ansible.Tags != "" {
 		cmd = append(cmd, "--tags", ansible.Tags)

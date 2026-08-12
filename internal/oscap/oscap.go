@@ -301,27 +301,49 @@ func fetchOVAL(ctx context.Context, url string) ([]byte, error) {
 	head = head[:n]
 	combined := io.MultiReader(bytes.NewReader(head), limitedBody)
 
-	var reader io.Reader = combined
-	if n == 3 && string(head) == "BZh" {
-		reader = bzip2.NewReader(combined)
+	// Count the compressed bytes actually consumed off the wire so we can tell
+	// "the body was too big" from "the archive was malformed". Without this the
+	// bzip2 path only ever checked the decompressed cap: an oversized .bz2 got
+	// silently truncated by the LimitReader above and surfaced as an opaque
+	// "decode OVAL body: unexpected EOF" from the decoder, pointing the user at
+	// the wrong problem entirely.
+	counted := &countingReader{r: combined}
+
+	var reader io.Reader = counted
+	isBzip2 := n == 3 && string(head) == "BZh"
+	if isBzip2 {
+		reader = bzip2.NewReader(counted)
 	}
 
 	// Cap the decoded stream. For the passthrough path this is the same as
 	// the compressed cap; for bzip2 it's the much-larger decompressed cap.
 	out, err := io.ReadAll(io.LimitReader(reader, maxOVALDecompressed+1))
+
+	// Check the compressed cap first regardless of how the read ended: when the
+	// body overran it, any decoder error is a symptom of the truncation rather
+	// than the real fault.
+	if counted.n > maxOVALCompressed {
+		return nil, fmt.Errorf("fetch OVAL body: compressed size exceeds %d-byte cap", maxOVALCompressed)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("decode OVAL body: %w", err)
 	}
-	// Distinguish "we hit the compressed cap" from "we hit the decompressed
-	// cap" so the error message points at the right knob.
-	if n == 3 && string(head) == "BZh" {
-		if int64(len(out)) > maxOVALDecompressed {
-			return nil, fmt.Errorf("decode OVAL body: decompressed size exceeds %d-byte cap", maxOVALDecompressed)
-		}
-	} else {
-		if int64(len(out)) > maxOVALCompressed {
-			return nil, fmt.Errorf("fetch OVAL body: size exceeds %d-byte cap", maxOVALCompressed)
-		}
+	if isBzip2 && int64(len(out)) > maxOVALDecompressed {
+		return nil, fmt.Errorf("decode OVAL body: decompressed size exceeds %d-byte cap", maxOVALDecompressed)
 	}
 	return out, nil
+}
+
+// countingReader tallies the bytes read through it, so fetchOVAL can tell
+// whether the compressed body hit its cap even when the failure surfaces from
+// a decoder further down the chain.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
 }
