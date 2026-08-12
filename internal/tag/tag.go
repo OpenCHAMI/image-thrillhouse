@@ -443,6 +443,9 @@ func hashAnsibleDir(h io.Writer, dir string, seen map[string]bool) error {
 // the build itself); normalising them lets the same tree referenced two ways
 // dedupe to one hash. The relative paths hashDirectory records are relative to
 // its Src, so this does not change the hashed bytes.
+//
+// This must stay byte-identical to builder.absPath — see the note there for
+// what breaks when the two disagree.
 func absPath(path string) (string, error) {
 	if filepath.IsAbs(path) {
 		return filepath.Clean(path), nil

@@ -68,7 +68,6 @@ All option values are strings (`"true"` / `"false"` / etc.).
 **Zypper (openSUSE/SLES)**
 | Option | Default | Description |
 | --- | --- | --- |
-| `repopath` | `"/etc/zypp/repos.d"` | Repository directory path |
 | `no-recommends` | `"false"` | Don't install recommended packages |
 | `no-gpg-checks` | `"false"` | Skip GPG verification |
 | `force-resolution` | `"false"` | Auto-resolve conflicts |

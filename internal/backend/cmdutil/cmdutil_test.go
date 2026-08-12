@@ -257,11 +257,11 @@ func TestSafeKeyName(t *testing.T) {
 		{"my.repo_1", "my.repo_1"},
 		{"", "image-thrillhouse-repo"},
 		{".", "image-thrillhouse-repo"},
-		{"../../etc/passwd", "passwd"},        // Base strips the traversal
-		{"a/b/c", "c"},                        // only the final component survives
-		{"weird name!@#", "weird-name"},       // disallowed chars become dashes, trailing trimmed
-		{"...", "image-thrillhouse-repo"},     // trims to empty, then falls back
-		{"-lead-trail-", "lead-trail"},        // leading/trailing dashes trimmed
+		{"../../etc/passwd", "passwd"},    // Base strips the traversal
+		{"a/b/c", "c"},                    // only the final component survives
+		{"weird name!@#", "weird-name"},   // disallowed chars become dashes, trailing trimmed
+		{"...", "image-thrillhouse-repo"}, // trims to empty, then falls back
+		{"-lead-trail-", "lead-trail"},    // leading/trailing dashes trimmed
 	}
 	for _, tt := range tests {
 		if got := safeKeyName(tt.in); got != tt.want {

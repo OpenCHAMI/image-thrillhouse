@@ -79,14 +79,6 @@ func (f *fakeContainer) CopyDirectory(ctx context.Context, srcDir, destDir strin
 	return f.CopyDirectoryErr
 }
 
-func (f *fakeContainer) Commit(ctx context.Context, name, tag string) (string, error) {
-	return "fake-id", nil
-}
-
-func (f *fakeContainer) CommitWithLabels(ctx context.Context, name, tag string, labels map[string]string) (string, error) {
-	return "fake-id", nil
-}
-
 func (f *fakeContainer) CommitWithLabelsTags(ctx context.Context, name string, tags []string, labels map[string]string) (string, error) {
 	return "fake-id", nil
 }
@@ -165,8 +157,8 @@ func (fakeBackendBase) RemovePackagesCommand(packages []string, rootPath string)
 	return nil
 }
 func (fakeBackendBase) ImportGPGKeyCommand(keyName, keyPath, rootPath string) []string { return nil }
-func (fakeBackendBase) OutputWriter() container.OutputWriter                  { return &container.NopWriter{} }
-func (fakeBackendBase) IsAcceptableExitCode(exitCode int, output string) bool { return false }
+func (fakeBackendBase) OutputWriter() container.OutputWriter                           { return &container.NopWriter{} }
+func (fakeBackendBase) IsAcceptableExitCode(exitCode int, output string) bool          { return false }
 
 // fakeBackendNoConfigPath simulates a backend (like mmdebstrap) that has no
 // persistent config file. The builder must refuse to apply
