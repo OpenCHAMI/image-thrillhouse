@@ -34,7 +34,8 @@ func (m *Meta) Validate() error {
 	if len(m.Tags) == 0 {
 		return fmt.Errorf("meta.tags is required and must contain at least one tag")
 	}
-	// from is optional - absence means scratch
+	// from is optional; ParseAndValidate normalises an absent value to
+	// "scratch" before this runs, so there is nothing to check here.
 	return nil
 }
 

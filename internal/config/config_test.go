@@ -70,6 +70,49 @@ publish:
 }
 
 // TestLoadConfigFileNotFound tests error handling for missing config
+// TestParseAndValidate_OmittedFromDefaultsToScratch pins the documented
+// contract that an absent meta.from means a scratch build. The rest of the
+// codebase branches on Meta.From == "scratch", so an empty value here used to
+// send a scratch build down the parent-image path.
+func TestParseAndValidate_OmittedFromDefaultsToScratch(t *testing.T) {
+	rendered := `
+meta:
+  name: test-image
+  tags: ["1.0"]
+layer:
+  manager:
+    name: dnf
+`
+	cfg, err := ParseAndValidate(rendered, "test.yaml")
+	if err != nil {
+		t.Fatalf("ParseAndValidate failed: %v", err)
+	}
+	if cfg.Meta.From != "scratch" {
+		t.Errorf("Expected omitted meta.from to default to 'scratch', got %q", cfg.Meta.From)
+	}
+}
+
+// TestParseAndValidate_ExplicitFromPreserved guards against the normalisation
+// above clobbering a real base image.
+func TestParseAndValidate_ExplicitFromPreserved(t *testing.T) {
+	rendered := `
+meta:
+  name: test-image
+  tags: ["1.0"]
+  from: registry.example.com/rocky:9
+layer:
+  manager:
+    name: dnf
+`
+	cfg, err := ParseAndValidate(rendered, "test.yaml")
+	if err != nil {
+		t.Fatalf("ParseAndValidate failed: %v", err)
+	}
+	if cfg.Meta.From != "registry.example.com/rocky:9" {
+		t.Errorf("Expected explicit meta.from to be preserved, got %q", cfg.Meta.From)
+	}
+}
+
 func TestLoadConfigFileNotFound(t *testing.T) {
 	_, err := LoadConfigWithVars("/nonexistent/config.yaml", nil)
 	if err == nil {

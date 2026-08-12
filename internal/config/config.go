@@ -225,6 +225,17 @@ func ParseAndValidate(rendered, name string) (*Config, error) {
 		return nil, fmt.Errorf("parse %s: %w", name, err)
 	}
 
+	// meta.from is optional and its absence means scratch. Normalise it here,
+	// at the one place every config passes through, because the rest of the
+	// codebase decides "is this a scratch build?" by comparing against the
+	// literal string "scratch" (builder.Build, builder.importGPGKeys,
+	// builder.removePackages, buildah.NewContainer). Leaving it empty made
+	// buildah create an empty container while the builder took the parent-image
+	// path, so installs ran against a rootfs with no package manager in it.
+	if cfg.Meta.From == "" {
+		cfg.Meta.From = "scratch"
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
