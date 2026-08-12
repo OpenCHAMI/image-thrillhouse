@@ -140,6 +140,37 @@ func TestFetchOVAL_CompressedCap(t *testing.T) {
 	}
 }
 
+// TestFetchOVAL_Bzip2CompressedCap covers the gap the plain-body cap test
+// missed: an oversized *bzip2* body. The compressed cap truncates the stream,
+// so the bzip2 decoder is handed a short archive and fails — previously that
+// surfaced as an opaque "unexpected EOF" decode error, pointing the user at a
+// corrupt file instead of at the size limit they actually hit.
+func TestFetchOVAL_Bzip2CompressedCap(t *testing.T) {
+	body, err := hex.DecodeString(helloOVALBz2Hex)
+	if err != nil {
+		t.Fatalf("hex decode fixture: %v", err)
+	}
+
+	prev := maxOVALCompressed
+	maxOVALCompressed = int64(len(body) / 2)
+	t.Cleanup(func() { maxOVALCompressed = prev })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A valid bz2 archive that is larger than the compressed cap.
+		w.Write(body)
+		w.Write(body)
+	}))
+	defer srv.Close()
+
+	_, err = fetchOVAL(context.Background(), srv.URL)
+	if err == nil {
+		t.Fatal("expected compressed-size-cap error, got nil")
+	}
+	if !strings.Contains(err.Error(), "compressed size exceeds") {
+		t.Errorf("expected the error to name the compressed cap, got: %v", err)
+	}
+}
+
 func TestFetchOVAL_DecompressedCap(t *testing.T) {
 	// The embedded bzip2 fixture decompresses to 11 bytes ("hello oval\n").
 	// Shrink the decompressed cap below that so the cap kicks in even on

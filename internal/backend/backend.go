@@ -61,7 +61,7 @@ type Backend interface {
 	// Examples:
 	//   - DNF: /etc/dnf/dnf.conf
 	//   - Zypper: /etc/zypp/zypp.conf
-	//   - APT: /etc/apt/apt.conf
+	//   - APT: /etc/apt/apt.conf.d/99-image-thrillhouse.conf
 	ConfigFilePath() string
 
 	// InstallCommands generates commands to install packages inside a running container.
