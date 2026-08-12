@@ -238,8 +238,6 @@ func NewContainer(ctx context.Context, from string, tlsverify bool) (container.C
 //     --root/--installroot) and was previously silently treated as
 //     RunModeContainer, which surprised callers that wanted to bail.
 //   - RunModeContainer: Runs the command inside the container using buildah run.
-//   - RunModeAuto: Chooses RunModeContainer (the only mode usable for both
-//     scratch and parent builds). Reserved for callers that don't care.
 //
 // For scratch builds in RunModeContainer, the container must have a shell and basic utilities.
 // The command runs with elevated capabilities needed for package installation.
@@ -249,10 +247,6 @@ func (c *Container) Run(ctx context.Context, cmd []string, mode container.RunMod
 	var runOpts container.RunOptions
 	for _, opt := range opts {
 		opt(&runOpts)
-	}
-
-	if mode == container.RunModeAuto {
-		mode = container.RunModeContainer
 	}
 
 	// buildah.Run doesn't take a context, so an in-flight command can't be
@@ -529,27 +523,14 @@ func (c *Container) CopyDirectory(ctx context.Context, srcDir, destDir string, o
 	return nil
 }
 
-// Commit commits the container as an image to local storage.
-// This is a convenience wrapper around CommitWithLabels that passes no labels.
-func (c *Container) Commit(ctx context.Context, name, tag string) (string, error) {
-	return c.CommitWithLabels(ctx, name, tag, nil)
-}
-
-// CommitWithLabels commits the container as an image with labels to local
-// storage under a single tag. Equivalent to CommitWithLabelsTags with
-// []string{tag}; preserved as a convenience for the common case.
-func (c *Container) CommitWithLabels(ctx context.Context, name, tag string, labels map[string]string) (string, error) {
-	return c.CommitWithLabelsTags(ctx, name, []string{tag}, labels)
-}
-
 // CommitWithLabelsTags commits the container once and applies every tag in a
 // single buildah Commit call. Images are tagged as "localhost/<name>:<tag>"
 // in the local container storage. Labels are applied to the image metadata
 // before committing.
 //
-// Calling Commit in a loop (one tag per call) re-serializes the layer to
-// storage every time; this method writes once and lets buildah register the
-// additional tags as image references against the same blob.
+// Committing one tag per call re-serializes the layer to storage every time;
+// this method writes once and lets buildah register the additional tags as
+// image references against the same blob.
 //
 // Returns the container ID on success.
 func (c *Container) CommitWithLabelsTags(ctx context.Context, name string, tags []string, labels map[string]string) (string, error) {

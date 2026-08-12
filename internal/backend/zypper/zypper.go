@@ -21,7 +21,6 @@ import (
 // It supports openSUSE, SLES, and their derivatives.
 //
 // Supported options:
-//   - repopath: Path to repository directory (default: /etc/zypp/repos.d)
 //   - no-recommends: "true" or "false" (default: "false") - Do not install recommended packages
 //   - no-gpg-checks: "true" or "false" (default: "false") - Skip GPG signature checks
 //   - force-resolution: "true" or "false" (default: "false") - Force automatic resolution of conflicts
@@ -29,19 +28,17 @@ import (
 //   - allow-vendor-change: "true" or "false" (default: "false") - Allow changing package vendors
 //   - macro.*: string (optional) - Custom RPM macros (e.g., macro._dbpath: "/var/lib/rpm")
 type ZypperBackend struct {
-	repoPath              string // Path to the repository directory (default: /etc/zypp/repos.d)
-	noRecommends          bool   // Do not install recommended packages
-	noGpgChecks           bool   // Skip GPG signature checks
-	forceResolution       bool   // Force automatic resolution of conflicts
-	autoAgreeWithLicenses bool   // Automatically agree to package licenses
-	allowVendorChange     bool   // Allow changing package vendors
+	noRecommends          bool // Do not install recommended packages
+	noGpgChecks           bool // Skip GPG signature checks
+	forceResolution       bool // Force automatic resolution of conflicts
+	autoAgreeWithLicenses bool // Automatically agree to package licenses
+	allowVendorChange     bool // Allow changing package vendors
 	customMacros          map[string]string
 }
 
 // New creates a new Zypper backend instance with the provided options.
 //
 // Supported options:
-//   - repopath: Path to repository directory (default: /etc/zypp/repos.d)
 //   - no-recommends: Do not install recommended packages (default: false)
 //   - no-gpg-checks: Skip GPG signature checks (default: false)
 //   - force-resolution: Force automatic resolution of conflicts (default: false)
@@ -49,13 +46,7 @@ type ZypperBackend struct {
 //   - allow-vendor-change: Allow changing package vendors (default: false)
 //   - macro.*: Custom RPM macros (e.g., macro._dbpath: "/var/lib/rpm")
 func New(options map[string]string) *ZypperBackend {
-	repoPath := options["repopath"]
-	if repoPath == "" {
-		repoPath = "/etc/zypp/repos.d"
-	}
-
 	backend := &ZypperBackend{
-		repoPath:              repoPath,
 		noRecommends:          false,
 		noGpgChecks:           false,
 		forceResolution:       false,
@@ -192,7 +183,6 @@ func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath str
 
 // ValidateOptions checks if the provided options are valid for the Zypper backend.
 // Valid options:
-//   - repopath: Any non-empty string path
 //   - no-recommends: "true" or "false"
 //   - no-gpg-checks: "true" or "false"
 //   - force-resolution: "true" or "false"
@@ -203,7 +193,6 @@ func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath str
 // Returns an error if an unknown option is provided or if a value is invalid.
 func (z *ZypperBackend) ValidateOptions(options map[string]string) error {
 	schema := map[string]cmdutil.OptionKind{
-		"repopath":                 cmdutil.OptionString,
 		"no-recommends":            cmdutil.OptionBool,
 		"no-gpg-checks":            cmdutil.OptionBool,
 		"force-resolution":         cmdutil.OptionBool,

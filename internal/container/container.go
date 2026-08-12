@@ -17,10 +17,13 @@ import (
 // RunMode specifies how a command should be executed.
 type RunMode int
 
+// Numbering starts at 1 so the zero value is not a usable mode: callers must
+// name the one they want. There used to be a RunModeAuto at zero that only ever
+// meant "same as RunModeContainer" and which nothing passed, so it added a
+// silent fallback without adding a choice.
 const (
-	RunModeAuto      RunMode = iota // Auto-detect the appropriate mode
-	RunModeHost                     // Run on the host system (e.g., for --installroot)
-	RunModeContainer                // Run inside the container using buildah run
+	RunModeHost      RunMode = iota + 1 // Run on the host system (e.g., for --installroot)
+	RunModeContainer                    // Run inside the container using buildah run
 )
 
 // RunOptions holds optional behavior for Run/RunScript. Callers should build
@@ -128,15 +131,9 @@ type Container interface {
 	// must not rely on each other to have applied labels.
 	SetLabels(labels map[string]string)
 
-	// Commit commits the container to local storage with the given name and tag
-	Commit(ctx context.Context, name, tag string) (string, error)
-
-	// CommitWithLabels commits the container with OCI labels under a single tag.
-	CommitWithLabels(ctx context.Context, name, tag string, labels map[string]string) (string, error)
-
-	// CommitWithLabelsTags commits the container once and applies all tags
-	// at the same time. This is significantly cheaper than calling
-	// CommitWithLabels in a loop, which writes the layer to storage per tag.
+	// CommitWithLabelsTags commits the container once and applies all tags at
+	// the same time, which is significantly cheaper than one commit per tag —
+	// each commit re-serializes the layer to storage.
 	CommitWithLabelsTags(ctx context.Context, name string, tags []string, labels map[string]string) (string, error)
 
 	// GetID returns the container ID

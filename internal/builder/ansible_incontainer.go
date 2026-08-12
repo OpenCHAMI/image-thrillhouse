@@ -464,12 +464,19 @@ func firstNonEmpty(a, b string) string {
 	return b
 }
 
-// absPath returns the absolute form of path. OCI bind mounts require absolute
-// source paths; config-supplied paths may be relative (they resolve relative
-// to CWD), so this function converts them to absolute paths.
+// absPath returns the absolute, cleaned form of path. OCI bind mounts require
+// absolute source paths; config-supplied paths may be relative (they resolve
+// relative to CWD), so this function converts them to absolute paths.
+//
+// This must stay byte-identical to tag.absPath: the tag hasher resolves the
+// same ansible paths to decide what content to hash and to dedupe trees it has
+// already seen, and this resolves them to decide what to bind-mount. If the two
+// disagree — as they did while this one skipped filepath.Clean — a path spelled
+// non-canonically (e.g. roles/./chrony) hashes under one key and mounts from
+// another.
 func absPath(path string) (string, error) {
 	if filepath.IsAbs(path) {
-		return path, nil
+		return filepath.Clean(path), nil
 	}
 	return filepath.Abs(path)
 }

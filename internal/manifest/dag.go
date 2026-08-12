@@ -57,62 +57,6 @@ func (d *DAG) checkCycle(name string, visiting, visited map[string]bool) error {
 	return nil
 }
 
-// Ancestors returns all ancestor layers in dependency order (root first)
-// does not include the layer itself
-func (d *DAG) Ancestors(name string) ([]*Layer, error) {
-	layer, ok := d.layers[name]
-	if !ok {
-		return nil, fmt.Errorf("unknown layer: %s", name)
-	}
-
-	visited := make(map[string]bool)
-	var result []*Layer
-
-	for _, dep := range layer.DependsOn {
-		if err := d.walk(dep, visited, &result); err != nil {
-			return nil, err
-		}
-	}
-
-	return result, nil
-}
-
-func (d *DAG) walk(name string, visited map[string]bool, result *[]*Layer) error {
-	if visited[name] {
-		return nil
-	}
-
-	layer, ok := d.layers[name]
-	if !ok {
-		return fmt.Errorf("unknown layer: %s", name)
-	}
-
-	// visit dependencies first
-	for _, dep := range layer.DependsOn {
-		if err := d.walk(dep, visited, result); err != nil {
-			return err
-		}
-	}
-
-	visited[name] = true
-	*result = append(*result, layer)
-	return nil
-}
-
-// TopologicalSort returns all layers in build order
-func (d *DAG) TopologicalSort() ([]*Layer, error) {
-	visited := make(map[string]bool)
-	var result []*Layer
-
-	for name := range d.layers {
-		if err := d.walk(name, visited, &result); err != nil {
-			return nil, err
-		}
-	}
-
-	return result, nil
-}
-
 // Get returns a layer by name
 func (d *DAG) Get(name string) (*Layer, error) {
 	layer, ok := d.layers[name]
