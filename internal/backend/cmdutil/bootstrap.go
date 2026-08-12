@@ -7,6 +7,7 @@ package cmdutil
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/openchami/image-thrillhouse/internal/config"
@@ -42,42 +43,14 @@ func WriteRPMMacros(ctx context.Context, c container.Container, log *slog.Logger
 // same macro name. The macro names in customMacros should not include the
 // leading % character.
 //
-// Example:
+// Output is sorted by macro name so the same inputs always produce the same
+// bytes. Ordering is not significant to rpm, but this file is written into the
+// image, and a map-ordered walk made two builds of an identical config produce
+// different image content — an avoidable hole in a tool whose tags are
+// content-addressed.
 //
-//	customMacros := map[string]string{
-//	    "_dbpath": "/var/lib/rpm",
-//	    "_dbpath_trans": "/var/lib/rpm",
-//	}
-//	content := BuildRPMMacros(customMacros)
-func BuildRPMMacros(customMacros map[string]string) string {
-	// Default macros as a map for easy override
-	defaults := map[string]string{
-		"_netsharedpath":                     "/sys:/proc:/dev",
-		"_install_langs":                     "C:en:en_US:en_US.UTF-8",
-		"__brp_mangle_shebangs":              "%{nil}",
-		"_missing_build_ids_terminate_build": "0",
-		"_file_context_file":                 "%{nil}",
-		"__brp_ldconfig":                     "%{nil}",
-	}
-
-	// Merge custom macros into defaults (custom macros override defaults)
-	for key, value := range customMacros {
-		defaults[key] = value
-	}
-
-	// Build the macro file content
-	var content string
-	for key, value := range defaults {
-		content += "%" + key + " " + value + "\n"
-	}
-
-	return content
-}
-
-// RPMMacros is the macros.image-thrillhouse file content that both the dnf and
-// zypper scratch builds need under /etc/rpm. It works around a cluster of
-// overlay-filesystem and container-isolation issues that bite RPM during
-// scriptlet execution:
+// The defaults work around a cluster of overlay-filesystem and container
+// isolation issues that bite RPM during scriptlet execution:
 //
 //   - %_netsharedpath: tells rpm not to install into shared kernel pseudo-fs
 //     mounts that may not exist or be writable in the chroot.
@@ -90,18 +63,42 @@ func BuildRPMMacros(customMacros map[string]string) string {
 //   - %_file_context_file: suppress SELinux file-context lookups since the
 //     scratch root has none yet.
 //
-// Kept in one place so a fix to the macros doesn't need parallel edits in
-// every RPM-based backend.
+// Example:
 //
-// Deprecated: Use BuildRPMMacros instead. This constant is kept for
-// documentation purposes.
-const RPMMacros = `%_netsharedpath /sys:/proc:/dev
-%_install_langs C:en:en_US:en_US.UTF-8
-%__brp_mangle_shebangs %{nil}
-%_missing_build_ids_terminate_build 0
-%_file_context_file %{nil}
-%__brp_ldconfig %{nil}
-`
+//	customMacros := map[string]string{
+//	    "_dbpath": "/var/lib/rpm",
+//	    "_dbpath_trans": "/var/lib/rpm",
+//	}
+//	content := BuildRPMMacros(customMacros)
+func BuildRPMMacros(customMacros map[string]string) string {
+	// Default macros as a map for easy override
+	macros := map[string]string{
+		"_netsharedpath":                     "/sys:/proc:/dev",
+		"_install_langs":                     "C:en:en_US:en_US.UTF-8",
+		"__brp_mangle_shebangs":              "%{nil}",
+		"_missing_build_ids_terminate_build": "0",
+		"_file_context_file":                 "%{nil}",
+		"__brp_ldconfig":                     "%{nil}",
+	}
+
+	// Merge custom macros into defaults (custom macros override defaults)
+	for key, value := range customMacros {
+		macros[key] = value
+	}
+
+	names := make([]string, 0, len(macros))
+	for key := range macros {
+		names = append(names, key)
+	}
+	sort.Strings(names)
+
+	var content strings.Builder
+	for _, key := range names {
+		content.WriteString("%" + key + " " + macros[key] + "\n")
+	}
+
+	return content.String()
+}
 
 // ExtractMacroOptions extracts RPM macro definitions from the options map.
 // Options with the "macro." prefix are treated as RPM macros, where the key
