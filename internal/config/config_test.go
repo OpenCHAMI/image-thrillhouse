@@ -113,6 +113,75 @@ layer:
 	}
 }
 
+// TestValidatePublish covers the publish-block checks that the `validate`
+// subcommand advertises. Before these existed, a typo'd type or an s3 block
+// missing its bucket passed validate cleanly and only failed once a build had
+// already started.
+func TestValidatePublish(t *testing.T) {
+	tests := []struct {
+		name    string
+		publish Publish
+		wantErr string
+	}{
+		{"local needs nothing", Publish{Type: "local"}, ""},
+		{"squashfs with path", Publish{Type: "squashfs", Path: "/out"}, ""},
+		{"registry with url", Publish{Type: "registry", URL: "reg.io/repo"}, ""},
+		{"s3 with url and bucket", Publish{Type: "s3", URL: "https://s3.example", Bucket: "b"}, ""},
+		{"missing type", Publish{}, "type is required"},
+		{"unknown type", Publish{Type: "s4"}, "not supported"},
+		{"squashfs without path", Publish{Type: "squashfs"}, "requires path"},
+		{"registry without url", Publish{Type: "registry"}, "requires url"},
+		{"s3 without url", Publish{Type: "s3", Bucket: "b"}, "requires url"},
+		{"s3 without bucket", Publish{Type: "s3", URL: "https://s3.example"}, "requires bucket"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.publish.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("Expected no error, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Expected error containing %q, got nil", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Expected error containing %q, got %q", tt.wantErr, err.Error())
+			}
+		})
+	}
+}
+
+// TestParseAndValidate_RejectsBadPublisher confirms publish validation is
+// reachable from the top-level config path the validate subcommand uses, and
+// that the error names which block is at fault.
+func TestParseAndValidate_RejectsBadPublisher(t *testing.T) {
+	rendered := `
+meta:
+  name: test-image
+  tags: ["1.0"]
+  from: scratch
+layer:
+  manager:
+    name: dnf
+publish:
+  - type: local
+  - type: squashfs
+`
+	_, err := ParseAndValidate(rendered, "test.yaml")
+	if err == nil {
+		t.Fatal("Expected an error for a squashfs publish block with no path")
+	}
+	if !strings.Contains(err.Error(), "publish 1") {
+		t.Errorf("Expected the error to identify publish block 1, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "requires path") {
+		t.Errorf("Expected a 'requires path' error, got %q", err.Error())
+	}
+}
+
 func TestLoadConfigFileNotFound(t *testing.T) {
 	_, err := LoadConfigWithVars("/nonexistent/config.yaml", nil)
 	if err == nil {
