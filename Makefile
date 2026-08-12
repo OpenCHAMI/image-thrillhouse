@@ -9,6 +9,17 @@ BINARY_NAME=image-thrillhouse
 VERSION=0.1.0
 GO=go
 GOFLAGS=-v
+# Build tags, kept identical to debian/rules and image-thrillhouse.spec so a
+# locally built binary matches the one that ships. The graphdriver exclusions
+# drop the btrfs and devicemapper backends, which would otherwise need
+# libbtrfs-dev and libdevmapper-dev installed just to compile.
+#
+# This does NOT remove the gpgme/pkg-config requirement. On a host without the
+# cgo dependencies (macOS, minimal CI runners), append the pure-Go signature
+# backend — see docs/development.md:
+#
+#	make build BUILD_TAGS="$(BUILD_TAGS) containers_image_openpgp"
+BUILD_TAGS=exclude_graphdriver_btrfs exclude_graphdriver_devicemapper
 # Stamp the version into the binary so `image-thrillhouse version` reports
 # the same value as this Makefile — the single source of truth for VERSION.
 LDFLAGS=-ldflags "-X main.version=v$(VERSION)"
@@ -21,7 +32,7 @@ all: build
 
 # Build the binary
 build:
-	$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_NAME) ./cmd/image-thrillhouse
+	$(GO) build $(GOFLAGS) -tags "$(BUILD_TAGS)" $(LDFLAGS) -o $(BINARY_NAME) ./cmd/image-thrillhouse
 
 # Clean build artifacts
 clean:
@@ -38,9 +49,12 @@ clean:
 install: build
 	install -D -m 0755 $(BINARY_NAME) $(DESTDIR)$(INSTALL_DIR)/$(BINARY_NAME)
 
-# Run tests
+# Run tests. Uses the same tags as build so the test binary and the shipped
+# binary compile against the same code — previously `make test` passed no tags
+# at all and failed to compile on any host lacking the btrfs/devicemapper
+# development headers.
 test:
-	$(GO) test -v ./...
+	$(GO) test -tags "$(BUILD_TAGS)" -v ./...
 
 # Build Debian package
 deb:
