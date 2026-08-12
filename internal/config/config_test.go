@@ -464,6 +464,45 @@ func TestValidateLayer(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			// container_images and other_files are both optional: a layer
+			// that never sets them must validate exactly like one from
+			// before the feature existed.
+			name: "no container_images or other_files is valid",
+			layer: Layer{
+				Manager: Manager{Name: "dnf"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid container_images and other_files",
+			layer: Layer{
+				Manager: Manager{Name: "dnf"},
+				ContainerImages: []ContainerImage{
+					{Image: "docker.io/library/hello-world:latest"},
+				},
+				OtherFiles: []OtherFile{
+					{TarFile: "https://example.com/archive.tar.gz"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "container_images entry missing image",
+			layer: Layer{
+				Manager:         Manager{Name: "dnf"},
+				ContainerImages: []ContainerImage{{}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "other_files entry missing tar_file",
+			layer: Layer{
+				Manager:    Manager{Name: "dnf"},
+				OtherFiles: []OtherFile{{}},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -473,6 +512,73 @@ func TestValidateLayer(t *testing.T) {
 				t.Errorf("Layer.Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestContainerImageValidate tests ContainerImage validation in isolation.
+func TestContainerImageValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		img     ContainerImage
+		wantErr bool
+	}{
+		{name: "valid image", img: ContainerImage{Image: "docker.io/library/mysql:9.3.0"}, wantErr: false},
+		{name: "missing image", img: ContainerImage{}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.img.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ContainerImage.Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestOtherFileValidate tests OtherFile validation in isolation.
+func TestOtherFileValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		of      OtherFile
+		wantErr bool
+	}{
+		{name: "valid local tar_file", of: OtherFile{TarFile: "/opt/vendor-bundle.tar.gz"}, wantErr: false},
+		{name: "valid http(s) tar_file", of: OtherFile{TarFile: "https://example.com/archive.tar.gz"}, wantErr: false},
+		{name: "missing tar_file", of: OtherFile{}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.of.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("OtherFile.Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestOtherFileToTarFile verifies the field mapping used to bridge the
+// user-facing tar_file/path names to the internal TarFile representation.
+func TestOtherFileToTarFile(t *testing.T) {
+	extract := true
+	tlsVerify := false
+	of := OtherFile{
+		TarFile:   "https://example.com/archive.tar.gz",
+		Path:      "/opt/artifacts/example",
+		Extract:   &extract,
+		TLSVerify: &tlsVerify,
+	}
+	tf := of.ToTarFile()
+	if tf.Src != of.TarFile {
+		t.Errorf("Src = %q, want %q", tf.Src, of.TarFile)
+	}
+	if tf.Dest != of.Path {
+		t.Errorf("Dest = %q, want %q", tf.Dest, of.Path)
+	}
+	if tf.Extract != of.Extract {
+		t.Errorf("Extract pointer not carried through")
+	}
+	if tf.TLSVerify != of.TLSVerify {
+		t.Errorf("TLSVerify pointer not carried through")
 	}
 }
 
