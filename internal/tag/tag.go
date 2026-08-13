@@ -132,9 +132,14 @@ func hashLayer(h io.Writer, layer LayerInput) error {
 	return nil
 }
 
-// hashDirectory walks dir.Src (filtered by dir.Excludes using buildah's own
-// fileutils.PatternMatcher) and folds the host-side state that survives into
-// the resulting layer into h.
+// hashDirectory walks dir.Src (filtered by dir.EffectiveExcludes() using
+// buildah's own fileutils.PatternMatcher) and folds the host-side state that
+// survives into the resulting layer into h.
+//
+// The filter comes from EffectiveExcludes rather than dir.Excludes so the
+// hash covers exactly the file set writeDirectories hands buildah — including
+// the default .git exclusion. See the comment there for why that list is
+// built in one place.
 //
 // Per entry we hash:
 //   - relative path (length-prefixed, slash-normalised so the hash is stable
@@ -161,9 +166,10 @@ func hashDirectory(h io.Writer, dir config.Directory) error {
 		return nil
 	}
 
-	pm, err := fileutils.NewPatternMatcher(dir.Excludes)
+	excludes := dir.EffectiveExcludes()
+	pm, err := fileutils.NewPatternMatcher(excludes)
 	if err != nil {
-		return fmt.Errorf("processing excludes %v: %w", dir.Excludes, err)
+		return fmt.Errorf("processing excludes %v: %w", excludes, err)
 	}
 
 	type entry struct {
@@ -318,29 +324,6 @@ func hashFile(h io.Writer, path string) error {
 // doesn't say — the same fallback the builder applies in runAnsibleCommand.
 const defaultAnsibleRolesDir = "roles"
 
-// ansibleVCSExcludes drops version-control bookkeeping from the hashed roles
-// and inventory trees. .git is rewritten by every fetch, checkout, and gc, so
-// hashing it moves the tag with no build-relevant change behind it — the same
-// spurious-rebuild problem the mtime exclusion in hashDirectory avoids. Roles
-// vendored as submodules are unaffected: their .git is a small stable pointer
-// file, and the working tree is still hashed in full.
-//
-// Note this is *not* done for layer.Directories, where a .git under src is
-// copied into the image and is therefore real layer content — excluding it
-// from the hash there would desync the tag from the image it names. Ansible's
-// trees are bind-mounted read-only and read only by ansible, which never looks
-// at .git, so dropping it here cannot cause that. (A playbook that shells out
-// to git against the mounted tree to stamp provenance would be the exception;
-// hashing .git wouldn't reliably capture that case either.)
-//
-// It is a fixed list rather than a config field for the same reason: ansible
-// demonstrably ignores .git, but nothing shows it ignores an arbitrary user
-// pattern, and an exclude that drops a role the playbook does run is
-// under-hashing — the direction that ships stale images. layer.Directories can
-// safely expose excludes because buildah applies the same list at copy time,
-// keeping hash and image in sync.
-var ansibleVCSExcludes = []string{".git", "**/.git"}
-
 // hashAnsibleCommand folds one ansible command's host-side content into h: the
 // playbook file, the roles tree (explicit or ansible's default), and the
 // inventory file or tree. Paths resolve against the process working directory
@@ -428,14 +411,19 @@ func hashAnsibleCommand(h io.Writer, ansible *config.AnsibleCommand, seen map[st
 	return nil
 }
 
-// hashAnsibleDir hashes a bind-mounted ansible tree once per layer, with VCS
-// bookkeeping excluded.
+// hashAnsibleDir hashes a bind-mounted ansible tree once per layer.
+//
+// The Directory is synthesised with no Excludes, so it picks up the .git
+// exclusion and nothing else. Ansible trees have no user-facing excludes on
+// purpose: ansible demonstrably ignores .git, but nothing shows it ignores an
+// arbitrary user pattern, and an exclude that drops a role the playbook does
+// run is under-hashing — the direction that ships stale images.
 func hashAnsibleDir(h io.Writer, dir string, seen map[string]bool) error {
 	if seen[dir] {
 		return nil
 	}
 	seen[dir] = true
-	return hashDirectory(h, config.Directory{Src: dir, Excludes: ansibleVCSExcludes})
+	return hashDirectory(h, config.Directory{Src: dir})
 }
 
 // absPath returns the absolute, cleaned form of path. Config-supplied ansible

@@ -104,6 +104,50 @@ type Directory struct {
 	ContentsOnly      *bool    `yaml:"contents_only"`      // Optional: default true. Copy src/. into path; false copies src as a subdir
 }
 
+// gitExcludes drops git bookkeeping from both the copy and the tag hash.
+//
+// The pattern is "**/.git" rather than ".git" because the two consumers match
+// against different roots: the hasher makes paths relative to Directory.Src,
+// while buildah matches relative to its ContextDir — which is Src for
+// ContentsOnly copies but Src's *parent* otherwise, putting .git one segment
+// deeper. "**/.git" matches at depth 0 and at any depth, so it means the same
+// thing on both sides of that split; ".git" alone would silently miss the copy
+// for a ContentsOnly=false directory, hashing less than actually shipped.
+var gitExcludes = []string{"**/.git"}
+
+// EffectiveExcludes returns the patterns to apply to d: the user's Excludes
+// with git bookkeeping prepended.
+//
+// Both the tag hasher and the copy step call this, which is the point: the
+// tag only describes the image if the two see the same file set, so the list
+// is built once here rather than assembled separately at each call site.
+//
+// .git is dropped because it is per-checkout state, not source. Its index and
+// reflogs are rewritten by every clone, fetch, and checkout, so hashing it
+// moves the tag with no build-relevant change behind it. Worse for content
+// vendored as a submodule: .git is a pointer file naming the submodule's path
+// inside the superproject, so the same content hashes one way as a submodule,
+// another as a standalone clone (a real .git directory), and a third from a
+// release tarball (no .git at all) — three tags, three rebuilds, one tree.
+// Dropping it collapses those to one tag, and keeps a CI clone's credentialed
+// .git/config out of a published image.
+//
+// User patterns come last so they can layer on top (dockerignore semantics are
+// last-match-wins), but note they can only subtract further: a "!.git"
+// negation does not work as an opt-out, because it re-includes the tree for
+// the copy while the hasher's fs.SkipDir still skips it, leaving the tag
+// covering less than the image — the failure mode that ships stale content.
+//
+// There is deliberately no config field for keeping .git, matching the ansible
+// trees hashed through the same path. If a genuine need for git metadata
+// inside an image turns up, adding the field then is additive; carrying one
+// now on speculation could only be removed by breaking configs.
+func (d *Directory) EffectiveExcludes() []string {
+	out := make([]string, 0, len(gitExcludes)+len(d.Excludes))
+	out = append(out, gitExcludes...)
+	return append(out, d.Excludes...)
+}
+
 // Repo represents a package repository configuration.
 // Exactly one of Content, Src, or URL must be specified.
 type Repo struct {

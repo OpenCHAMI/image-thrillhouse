@@ -211,7 +211,8 @@ func TestWriteDirectories_OneCallPerDirectory(t *testing.T) {
 	if first.Opts.Chmod != "0755" || first.Opts.Chown != "1000:1000" {
 		t.Errorf("first call chmod/chown not forwarded: %+v", first.Opts)
 	}
-	if len(first.Opts.Excludes) != 1 || first.Opts.Excludes[0] != "*.tmp" {
+	// Excludes arrive as EffectiveExcludes: the git default, then the user's.
+	if len(first.Opts.Excludes) != 2 || first.Opts.Excludes[0] != "**/.git" || first.Opts.Excludes[1] != "*.tmp" {
 		t.Errorf("first call excludes not forwarded: %+v", first.Opts.Excludes)
 	}
 	if !first.Opts.ContentsOnly {
@@ -224,6 +225,25 @@ func TestWriteDirectories_OneCallPerDirectory(t *testing.T) {
 	}
 	if second.Opts.ContentsOnly {
 		t.Errorf("explicit contents_only=false must be honored, got true")
+	}
+}
+
+func TestWriteDirectories_GitExcludedFromCopy(t *testing.T) {
+	// The copy must apply the same git exclusion the tag hasher does — a tag
+	// computed over a tree without .git has to describe an image built without
+	// it, and the two only stay in step because both sides call
+	// EffectiveExcludes rather than reading dir.Excludes directly.
+	b := builderWithLayer(config.Layer{
+		Directories: []config.Directory{{Path: "/opt/app", Src: "./tree"}},
+	})
+	c := &fakeContainer{}
+	if err := b.writeDirectories(context.Background(), c); err != nil {
+		t.Fatalf("writeDirectories: %v", err)
+	}
+
+	got := c.CopyDirectoryCalls[0].Opts.Excludes
+	if len(got) != 1 || got[0] != "**/.git" {
+		t.Errorf("expected .git excluded from the copy, got %v", got)
 	}
 }
 
