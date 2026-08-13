@@ -469,7 +469,7 @@ func (b *Builder) writeDirectories(ctx context.Context, c container.Container) e
 			Chmod:             dir.Mode,
 			Chown:             dir.Owner,
 			PreserveOwnership: dir.PreserveOwnership,
-			Excludes:          dir.Excludes,
+			Excludes:          dir.EffectiveExcludes(),
 			ContentsOnly:      contentsOnly,
 		}
 		log.Info("copying directory", "src", dir.Src, "dest", dir.Path)

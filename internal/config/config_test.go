@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.podman.io/storage/pkg/fileutils"
 )
 
 // TestLoadConfigWithVars tests loading a valid configuration file
@@ -764,5 +766,92 @@ func TestCommandType(t *testing.T) {
 				t.Errorf("Command.Type() = %v, want %v", got, tt.expected)
 			}
 		})
+	}
+}
+
+// TestDirectoryEffectiveExcludes covers the list both the tag hasher and the
+// copy step build from: git bookkeeping dropped, user patterns preserved
+// after it.
+func TestDirectoryEffectiveExcludes(t *testing.T) {
+	tests := []struct {
+		name     string
+		dir      Directory
+		expected []string
+	}{
+		{
+			name:     "no excludes still drops git",
+			dir:      Directory{Path: "/opt/app", Src: "./tree"},
+			expected: []string{"**/.git"},
+		},
+		{
+			name:     "user patterns come after the git default",
+			dir:      Directory{Path: "/opt/app", Src: "./tree", Excludes: []string{"*.tmp", "cache"}},
+			expected: []string{"**/.git", "*.tmp", "cache"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.dir.EffectiveExcludes()
+			if len(got) != len(tt.expected) {
+				t.Fatalf("EffectiveExcludes() = %v, want %v", got, tt.expected)
+			}
+			for i := range got {
+				if got[i] != tt.expected[i] {
+					t.Errorf("EffectiveExcludes()[%d] = %q, want %q", i, got[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+// TestDirectoryEffectiveExcludesDoesNotAliasConfig guards against the helper
+// appending into the caller's Excludes backing array — writeDirectories and
+// the hasher both call it on the same Directory, and a shared array would let
+// one call's result bleed into the other's.
+func TestDirectoryEffectiveExcludesDoesNotAliasConfig(t *testing.T) {
+	d := Directory{Path: "/opt/app", Src: "./tree", Excludes: []string{"*.tmp"}}
+
+	first := d.EffectiveExcludes()
+	first[len(first)-1] = "mutated"
+
+	if d.Excludes[0] != "*.tmp" {
+		t.Errorf("EffectiveExcludes must not alias d.Excludes, got %q", d.Excludes[0])
+	}
+	if second := d.EffectiveExcludes(); second[len(second)-1] != "*.tmp" {
+		t.Errorf("second call returned mutated data: %v", second)
+	}
+}
+
+// TestDirectoryGitExcludeMatchesOnlyGitDir pins what the default pattern is
+// allowed to catch. ".gitignore", ".gitkeep", ".gitmodules" and friends are
+// source content that has to reach the image, and they sit one character away
+// from the pattern — a future tweak to it would drop them silently.
+func TestDirectoryGitExcludeMatchesOnlyGitDir(t *testing.T) {
+	pm, err := fileutils.NewPatternMatcher((&Directory{Src: "tree"}).EffectiveExcludes())
+	if err != nil {
+		t.Fatalf("compile default excludes: %v", err)
+	}
+
+	excluded := []string{".git", ".git/config", ".git/objects/pack/p.pack", "sub/.git", "sub/.git/index"}
+	kept := []string{".gitignore", ".gitkeep", ".gitmodules", ".gitattributes", "sub/.gitignore", "a.git", "dotgit"}
+
+	for _, p := range excluded {
+		got, err := pm.Matches(p)
+		if err != nil {
+			t.Fatalf("match %s: %v", p, err)
+		}
+		if !got {
+			t.Errorf("%s should be excluded by default", p)
+		}
+	}
+	for _, p := range kept {
+		got, err := pm.Matches(p)
+		if err != nil {
+			t.Fatalf("match %s: %v", p, err)
+		}
+		if got {
+			t.Errorf("%s is source content and must not be excluded", p)
+		}
 	}
 }

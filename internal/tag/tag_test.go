@@ -6,6 +6,7 @@ package tag
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -231,6 +232,171 @@ func TestCompute_DirectoryExcludesDropContent(t *testing.T) {
 	}
 }
 
+// TestCompute_DirectoryGitMetadataIgnored: a src that is a git working tree
+// must not have its tag moved by git bookkeeping. The index and reflogs are
+// rewritten by every clone, fetch, and checkout, so hashing them would mean a
+// fresh CI clone never hits the cache.
+func TestCompute_DirectoryGitMetadataIgnored(t *testing.T) {
+	dir := t.TempDir()
+	srcRoot := filepath.Join(dir, "tree")
+	payload := writeFile(t, filepath.Join(srcRoot, "app.conf"), "v1\n")
+
+	// A vendored repo nested under src, so the later nested-.git check adds
+	// only the .git — its parent directories are entries in their own right
+	// and would legitimately move the tag.
+	writeFile(t, filepath.Join(srcRoot, "vendor", "lib", "lib.conf"), "lib\n")
+
+	index := writeFile(t, filepath.Join(srcRoot, ".git", "index"), "stat cache A\n")
+	reflog := writeFile(t, filepath.Join(srcRoot, ".git", "logs", "HEAD"), "0000 aaaa clone\n")
+	writeFile(t, filepath.Join(srcRoot, ".git", "config"), "[remote \"origin\"]\n")
+
+	layer := input(t, dirCfg(srcRoot, ""))
+	h1 := mustCompute(t, layer)
+
+	// Same content, second clone: index and reflogs differ, source does not.
+	writeFile(t, index, "stat cache B\n")
+	writeFile(t, reflog, "0000 aaaa clone\naaaa bbbb checkout: moving to main\n")
+
+	if h2 := mustCompute(t, layer); h1 != h2 {
+		t.Errorf("git bookkeeping churn must not change the tag: %s -> %s", h1, h2)
+	}
+
+	// The vendored repo's own .git is dropped at depth too.
+	writeFile(t, filepath.Join(srcRoot, "vendor", "lib", ".git", "index"), "nested stat cache\n")
+	if h3 := mustCompute(t, layer); h1 != h3 {
+		t.Errorf("nested .git must not change the tag: %s -> %s", h1, h3)
+	}
+
+	// The tracked content itself still moves the tag.
+	writeFile(t, payload, "v2\n")
+	if h4 := mustCompute(t, layer); h1 == h4 {
+		t.Errorf("content change under src must still change the tag, both = %s", h1)
+	}
+}
+
+// TestCompute_DirectoryCheckoutShapeAgnostic is the submodule case: identical
+// content must produce one tag no matter how the tree was obtained. .git takes
+// three different shapes across those routes — a pointer file naming the
+// submodule's path inside the superproject, a real directory for a standalone
+// clone, and absent entirely for a release tarball — and hashing any of them
+// would split one tree into three tags.
+func TestCompute_DirectoryCheckoutShapeAgnostic(t *testing.T) {
+	dir := t.TempDir()
+	srcRoot := filepath.Join(dir, "tree")
+	gitPath := filepath.Join(srcRoot, ".git")
+
+	// The config text (and so srcRoot) is identical across all three shapes;
+	// only the .git entry changes, which is the whole point of the test.
+	layer := input(t, dirCfg(srcRoot, ""))
+
+	// Shape 1: release tarball — no .git at all.
+	writeFile(t, filepath.Join(srcRoot, "app.conf"), "v1\n")
+	tarball := mustCompute(t, layer)
+
+	// Shape 2: checked out as a submodule — .git is a pointer file whose
+	// contents encode where the submodule sits in the superproject.
+	writeFile(t, gitPath, "gitdir: ../../.git/modules/vendor/content\n")
+	submodule := mustCompute(t, layer)
+	if submodule != tarball {
+		t.Errorf("submodule checkout tag %s != tarball tag %s", submodule, tarball)
+	}
+
+	// Moving the submodule within the superproject rewrites that pointer, and
+	// must not move the tag either.
+	writeFile(t, gitPath, "gitdir: ../.git/modules/content\n")
+	if moved := mustCompute(t, layer); moved != tarball {
+		t.Errorf("relocated submodule tag %s != tarball tag %s", moved, tarball)
+	}
+
+	// Shape 3: standalone clone — .git is a real directory.
+	if err := os.Remove(gitPath); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(gitPath, "HEAD"), "ref: refs/heads/main\n")
+	writeFile(t, filepath.Join(gitPath, "index"), "stat cache\n")
+	writeFile(t, filepath.Join(gitPath, "objects", "pack", "pack-abc.pack"), "PACK\n")
+
+	if clone := mustCompute(t, layer); clone != tarball {
+		t.Errorf("standalone clone tag %s != tarball tag %s", clone, tarball)
+	}
+}
+
+// TestCompute_DirectoryRealGitCheckoutsAgree drives the same contract as the
+// two tests above against real git rather than hand-written fixtures, because
+// what .git actually contains after a clone, a gc, or a submodule add is git's
+// business and not something a fixture can promise to keep matching.
+//
+// src is relative here, so every shape below is hashed from an identical
+// config text — only the checkout underneath it differs.
+func TestCompute_DirectoryRealGitCheckoutsAgree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	git := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+		}
+	}
+	commitAll := func(dir, msg string) {
+		t.Helper()
+		git(dir, "add", ".")
+		git(dir, "-c", "user.email=test@example.invalid", "-c", "user.name=test", "commit", "-qm", msg)
+	}
+
+	origin := t.TempDir()
+	git(origin, "init", "-q", ".")
+	writeFile(t, filepath.Join(origin, "app.conf"), "v1\n")
+	writeFile(t, filepath.Join(origin, ".gitignore"), "*.tmp\n") // content, not bookkeeping
+	commitAll(origin, "init")
+
+	cfg := dirCfg("./tree", "")
+
+	// tagFrom computes the layer tag with parent as the working directory,
+	// where the tree being hashed is checked out at ./tree.
+	tagFrom := func(parent string) string {
+		t.Helper()
+		t.Chdir(parent)
+		return computeOrFail(t, cfg)
+	}
+
+	cloneA, cloneB := t.TempDir(), t.TempDir()
+	git(cloneA, "clone", "-q", origin, "tree")
+	git(cloneB, "clone", "-q", origin, "tree")
+
+	tagA := tagFrom(cloneA)
+	if tagB := tagFrom(cloneB); tagA != tagB {
+		t.Errorf("two clones of one commit produced different tags: %s vs %s", tagA, tagB)
+	}
+
+	// Everything that rewrites .git in place, with the source untouched.
+	git(filepath.Join(cloneA, "tree"), "fetch", "-q", "origin")
+	git(filepath.Join(cloneA, "tree"), "checkout", "-q", "-b", "scratch")
+	git(filepath.Join(cloneA, "tree"), "gc", "-q")
+	if after := tagFrom(cloneA); after != tagA {
+		t.Errorf("fetch/checkout/gc moved the tag: %s -> %s", tagA, after)
+	}
+
+	// The submodule case: same content, .git is a pointer file instead.
+	super := t.TempDir()
+	git(super, "init", "-q", ".")
+	writeFile(t, filepath.Join(super, "top.txt"), "top\n")
+	commitAll(super, "init")
+	git(super, "-c", "protocol.file.allow=always", "submodule", "add", "-q", origin, "tree")
+	if sub := tagFrom(super); sub != tagA {
+		t.Errorf("submodule checkout tag %s != standalone clone tag %s", sub, tagA)
+	}
+
+	// A real source edit is still a rebuild.
+	writeFile(t, filepath.Join(cloneA, "tree", "app.conf"), "v2\n")
+	if edited := tagFrom(cloneA); edited == tagA {
+		t.Errorf("source edit must still move the tag, both = %s", tagA)
+	}
+}
+
 // TestCompute_DirectoryHostModeChange: when dir.mode is unset, buildah
 // preserves host modes — so a host chmod must invalidate the cache. When
 // dir.mode is set, all entries get that mode regardless of host, so a host
@@ -373,7 +539,14 @@ layer:
 // computeOrFail renders cfg and returns its tag.
 func computeOrFail(t *testing.T, cfg string) string {
 	t.Helper()
-	h, err := Compute(input(t, cfg), nil)
+	return mustCompute(t, input(t, cfg))
+}
+
+// mustCompute is computeOrFail for tests that hold a LayerInput — those that
+// recompute the same config against a mutating tree on disk.
+func mustCompute(t *testing.T, layer LayerInput) string {
+	t.Helper()
+	h, err := Compute(layer, nil)
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
