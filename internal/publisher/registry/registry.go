@@ -218,5 +218,6 @@ func isManifestUnknown(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "manifest unknown") ||
 		strings.Contains(msg, "not found") ||
-		strings.Contains(msg, "status 404")
+		strings.Contains(msg, "status 404") ||
+		strings.Contains(msg, "was deleted or has expired")
 }
