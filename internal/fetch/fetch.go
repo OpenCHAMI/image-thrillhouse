@@ -11,6 +11,7 @@ package fetch
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -70,11 +71,25 @@ var client = &http.Client{Timeout: DefaultTimeout}
 // GetStream is the streaming variant of Get. The caller must Close the
 // returned io.ReadCloser.
 func GetStream(ctx context.Context, url string) (io.ReadCloser, error) {
+	return GetStreamTLS(ctx, url, true)
+}
+
+// GetStreamTLS is the streaming variant of Get that optionally verifies TLS
+// certificates. When tlsVerify is false, certificate verification is disabled,
+// which is useful for self-signed registries like a local registry.
+func GetStreamTLS(ctx context.Context, url string, tlsVerify bool) (io.ReadCloser, error) {
+	c := client
+	if !tlsVerify {
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+		c = &http.Client{Timeout: DefaultTimeout, Transport: tr}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: build request: %w", url, err)
 	}
-	resp, err := client.Do(req)
+	resp, err := c.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", url, err)
 	}

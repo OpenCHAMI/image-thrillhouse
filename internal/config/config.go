@@ -53,13 +53,15 @@ type EnvConfig struct {
 // Layer defines how to build the image layer.
 // It specifies the package manager, repositories, files, and actions to perform.
 type Layer struct {
-	Manager     Manager     `yaml:"manager"`     // Package manager configuration
-	Env         *EnvConfig  `yaml:"env"`         // Optional: Layer-level environment variables
-	Repos       []Repo      `yaml:"repos"`       // Repository configurations
-	Files       []File      `yaml:"files"`       // Files to add to the image
-	Directories []Directory `yaml:"directories"` // Host directories to recursively copy into the image
-	Actions     Actions     `yaml:"actions"`     // Installation and command actions
-	OpenSCAP    *OpenSCAP   `yaml:"openscap"`    // Optional: OpenSCAP security scanning configuration
+	Manager         Manager          `yaml:"manager"`                    // Package manager configuration
+	Env             *EnvConfig       `yaml:"env"`                        // Optional: Layer-level environment variables
+	Repos           []Repo           `yaml:"repos"`                      // Repository configurations
+	Files           []File           `yaml:"files"`                      // Files to add to the image
+	Directories     []Directory      `yaml:"directories"`                // Host directories to recursively copy into the image
+	ContainerImages []ContainerImage `yaml:"container_images,omitempty"` // Container images to bake into the OS image
+	OtherFiles      []OtherFile      `yaml:"other_files,omitempty"`      // Tar artifacts using tar_file/path field names, with versioned destinations
+	Actions         Actions          `yaml:"actions"`                    // Installation and command actions
+	OpenSCAP        *OpenSCAP        `yaml:"openscap"`                   // Optional: OpenSCAP security scanning configuration
 }
 
 // Manager specifies the package manager to use and its configuration.
@@ -325,6 +327,48 @@ type OpenSCAP struct {
 	ResultsPath    string `yaml:"results_path"`     // Path to save scan results (default: /root/scan.xml)
 	RemediatePath  string `yaml:"remediate_path"`   // Path to save remediation script (default: /root/remediate.sh)
 	OVALResultPath string `yaml:"oval_result_path"` // Path to save OVAL results (default: /root/vulnerabilities.xml)
+}
+
+// ContainerImage configures a container image to pull, save as a docker-archive
+// tar, copy into the OS image, and optionally load into the OS image's own
+// podman/containers storage so it appears in `podman images` on boot.
+type ContainerImage struct {
+	Image     string `yaml:"image"`                // Container image reference to pull (e.g. docker.io/library/hello-world:latest)
+	Dest      string `yaml:"dest,omitempty"`       // Directory in the OS image to store the docker-archive tar (default: /var/lib/containers/images)
+	Load      *bool  `yaml:"load,omitempty"`       // Also load the image into the OS image's containers storage (default: true)
+	TLSVerify *bool  `yaml:"tls_verify,omitempty"` // Verify TLS when pulling from a registry (default: true)
+}
+
+// TarFile configures a tar/gzip/zip artifact to copy into the OS image.
+// When no dest is given, the destination is derived from the artifact's path
+// as /opt/artifacts/<component>/<version> using the version-like directory
+// segment immediately preceding the file name.
+type TarFile struct {
+	Src       string `yaml:"src"`                  // Source path on the build host or HTTP(S) URL to download
+	Dest      string `yaml:"dest,omitempty"`       // Destination directory in the OS image (default: /opt/artifacts/<component>/<version>)
+	Extract   *bool  `yaml:"extract,omitempty"`    // Whether to auto-extract the archive in place (default: true)
+	TLSVerify *bool  `yaml:"tls_verify,omitempty"` // Verify TLS certificates when downloading from an HTTPS URL (default: true)
+}
+
+// OtherFile is an alias for TarFile that uses the field names tar_file/path.
+// It exists for config compatibility: tar_file is the source archive and path
+// is the destination directory in the OS image. When path is omitted, the
+// default destination is derived from the source path using artifact versioning.
+type OtherFile struct {
+	TarFile   string `yaml:"tar_file"`             // Source path on the build host or HTTP(S) URL to download
+	Path      string `yaml:"path,omitempty"`       // Destination directory in the OS image (default: /opt/artifacts/<component>/<version>)
+	Extract   *bool  `yaml:"extract,omitempty"`    // Whether to auto-extract the archive in place (default: true)
+	TLSVerify *bool  `yaml:"tls_verify,omitempty"` // Verify TLS certificates when downloading from an HTTPS URL (default: true)
+}
+
+// ToTarFile converts an OtherFile to the canonical TarFile representation.
+func (of OtherFile) ToTarFile() TarFile {
+	return TarFile{
+		Src:       of.TarFile,
+		Dest:      of.Path,
+		Extract:   of.Extract,
+		TLSVerify: of.TLSVerify,
+	}
 }
 
 // TLSVerify returns whether to verify TLS certificates when pulling base images.
