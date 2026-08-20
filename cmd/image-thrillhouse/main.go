@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/sirupsen/logrus"
@@ -56,10 +57,10 @@ var (
 	pruneParent    bool     // Remove the base image after the build when this run pulled it
 
 	// promote-specific flags
-	releaseTag   string // Human-readable tag to publish under (e.g. release-0.0.1)
-	toType       string // Promotion target: registry (retag) or s3 (materialize)
-	forcePromote bool   // Overwrite an existing release artifact instead of failing
-	dryRun       bool   // Resolve and print actions without contacting the target
+	releaseTag   string   // Human-readable tag to publish under (e.g. release-0.0.1)
+	toTypes      []string // Promotion targets: registry (retag) and/or s3 (materialize)
+	forcePromote bool     // Overwrite an existing release artifact instead of failing
+	dryRun       bool     // Resolve and print actions without contacting the target
 )
 
 // canonicalHostArch returns the arch name the manifest is likely to use
@@ -195,8 +196,15 @@ is copied to the release tag (blobs already exist, so only a new tag is written)
 the release tag, laid out as <prefix><release>/<arch>/. Pulls the content-tagged
 image and re-extracts it — a re-package of tested bytes, not a rebuild.
 
+--to is repeatable (--to registry --to s3), and each requested type promotes to
+every matching publish block the layer declares — so a layer with one registry
+and two s3 blocks reaches all three destinations in one invocation. A requested
+type the layer has no block for is skipped; destinations are attempted
+independently and a failure of one does not withhold the others, but any failure
+makes the command exit non-zero.
+
 Omitting --layer promotes every layer in the manifest that declares a publish
-block of the target type, so a whole release is one command. Mark a block
+block of a requested type, so a whole release is one command. Mark a block
 promote-only: true to declare a destination that only promote writes (build
 skips it) — typically the s3 block on release targets.
 
@@ -305,13 +313,34 @@ func newS3Publisher(p config.Publish, arch string) (*s3pub.S3Publisher, error) {
 	return s3pub.New(p.URL, p.Bucket, p.Prefix, arch, accessKey, secretKey), nil
 }
 
-// runPromote implements the promote command: OCI -> OCI retag within a registry.
+// resolveTargetTypes validates --to and de-duplicates it, preserving the order
+// the flags were given so logs and the promotion sequence follow what the user
+// typed. An absent flag means the historical default of registry only.
+func resolveTargetTypes(flags []string) ([]string, error) {
+	if len(flags) == 0 {
+		return []string{"registry"}, nil
+	}
+	out := make([]string, 0, len(flags))
+	seen := make(map[string]struct{}, len(flags))
+	for _, t := range flags {
+		if t != "registry" && t != "s3" {
+			return nil, fmt.Errorf("--to %q is not supported (use registry or s3)", t)
+		}
+		if _, dup := seen[t]; dup {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+// runPromote implements the promote command: re-tag or re-project already-built
+// artifacts under a release tag.
 //
-// It recomputes the layer's content tag from the manifest and resolves the
-// registry source from the layer's own publish block, then:
-//   - multi-arch layer, no --arch: assemble an OCI image index over all arches
-//     under one release tag.
-//   - otherwise: copy the single content-tagged image to the release tag.
+// It recomputes each layer's content tag from the manifest and resolves the
+// registry source from the layer's own publish blocks, then promotes to every
+// destination matching every requested --to type.
 func runPromote(cmd *cobra.Command, args []string) error {
 	ctx, stop := buildContext()
 	defer stop()
@@ -328,9 +357,11 @@ func runPromote(cmd *cobra.Command, args []string) error {
 	if releaseTag == "" {
 		return fmt.Errorf("--release is required")
 	}
-	if toType != "registry" && toType != "s3" {
-		return fmt.Errorf("--to %q is not supported (use registry or s3)", toType)
+	targets, err := resolveTargetTypes(toTypes)
+	if err != nil {
+		return err
 	}
+	toTypes = targets
 
 	cliVars, err := config.LoadVars([]string{varFile}, vars)
 	if err != nil {
@@ -344,37 +375,48 @@ func runPromote(cmd *cobra.Command, args []string) error {
 
 	log := slog.With("component", "cli")
 
+	wanted := strings.Join(toTypes, ", ")
+
 	// A named --layer promotes just that one. Omitting it walks the whole
-	// manifest and promotes every layer declaring a publish block of the target
-	// type — so which layers reach s3 is a config decision (promote-only s3
-	// blocks on release targets), not something the pipeline has to enumerate.
+	// manifest and promotes every layer declaring a publish block of one of the
+	// target types — so which layers reach s3 is a config decision (promote-only
+	// s3 blocks on release targets), not something the pipeline has to enumerate.
 	if layerName != "" {
 		err := promoteLayer(ctx, dag, cliVars, layerName, false, log)
 		if errors.Is(err, errNoTarget) {
-			return fmt.Errorf("layer %q declares no %q publish block", layerName, toType)
+			return fmt.Errorf("layer %q declares no %s publish block", layerName, wanted)
 		}
 		return err
 	}
 
-	promoted := 0
+	// Promotion is best-effort across layers as well as across destinations: one
+	// unreachable endpoint must not stop the rest of a release from going out.
+	// Failures are collected and reported together, and any of them makes the
+	// command exit non-zero.
+	// attempted counts layers that had somewhere to promote to, successful or
+	// not: a destination that was tried and failed is reported as a failure, not
+	// as "nothing to promote".
+	attempted := 0
+	var failures []error
 	for _, name := range dag.LogicalNames() {
 		err := promoteLayer(ctx, dag, cliVars, name, true, log)
 		switch {
 		case errors.Is(err, errNoTarget):
-			log.Debug("skipping layer: no publish block for target", "layer", name, "target", toType)
+			log.Debug("skipping layer: no publish block for target", "layer", name, "targets", wanted)
 		case err != nil:
-			return fmt.Errorf("layer %s: %w", name, err)
+			failures = append(failures, fmt.Errorf("layer %s: %w", name, err))
+			attempted++
 		default:
-			promoted++
+			attempted++
 		}
 	}
-	if promoted == 0 {
+	if attempted == 0 {
 		if archName != "" {
-			return fmt.Errorf("nothing to promote: no layer declares a %q publish block for arch %q", toType, archName)
+			return fmt.Errorf("nothing to promote: no layer declares a %s publish block for arch %q", wanted, archName)
 		}
-		return fmt.Errorf("nothing to promote: no layer declares a %q publish block", toType)
+		return fmt.Errorf("nothing to promote: no layer declares a %s publish block", wanted)
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 // errNoTarget marks a layer that declares no publish block for the promotion
@@ -429,33 +471,51 @@ func renderLayer(dag *manifest.DAG, cliVars map[string]interface{}, concreteName
 	return cfg, tags[concreteName], nil
 }
 
-// registrySourceFrom builds the OCI source reference from a layer's registry
-// publish block — the canonical artifact store every promotion reads from.
+// registrySourceFrom builds the OCI source reference from a layer's first
+// registry publish block — the canonical artifact store an OCI->S3
+// materialization pulls from. A layer may publish to several registries; the
+// pull needs exactly one, and the first block is the one build treats as
+// primary.
 func registrySourceFrom(cfg *config.Config, contentTag string) (promote.RegistrySource, error) {
 	regPub, err := promote.FindPublish(cfg.Publish, "registry")
 	if err != nil {
 		return promote.RegistrySource{}, fmt.Errorf("resolve source: %w", err)
 	}
+	return registrySourceFromBlock(regPub, cfg.Meta.Name, contentTag), nil
+}
+
+// registrySourceFromBlock builds the OCI source reference for one specific
+// registry publish block. A retag is a copy within a single repository, so each
+// registry destination promotes from its own registry — the content tag is
+// already there, pushed by the build that wrote that block.
+func registrySourceFromBlock(block config.Publish, name, contentTag string) promote.RegistrySource {
 	tlsVerify := true
-	if regPub.TLSVerify != nil {
-		tlsVerify = *regPub.TLSVerify
+	if block.TLSVerify != nil {
+		tlsVerify = *block.TLSVerify
 	}
 	return promote.RegistrySource{
-		URL:       regPub.URL,
-		Name:      cfg.Meta.Name,
+		URL:       block.URL,
+		Name:      name,
 		Tag:       contentTag,
 		TLSVerify: tlsVerify,
-	}, nil
+	}
 }
 
 // promoteLayer promotes one logical layer — every arch it builds for, or just
-// --arch when set. All arches are resolved up front so a config error or a
-// missing target fails before anything is written; promotions then run
-// sequentially.
+// --arch when set — to every publish block matching every requested --to type.
+// A layer with two registry blocks and two s3 blocks promoted with
+// `--to registry --to s3` writes four destinations.
 //
-// Returns errNoTarget when the layer declares no publish block of the target
-// type. bulk selects how "nothing to do" is treated: skipped during a
-// whole-manifest promote, an error when the layer was named explicitly.
+// All destinations are resolved up front so a config error fails before
+// anything is written; promotions then run sequentially and best-effort, so an
+// endpoint that is down does not withhold the release from the healthy ones.
+// Every failure is collected and returned together.
+//
+// A requested type the layer declares no block for is skipped, not an error —
+// that is what makes `--to registry --to s3` usable across a manifest where only
+// some layers materialize to s3. Returns errNoTarget only when *no* requested
+// type matched anything: skipped during a whole-manifest promote, an error when
+// the layer was named explicitly.
 func promoteLayer(ctx context.Context, dag *manifest.DAG, cliVars map[string]interface{}, logicalName string, bulk bool, log *slog.Logger) error {
 	concretes, err := concreteLayersFor(dag, logicalName)
 	if err != nil {
@@ -471,23 +531,16 @@ func promoteLayer(ctx context.Context, dag *manifest.DAG, cliVars map[string]int
 	type target struct {
 		concrete string
 		arch     string
+		typ      string
 		src      promote.RegistrySource
 		cfg      *config.Config
 		block    config.Publish
 	}
 
-	targets := make([]target, 0, len(concretes))
+	var targets []target
 	seen := make(map[string]string, len(concretes)) // registry dest ref -> arch that claimed it
 	for _, concrete := range concretes {
 		cfg, contentTag, err := renderLayer(dag, cliVars, concrete)
-		if err != nil {
-			return err
-		}
-		block, err := promote.FindPublish(cfg.Publish, toType)
-		if err != nil {
-			return errNoTarget
-		}
-		src, err := registrySourceFrom(cfg, contentTag)
 		if err != nil {
 			return err
 		}
@@ -495,24 +548,54 @@ func promoteLayer(ctx context.Context, dag *manifest.DAG, cliVars map[string]int
 		if err != nil {
 			return err
 		}
-		// A registry retag writes <repo>:<release>; two arches landing on the
-		// same ref would silently clobber each other. S3 keys embed the arch,
-		// so they can't collide.
-		if toType == "registry" {
-			dst := src.RefWithTag(releaseTag)
-			if prev, ok := seen[dst]; ok {
-				return fmt.Errorf(
-					"arches %q and %q both retag to %s; the release tag can't distinguish them — "+
-						"put the arch in meta.name (e.g. <image>-{{ .arch }}) so each arch has its own repo",
-					prev, layer.Arch, dst)
+		for _, typ := range toTypes {
+			blocks := promote.FindPublishAll(cfg.Publish, typ)
+			if len(blocks) == 0 {
+				// Not configured for this layer. A missing publisher is a skip;
+				// only a configured-but-broken one is a failure.
+				log.Debug("skipping target: no publish block", "layer", concrete, "target", typ)
+				continue
 			}
-			seen[dst] = layer.Arch
+			for _, block := range blocks {
+				// A registry retag copies within the destination registry, so
+				// each one sources from itself. An s3 materialization has to
+				// pull from somewhere: the layer's canonical registry.
+				var src promote.RegistrySource
+				if typ == "registry" {
+					src = registrySourceFromBlock(block, cfg.Meta.Name, contentTag)
+				} else {
+					src, err = registrySourceFrom(cfg, contentTag)
+					if err != nil {
+						return err
+					}
+				}
+				// A registry retag writes <repo>:<release>; two arches landing
+				// on the same ref would silently clobber each other. S3 keys
+				// embed the arch, so they can't collide.
+				if typ == "registry" {
+					dst := src.RefWithTag(releaseTag)
+					if prev, ok := seen[dst]; ok {
+						return fmt.Errorf(
+							"arches %q and %q both retag to %s; the release tag can't distinguish them — "+
+								"put the arch in meta.name (e.g. <image>-{{ .arch }}) so each arch has its own repo",
+							prev, layer.Arch, dst)
+					}
+					seen[dst] = layer.Arch
+				}
+				targets = append(targets, target{
+					concrete: concrete, arch: layer.Arch, typ: typ,
+					src: src, cfg: cfg, block: block,
+				})
+			}
 		}
-		targets = append(targets, target{concrete: concrete, arch: layer.Arch, src: src, cfg: cfg, block: block})
+	}
+	if len(targets) == 0 {
+		return errNoTarget
 	}
 
+	var failures []error
 	for _, t := range targets {
-		switch toType {
+		switch t.typ {
 		case "registry":
 			log.Info("promote resolved",
 				"mode", "registry",
@@ -527,7 +610,10 @@ func promoteLayer(ctx context.Context, dag *manifest.DAG, cliVars map[string]int
 				continue
 			}
 			if err := promote.RetagRegistry(ctx, t.src, releaseTag, forcePromote); err != nil {
-				return fmt.Errorf("arch %s: %w", t.arch, err)
+				log.Error("promote failed", "layer", t.concrete, "arch", t.arch,
+					"dest", t.src.RefWithTag(releaseTag), "error", err)
+				failures = append(failures, fmt.Errorf("arch %s -> %s: %w",
+					t.arch, t.src.RefWithTag(releaseTag), err))
 			}
 		case "s3":
 			log.Info("promote resolved",
@@ -545,16 +631,26 @@ func promoteLayer(ctx context.Context, dag *manifest.DAG, cliVars map[string]int
 			if dryRun {
 				continue
 			}
+			s3Dest := fmt.Sprintf("%s/%s/%s", t.block.URL, t.block.Bucket, t.block.Prefix)
 			dst, err := newS3Publisher(t.block, t.arch)
 			if err != nil {
-				return err
+				// A configured-but-invalid publisher is a failure, not a skip,
+				// but it must not withhold the remaining destinations.
+				log.Error("promote failed", "layer", t.concrete, "arch", t.arch, "dest", s3Dest, "error", err)
+				failures = append(failures, fmt.Errorf("arch %s -> %s: %w", t.arch, s3Dest, err))
+				continue
 			}
 			if err := promote.MaterializeToS3(ctx, t.src, dst, t.cfg.Meta.Name, releaseTag, forcePromote); err != nil {
-				return fmt.Errorf("arch %s: %w", t.arch, err)
+				log.Error("promote failed", "layer", t.concrete, "arch", t.arch, "dest", s3Dest, "error", err)
+				failures = append(failures, fmt.Errorf("arch %s -> %s: %w", t.arch, s3Dest, err))
 			}
 		}
 	}
-	return nil
+	if len(failures) > 0 {
+		log.Error("promote finished with failures",
+			"layer", logicalName, "attempted", len(targets), "failed", len(failures))
+	}
+	return errors.Join(failures...)
 }
 
 // setupLogger installs the default slog handler and configures the logrus logger
@@ -655,7 +751,10 @@ func init() {
 	promoteCmd.Flags().StringVar(&varFile, "var-file", "", "path to variables file (yaml or json)")
 	promoteCmd.Flags().StringArrayVar(&vars, "var", nil, "variable override in key=value format")
 	promoteCmd.Flags().StringVar(&releaseTag, "release", "", "release tag to publish under, e.g. release-0.0.1 (required)")
-	promoteCmd.Flags().StringVar(&toType, "to", "registry", "promotion target: registry (retag) or s3 (materialize)")
+	// StringArray, not StringSlice: a declared default would be *appended* to
+	// rather than replaced by the flag, so `--to s3` would silently mean
+	// "registry and s3". The registry default is applied in resolveTargetTypes.
+	promoteCmd.Flags().StringArrayVar(&toTypes, "to", nil, "promotion target: registry (retag) or s3 (materialize); repeatable (default registry)")
 	promoteCmd.Flags().BoolVar(&forcePromote, "force", false, "overwrite an existing release (registry tag or s3 objects) instead of failing")
 	promoteCmd.Flags().BoolVar(&dryRun, "dry-run", false, "resolve and print actions without contacting the target")
 
