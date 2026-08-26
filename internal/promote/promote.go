@@ -53,15 +53,66 @@ func (s RegistrySource) Ref() string {
 }
 
 // FindPublish returns the first publish block of the given type, or an error if
-// none is present. A layer selected for promotion that lacks a registry block is
-// a hard failure, not a silent skip — a mis-tagged manifest should fail loud.
+// none is present. Used where promotion needs the layer's canonical artifact
+// store rather than a fan-out set: an OCI->S3 materialization has to pull from
+// exactly one registry, and a layer selected for promotion that lacks one is a
+// hard failure, not a silent skip — a mis-tagged manifest should fail loud.
 func FindPublish(publishes []config.Publish, typ string) (config.Publish, error) {
-	for _, p := range publishes {
-		if p.Type == typ {
-			return p, nil
-		}
+	if blocks := FindPublishAll(publishes, typ); len(blocks) > 0 {
+		return blocks[0], nil
 	}
 	return config.Publish{}, fmt.Errorf("layer config has no %q publish block", typ)
+}
+
+// FindPublishAll returns every publish block of the given type, in manifest
+// order — the destinations a single promotion fans out to. An empty result
+// means the type is not configured for this layer, which callers treat as a
+// skip rather than an error; that is what keeps `--to registry --to s3` working
+// against a layer that only publishes to a registry.
+//
+// Blocks that are field-for-field identical are collapsed to one. Duplicates
+// name the same destination, so promoting to both would write the same bytes
+// twice and, for a registry, trip the release-tag collision check on what is
+// really just redundant config.
+func FindPublishAll(publishes []config.Publish, typ string) []config.Publish {
+	var out []config.Publish
+	seen := make(map[publishKey]struct{}, len(publishes))
+	for _, p := range publishes {
+		if p.Type != typ {
+			continue
+		}
+		key := keyFor(p)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, p)
+	}
+	return out
+}
+
+// publishKey is a comparable identity for a publish block. It exists because
+// config.Publish carries a *bool, whose pointer identity would make two blocks
+// spelling the same destination look distinct.
+type publishKey struct {
+	typ, url, bucket, prefix, path string
+	tlsVerify                      string // "", "true", "false" — unset is its own value
+	promoteOnly                    bool
+}
+
+func keyFor(p config.Publish) publishKey {
+	k := publishKey{
+		typ:         p.Type,
+		url:         p.URL,
+		bucket:      p.Bucket,
+		prefix:      p.Prefix,
+		path:        p.Path,
+		promoteOnly: p.PromoteOnly,
+	}
+	if p.TLSVerify != nil {
+		k.tlsVerify = fmt.Sprintf("%t", *p.TLSVerify)
+	}
+	return k
 }
 
 // RetagRegistry promotes a registry artifact to a release tag in the same
