@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MIT
 
-FROM golang:1.26.6-bookworm AS builder
+FROM golang:1.27.0-bookworm AS builder
 RUN apt-get update && apt-get install -y \
     libgpgme-dev \
     libassuan-dev \
