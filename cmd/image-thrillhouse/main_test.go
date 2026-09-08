@@ -61,3 +61,43 @@ func TestResolveTargetTypes(t *testing.T) {
 		})
 	}
 }
+
+func TestJoinTypes(t *testing.T) {
+	tests := []struct {
+		name  string
+		types []string
+		want  string
+	}{
+		{
+			name:  "single target reads as itself",
+			types: []string{"registry"},
+			want:  "registry",
+		},
+		{
+			// "registry, s3" reads as one compound destination, which is how
+			// the error gets misread as naming a required target rather than
+			// several acceptable ones.
+			name:  "two targets are joined disjunctively",
+			types: []string{"registry", "s3"},
+			want:  "registry or s3",
+		},
+		{
+			name:  "three targets keep the serial comma",
+			types: []string{"registry", "s3", "local"},
+			want:  "registry, s3, or local",
+		},
+		{
+			name:  "empty",
+			types: nil,
+			want:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := joinTypes(tt.types); got != tt.want {
+				t.Errorf("joinTypes(%v) = %q, want %q", tt.types, got, tt.want)
+			}
+		})
+	}
+}

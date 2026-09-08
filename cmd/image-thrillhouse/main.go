@@ -375,7 +375,7 @@ func runPromote(cmd *cobra.Command, args []string) error {
 
 	log := slog.With("component", "cli")
 
-	wanted := strings.Join(toTypes, ", ")
+	wanted := joinTypes(toTypes)
 
 	// A named --layer promotes just that one. Omitting it walks the whole
 	// manifest and promotes every layer declaring a publish block of one of the
@@ -397,11 +397,19 @@ func runPromote(cmd *cobra.Command, args []string) error {
 	// not: a destination that was tried and failed is reported as a failure, not
 	// as "nothing to promote".
 	attempted := 0
+	// Tracked separately so "nothing to promote" can say which of the two very
+	// different reasons applied: --arch excluded every layer, or no layer
+	// declares a block of a requested type.
+	skippedArch, skippedNoBlock := 0, 0
 	var failures []error
 	for _, name := range dag.LogicalNames() {
 		err := promoteLayer(ctx, dag, cliVars, name, true, log)
 		switch {
+		case errors.Is(err, errArchExcluded):
+			skippedArch++
+			log.Debug("skipping layer: does not build for arch", "layer", name, "arch", archName)
 		case errors.Is(err, errNoTarget):
+			skippedNoBlock++
 			log.Debug("skipping layer: no publish block for target", "layer", name, "targets", wanted)
 		case err != nil:
 			failures = append(failures, fmt.Errorf("layer %s: %w", name, err))
@@ -411,6 +419,9 @@ func runPromote(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if attempted == 0 {
+		if skippedArch > 0 && skippedNoBlock == 0 {
+			return fmt.Errorf("nothing to promote: no layer in the manifest builds for arch %q", archName)
+		}
 		if archName != "" {
 			return fmt.Errorf("nothing to promote: no layer declares a %s publish block for arch %q", wanted, archName)
 		}
@@ -419,10 +430,35 @@ func runPromote(cmd *cobra.Command, args []string) error {
 	return errors.Join(failures...)
 }
 
-// errNoTarget marks a layer that declares no publish block for the promotion
-// target: skipped during a whole-manifest promote, an error when the layer was
-// named explicitly with --layer.
+// errNoTarget marks a layer that declares no publish block for any requested
+// promotion target: skipped during a whole-manifest promote, an error when the
+// layer was named explicitly with --layer.
 var errNoTarget = errors.New("no publish block for promotion target")
+
+// errArchExcluded marks a layer that --arch excluded entirely — it builds, just
+// not for the requested arch. Kept distinct from errNoTarget because the two
+// are unrelated conditions with unrelated fixes (widen --arch vs. add a publish
+// block), and a bulk promote that skips everything has to be able to say which
+// one it hit.
+var errArchExcluded = errors.New("layer does not build for the requested arch")
+
+// joinTypes renders the requested --to types for a human: "registry",
+// "registry or s3". A comma-joined list reads as a single compound noun in
+// these messages ("declares no registry, s3 publish block"), which is how the
+// error gets misread as naming one required destination rather than several
+// acceptable ones.
+func joinTypes(types []string) string {
+	switch len(types) {
+	case 0:
+		return ""
+	case 1:
+		return types[0]
+	case 2:
+		return types[0] + " or " + types[1]
+	default:
+		return strings.Join(types[:len(types)-1], ", ") + ", or " + types[len(types)-1]
+	}
+}
 
 // concreteLayersFor expands a logical layer name into the concrete DAG layers
 // to promote: every arch it builds for, or just --arch when set. Returns an
@@ -514,8 +550,9 @@ func registrySourceFromBlock(block config.Publish, name, contentTag string) prom
 // A requested type the layer declares no block for is skipped, not an error —
 // that is what makes `--to registry --to s3` usable across a manifest where only
 // some layers materialize to s3. Returns errNoTarget only when *no* requested
-// type matched anything: skipped during a whole-manifest promote, an error when
-// the layer was named explicitly.
+// type matched anything, and errArchExcluded when --arch ruled the layer out
+// before targets were considered at all: both are skips during a whole-manifest
+// promote, and both become errors when the layer was named explicitly.
 func promoteLayer(ctx context.Context, dag *manifest.DAG, cliVars map[string]interface{}, logicalName string, bulk bool, log *slog.Logger) error {
 	concretes, err := concreteLayersFor(dag, logicalName)
 	if err != nil {
@@ -523,7 +560,7 @@ func promoteLayer(ctx context.Context, dag *manifest.DAG, cliVars map[string]int
 	}
 	if len(concretes) == 0 {
 		if bulk {
-			return errNoTarget
+			return errArchExcluded
 		}
 		return fmt.Errorf("layer %q does not build for arch %q", logicalName, archName)
 	}
