@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -107,28 +106,14 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 
 	mountPath := c.MountPath()
 
-	// Step 1: Find kernel version
-	kernelVersion, err := s.findKernelVersion(mountPath)
+	// Step 1: Find kernel, vmlinuz and initramfs
+	boot, err := fsutil.FindBootFiles(mountPath)
 	if err != nil {
-		return fmt.Errorf("find kernel version: %w", err)
+		return fmt.Errorf("find boot files: %w", err)
 	}
-	log.Info("found kernel version", "version", kernelVersion)
+	log.Info("found boot files", "version", boot.KernelVersion, "vmlinuz", boot.Vmlinuz, "initramfs", boot.Initramfs)
 
-	// Step 2: Find initramfs
-	initramfsPath, err := s.findInitramfs(mountPath, kernelVersion)
-	if err != nil {
-		return fmt.Errorf("find initramfs: %w", err)
-	}
-	log.Info("found initramfs", "path", initramfsPath)
-
-	// Step 3: Find vmlinuz
-	vmlinuzPath := filepath.Join(mountPath, "boot", fmt.Sprintf("vmlinuz-%s", kernelVersion))
-	if _, err := os.Stat(vmlinuzPath); err != nil {
-		return fmt.Errorf("vmlinuz not found at %s: %w", vmlinuzPath, err)
-	}
-	log.Info("found vmlinuz", "path", vmlinuzPath)
-
-	// Step 4: Create SquashFS image
+	// Step 2: Create SquashFS image
 	squashfsPath, err := s.createSquashFS(ctx, mountPath, name, tag)
 	if err != nil {
 		return fmt.Errorf("create squashfs: %w", err)
@@ -136,7 +121,7 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	defer os.Remove(squashfsPath)
 	log.Info("created squashfs", "path", squashfsPath)
 
-	// Step 5: Create S3 client
+	// Step 3: Create S3 client
 	client, err := s.createS3Client(ctx)
 	if err != nil {
 		return fmt.Errorf("create S3 client: %w", err)
@@ -146,64 +131,26 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 
 	rootfsKey, vmlinuzKey, initramfsKey := s.objectKeys(tag)
 
-	// Step 6: Upload rootfs
+	// Step 4: Upload rootfs
 	if err := s.uploadFile(ctx, uploader, squashfsPath, rootfsKey); err != nil {
 		return fmt.Errorf("upload rootfs: %w", err)
 	}
 	log.Info("uploaded rootfs", "key", rootfsKey)
 
-	// Step 7: Upload kernel
-	if err := s.uploadFile(ctx, uploader, vmlinuzPath, vmlinuzKey); err != nil {
+	// Step 5: Upload kernel
+	if err := s.uploadFile(ctx, uploader, boot.Vmlinuz, vmlinuzKey); err != nil {
 		return fmt.Errorf("upload vmlinuz: %w", err)
 	}
 	log.Info("uploaded vmlinuz", "key", vmlinuzKey)
 
-	// Step 8: Upload initramfs
-	if err := s.uploadFile(ctx, uploader, initramfsPath, initramfsKey); err != nil {
+	// Step 6: Upload initramfs
+	if err := s.uploadFile(ctx, uploader, boot.Initramfs, initramfsKey); err != nil {
 		return fmt.Errorf("upload initramfs: %w", err)
 	}
 	log.Info("uploaded initramfs", "key", initramfsKey)
 
 	log.Info("published to s3")
 	return nil
-}
-
-// findKernelVersion finds the first available kernel version in /lib/modules
-func (s *S3Publisher) findKernelVersion(mountPath string) (string, error) {
-	modulesPath := filepath.Join(mountPath, "lib", "modules")
-	entries, err := os.ReadDir(modulesPath)
-	if err != nil {
-		return "", fmt.Errorf("read /lib/modules: %w", err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			return entry.Name(), nil
-		}
-	}
-
-	return "", fmt.Errorf("no kernel versions found in /lib/modules")
-}
-
-// findInitramfs returns the path to the initramfs file for the given kernel
-// version, trying the RHEL/Rocky/Fedora and Debian/Ubuntu naming variants.
-func (s *S3Publisher) findInitramfs(mountPath, kernelVersion string) (string, error) {
-	bootPath := filepath.Join(mountPath, "boot")
-
-	// initramfs-<version>.img (RHEL/Rocky/Fedora), initrd-<version> and
-	// initrd.img-<version> (Debian/Ubuntu variants).
-	for _, name := range []string{
-		fmt.Sprintf("initramfs-%s.img", kernelVersion),
-		fmt.Sprintf("initrd-%s", kernelVersion),
-		fmt.Sprintf("initrd.img-%s", kernelVersion),
-	} {
-		p := filepath.Join(bootPath, name)
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
-	}
-
-	return "", fmt.Errorf("no initramfs found for kernel %s", kernelVersion)
 }
 
 // createSquashFS creates a SquashFS image in a temporary location

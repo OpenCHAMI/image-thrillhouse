@@ -104,7 +104,7 @@ The `publish` section is a list, so you can fan out to multiple targets in one b
 publish:
   - type: local
   - type: squashfs
-    path: /output/images        # writes <meta.name>-<meta.tags[0]>.squashfs
+    path: /output/images        # writes <meta.name>-<meta.tags[0]>.{squashfs,vmlinuz,initramfs.img}
 ```
 
 For registry and S3 targets, see [docs/configuration.md#publish](docs/configuration.md#publish).
