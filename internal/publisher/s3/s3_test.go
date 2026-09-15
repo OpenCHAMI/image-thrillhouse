@@ -8,7 +8,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 )
@@ -204,70 +203,5 @@ func TestObjectKeys(t *testing.T) {
 				t.Errorf("initramfs = %q, want %q", initramfs, tt.wantInitramfs)
 			}
 		})
-	}
-}
-
-func TestFindKernelVersion_Logic(t *testing.T) {
-	// Test the logic without actual filesystem
-	// In real scenario, we'd read /lib/modules/
-
-	kernelVersions := []string{
-		"5.14.0-362.24.1.el9_3.x86_64",
-		"6.1.0-18-amd64",
-		"5.15.0-91-generic",
-	}
-
-	for _, version := range kernelVersions {
-		if version == "" {
-			t.Error("Kernel version should not be empty")
-		}
-		if !strings.Contains(version, ".") {
-			t.Error("Kernel version should contain dots")
-		}
-	}
-}
-
-func TestInitramfsPatterns(t *testing.T) {
-	tests := []struct {
-		name    string
-		kver    string
-		pattern string
-	}{
-		{
-			name:    "RHEL/Rocky style",
-			kver:    "5.14.0-362.el9.x86_64",
-			pattern: "initramfs-5.14.0-362.el9.x86_64.img",
-		},
-		{
-			name:    "Debian style",
-			kver:    "6.1.0-18-amd64",
-			pattern: "initrd-6.1.0-18-amd64",
-		},
-		{
-			name:    "Ubuntu style",
-			kver:    "5.15.0-91-generic",
-			pattern: "initrd.img-5.15.0-91-generic",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if !strings.Contains(tt.pattern, tt.kver) {
-				t.Errorf("Pattern %s should contain kernel version %s", tt.pattern, tt.kver)
-			}
-		})
-	}
-}
-
-func TestVmlinuzPattern(t *testing.T) {
-	kver := "5.14.0-362.el9.x86_64"
-	expected := "vmlinuz-" + kver
-
-	if !strings.HasPrefix(expected, "vmlinuz-") {
-		t.Error("vmlinuz pattern should start with 'vmlinuz-'")
-	}
-
-	if !strings.Contains(expected, kver) {
-		t.Error("vmlinuz pattern should contain kernel version")
 	}
 }

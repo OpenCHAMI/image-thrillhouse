@@ -279,9 +279,11 @@ One or more publish targets. Each runs after a successful build.
 publish:
   - type: local                # Commit to local container storage
 
-  - type: squashfs             # Create SquashFS image
-    path: /output/images       # Output directory; file is written as
+  - type: squashfs             # Create SquashFS image plus boot files
+    path: /output/images       # Output directory; files are written as
                                # <meta.name>-<meta.tags[0]>.squashfs
+                               # <meta.name>-<meta.tags[0]>.vmlinuz
+                               # <meta.name>-<meta.tags[0]>.initramfs.img
 
   - type: registry             # Push to container registry
     url: registry.example.com/myorg
@@ -293,6 +295,8 @@ publish:
     prefix: compute/
     promote-only: true         # Optional: destination only; build never writes here
 ```
+
+The SquashFS publisher writes the image's kernel and initramfs next to the `.squashfs`, the same three artifacts the S3 publisher uploads. If the image has no kernel installed (empty `/lib/modules`), only the `.squashfs` is written and a warning is logged.
 
 S3 publishing reads credentials from the `S3_ACCESS` and `S3_SECRET` environment variables.
 
