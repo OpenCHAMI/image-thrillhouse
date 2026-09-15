@@ -9,6 +9,7 @@ package squashfs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -32,7 +33,17 @@ func New(path string) *SquashfsPublisher {
 	return &SquashfsPublisher{path: path}
 }
 
-// Publish writes one SquashFS image to <path>/<name>-<tags[0]>.squashfs.
+// Publish writes one SquashFS image to <path>/<name>-<tags[0]>.squashfs, plus
+// the image's kernel and initramfs beside it so the output is bootable on its
+// own — the same three artifacts the S3 publisher uploads:
+//
+//	<path>/<name>-<tags[0]>.squashfs
+//	<path>/<name>-<tags[0]>.vmlinuz
+//	<path>/<name>-<tags[0]>.initramfs.img
+//
+// An image with no kernel installed (empty /lib/modules) still gets its
+// squashfs, with a warning in place of the boot files. A kernel that is present
+// but missing its vmlinuz or initramfs is an error.
 //
 // The bytes derive purely from the container mount, so one file per tag would be
 // N identical files differing only in filename. tags[0] is the identifier, same
@@ -66,13 +77,46 @@ func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, 
 			"primary", primary, "ignored_tags", tags[1:])
 	}
 
+	// Locate boot files before the slow mksquashfs so a kernel with a missing
+	// vmlinuz or initramfs fails without leaving a .squashfs behind that
+	// Exists would report as already published.
+	boot, err := fsutil.FindBootFiles(c.MountPath())
+	hasKernel := !errors.Is(err, fsutil.ErrNoKernel)
+	if hasKernel && err != nil {
+		return fmt.Errorf("find boot files: %w", err)
+	}
+
 	log.Info("creating squashfs", "squashfs", output, "source", c.MountPath())
 	if err := fsutil.MakeSquashFS(ctx, c.MountPath(), output); err != nil {
 		return err
 	}
 
-	log.Info("published squashfs", "squashfs", output)
+	if !hasKernel {
+		// Not every squashfs is a bootable rootfs; a kernel-less image still
+		// publishes, it just has no boot files to accompany it.
+		log.Warn("no kernel installed in image; skipping vmlinuz and initramfs")
+		log.Info("published squashfs", "squashfs", output)
+		return nil
+	}
+
+	vmlinuz, initramfs := s.bootPaths(name, primary)
+	if err := fsutil.CopyFile(boot.Vmlinuz, vmlinuz); err != nil {
+		return fmt.Errorf("copy vmlinuz: %w", err)
+	}
+	if err := fsutil.CopyFile(boot.Initramfs, initramfs); err != nil {
+		return fmt.Errorf("copy initramfs: %w", err)
+	}
+
+	log.Info("published squashfs", "squashfs", output, "vmlinuz", vmlinuz, "initramfs", initramfs,
+		"kernel_version", boot.KernelVersion)
 	return nil
+}
+
+// bootPaths returns the output paths for the kernel and initramfs written
+// alongside <name>-<tag>.squashfs.
+func (s *SquashfsPublisher) bootPaths(name, tag string) (vmlinuz, initramfs string) {
+	base := filepath.Join(s.path, fmt.Sprintf("%s-%s", name, tag))
+	return base + ".vmlinuz", base + ".initramfs.img"
 }
 
 // Exists reports whether the squashfs output file for this (name, tags) pair
