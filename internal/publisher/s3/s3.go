@@ -60,30 +60,62 @@ func New(endpoint, bucket, prefix, arch, accessKey, secretKey string) *S3Publish
 	}
 }
 
-// objectKeys returns the S3 keys for a tag's three boot artifacts, laid out as
+// baseKey returns the directory all of a tag's boot artifacts live under:
 //
-//	<prefix><tag>/<arch>/rootfs.squashfs
-//	<prefix><tag>/<arch>/vmlinuz
-//	<prefix><tag>/<arch>/initramfs.img
+//	<prefix><tag>/<arch>/
 //
 // Everything for a tag lives under one directory, so a materialized image is
 // self-contained and immutable — a different tag is a different directory, and
-// there is no shared kernel-version-keyed object a later build can overwrite.
+// there is no shared object a later build of a different tag can overwrite.
 // The arch segment is omitted when arch is empty (single-arch / non-manifest).
-func (s *S3Publisher) objectKeys(tag string) (rootfs, kernel, initramfs string) {
+func (s *S3Publisher) baseKey(tag string) string {
 	base := s.prefix + tag + "/"
 	if s.arch != "" {
 		base += s.arch + "/"
 	}
-	return base + "rootfs.squashfs", base + "vmlinuz", base + "initramfs.img"
+	return base
+}
+
+// rootfsKey returns the S3 key for a tag's rootfs, which is the
+// tag-identifying artifact. It is deliberately independent of the kernel
+// version so Exists can probe it without mounting a container.
+func (s *S3Publisher) rootfsKey(tag string) string {
+	return s.baseKey(tag) + "rootfs.squashfs"
+}
+
+// objectKeys returns the S3 keys for a tag's three boot artifacts, laid out as
+//
+//	<prefix><tag>/<arch>/rootfs.squashfs
+//	<prefix><tag>/<arch>/vmlinuz-<kernel-version>
+//	<prefix><tag>/<arch>/initramfs-<kernel-version>.img
+//
+// The kernel and initramfs keep the exact filename they carry inside the
+// image's /boot, so the kernel version stays visible in the object key and the
+// distro's own naming convention is preserved verbatim: RHEL/Rocky/Fedora
+// publish initramfs-<kver>.img while Debian/Ubuntu publish initrd-<kver> or
+// initrd.img-<kver>. Callers pass the basenames discovered by findInitramfs
+// and the vmlinuz probe rather than a reconstructed name, so the key can never
+// disagree with the bytes that were uploaded.
+//
+// Keeping the version in the key matters to consumers that must pin a node to
+// a specific kernel build (and matches image-builder, whose S3 layout also
+// carries the version); it costs nothing here because each tag already has its
+// own directory, so two kernel versions under one tag cannot collide.
+func (s *S3Publisher) objectKeys(tag, kernelName, initramfsName string) (rootfs, kernel, initramfs string) {
+	base := s.baseKey(tag)
+	return base + "rootfs.squashfs", base + kernelName, base + initramfsName
 }
 
 // Publish creates a SquashFS image and uploads it to S3 along with kernel and initramfs.
 //
 // The upload structure is a self-contained directory per tag (see objectKeys):
 //   - s3://<bucket>/<prefix><tag>/<arch>/rootfs.squashfs
-//   - s3://<bucket>/<prefix><tag>/<arch>/vmlinuz
-//   - s3://<bucket>/<prefix><tag>/<arch>/initramfs.img
+//   - s3://<bucket>/<prefix><tag>/<arch>/vmlinuz-<kernel-version>
+//   - s3://<bucket>/<prefix><tag>/<arch>/initramfs-<kernel-version>.img
+//
+// The kernel and initramfs objects keep the filename they had in the image's
+// /boot, so the kernel version is part of the key and the distro's naming
+// convention (initramfs-*.img, initrd-*, initrd.img-*) is preserved.
 //
 // The <arch> segment is omitted when the publisher has no arch configured.
 //
@@ -144,7 +176,11 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 
 	uploader := manager.NewUploader(client)
 
-	rootfsKey, vmlinuzKey, initramfsKey := s.objectKeys(tag)
+	// Key the kernel/initramfs objects off the discovered source filenames so
+	// the published key always names the bytes actually uploaded, including
+	// the kernel version.
+	rootfsKey, vmlinuzKey, initramfsKey := s.objectKeys(
+		tag, filepath.Base(vmlinuzPath), filepath.Base(initramfsPath))
 
 	// Step 6: Upload rootfs
 	if err := s.uploadFile(ctx, uploader, squashfsPath, rootfsKey); err != nil {
@@ -271,6 +307,9 @@ func (s *S3Publisher) uploadFile(ctx context.Context, uploader *manager.Uploader
 // Exists reports whether this image is already materialized in S3. It probes
 // the rootfs key for the primary (first) tag — the tag-identifying artifact —
 // which is fully determined by prefix + tag + arch, so no container is needed.
+// This is also why the rootfs key deliberately carries no kernel version:
+// Exists runs before any image is pulled or mounted, so a version-bearing key
+// would be unknowable here and the --skip-if-exists guard could never fire.
 //
 // Only tags[0] is probed because only tags[0] is ever written: Publish
 // materializes one self-contained directory per build (see objectKeys) rather
@@ -292,8 +331,7 @@ func (s *S3Publisher) Exists(ctx context.Context, name string, tags []string) (b
 	if err != nil {
 		return false, fmt.Errorf("create S3 client: %w", err)
 	}
-	rootfsKey, _, _ := s.objectKeys(tags[0])
-	return s.objectExists(ctx, client, rootfsKey)
+	return s.objectExists(ctx, client, s.rootfsKey(tags[0]))
 }
 
 // objectExists reports whether key is present in the bucket via HeadObject. A

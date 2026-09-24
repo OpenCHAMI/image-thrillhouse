@@ -151,12 +151,17 @@ func TestS3Publisher_Type(t *testing.T) {
 	}
 }
 
+// TestObjectKeys pins the published layout: the rootfs has a fixed name, while
+// the kernel and initramfs carry the kernel version because their keys are
+// built from the filenames discovered in the image's /boot.
 func TestObjectKeys(t *testing.T) {
 	tests := []struct {
 		name          string
 		prefix        string
 		arch          string
 		tag           string
+		kernelName    string
+		initramfsName string
 		wantRootfs    string
 		wantKernel    string
 		wantInitramfs string
@@ -166,34 +171,67 @@ func TestObjectKeys(t *testing.T) {
 			prefix:        "compute/",
 			arch:          "x86_64",
 			tag:           "release-0.0.1",
+			kernelName:    "vmlinuz-6.12.0-55.94.1.el10_0.x86_64",
+			initramfsName: "initramfs-6.12.0-55.94.1.el10_0.x86_64.img",
 			wantRootfs:    "compute/release-0.0.1/x86_64/rootfs.squashfs",
-			wantKernel:    "compute/release-0.0.1/x86_64/vmlinuz",
-			wantInitramfs: "compute/release-0.0.1/x86_64/initramfs.img",
+			wantKernel:    "compute/release-0.0.1/x86_64/vmlinuz-6.12.0-55.94.1.el10_0.x86_64",
+			wantInitramfs: "compute/release-0.0.1/x86_64/initramfs-6.12.0-55.94.1.el10_0.x86_64.img",
 		},
 		{
 			name:          "no arch segment when arch empty",
 			prefix:        "compute/",
 			arch:          "",
 			tag:           "abc123",
+			kernelName:    "vmlinuz-5.14.0-362.el9.x86_64",
+			initramfsName: "initramfs-5.14.0-362.el9.x86_64.img",
 			wantRootfs:    "compute/abc123/rootfs.squashfs",
-			wantKernel:    "compute/abc123/vmlinuz",
-			wantInitramfs: "compute/abc123/initramfs.img",
+			wantKernel:    "compute/abc123/vmlinuz-5.14.0-362.el9.x86_64",
+			wantInitramfs: "compute/abc123/initramfs-5.14.0-362.el9.x86_64.img",
 		},
 		{
 			name:          "no prefix",
 			prefix:        "",
 			arch:          "aarch64",
 			tag:           "release-1.0",
+			kernelName:    "vmlinuz-6.12.0-55.94.1.el10_0.aarch64",
+			initramfsName: "initramfs-6.12.0-55.94.1.el10_0.aarch64.img",
 			wantRootfs:    "release-1.0/aarch64/rootfs.squashfs",
-			wantKernel:    "release-1.0/aarch64/vmlinuz",
-			wantInitramfs: "release-1.0/aarch64/initramfs.img",
+			wantKernel:    "release-1.0/aarch64/vmlinuz-6.12.0-55.94.1.el10_0.aarch64",
+			wantInitramfs: "release-1.0/aarch64/initramfs-6.12.0-55.94.1.el10_0.aarch64.img",
+		},
+		{
+			// Omnia's layout: the release/OS version is the tag and no arch
+			// segment is configured, so the kernel version is the only place
+			// the kernel build is visible in the key.
+			name:          "omnia release-tag layout",
+			prefix:        "slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/",
+			arch:          "",
+			tag:           "10.0",
+			kernelName:    "vmlinuz-6.12.0-55.94.1.el10_0.x86_64",
+			initramfsName: "initramfs-6.12.0-55.94.1.el10_0.x86_64.img",
+			wantRootfs:    "slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/10.0/rootfs.squashfs",
+			wantKernel:    "slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/10.0/vmlinuz-6.12.0-55.94.1.el10_0.x86_64",
+			wantInitramfs: "slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/10.0/initramfs-6.12.0-55.94.1.el10_0.x86_64.img",
+		},
+		{
+			// Debian/Ubuntu keep their own initrd naming verbatim rather than
+			// being normalised into the RHEL initramfs-*.img shape.
+			name:          "debian initrd naming preserved",
+			prefix:        "compute/",
+			arch:          "x86_64",
+			tag:           "bookworm",
+			kernelName:    "vmlinuz-6.1.0-18-amd64",
+			initramfsName: "initrd.img-6.1.0-18-amd64",
+			wantRootfs:    "compute/bookworm/x86_64/rootfs.squashfs",
+			wantKernel:    "compute/bookworm/x86_64/vmlinuz-6.1.0-18-amd64",
+			wantInitramfs: "compute/bookworm/x86_64/initrd.img-6.1.0-18-amd64",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pub := New("", "", tt.prefix, tt.arch, "", "")
-			rootfs, kernel, initramfs := pub.objectKeys(tt.tag)
+			rootfs, kernel, initramfs := pub.objectKeys(tt.tag, tt.kernelName, tt.initramfsName)
 			if rootfs != tt.wantRootfs {
 				t.Errorf("rootfs = %q, want %q", rootfs, tt.wantRootfs)
 			}
@@ -204,6 +242,52 @@ func TestObjectKeys(t *testing.T) {
 				t.Errorf("initramfs = %q, want %q", initramfs, tt.wantInitramfs)
 			}
 		})
+	}
+}
+
+// TestObjectKeys_CarryKernelVersion is the regression guard for the behaviour
+// this layout exists to provide: a consumer pinning a node to a specific
+// kernel build must be able to read that build out of the object key. The
+// previous layout published bare "vmlinuz"/"initramfs.img", which erased it.
+func TestObjectKeys_CarryKernelVersion(t *testing.T) {
+	const kver = "6.12.0-55.94.1.el10_0.x86_64"
+
+	pub := New("", "", "compute/", "x86_64", "", "")
+	_, kernel, initramfs := pub.objectKeys("10.0", "vmlinuz-"+kver, "initramfs-"+kver+".img")
+
+	if !strings.Contains(kernel, kver) {
+		t.Errorf("kernel key %q does not carry kernel version %q", kernel, kver)
+	}
+	if !strings.Contains(initramfs, kver) {
+		t.Errorf("initramfs key %q does not carry kernel version %q", initramfs, kver)
+	}
+	if strings.HasSuffix(kernel, "/vmlinuz") {
+		t.Errorf("kernel key %q regressed to the unversioned name", kernel)
+	}
+	if strings.HasSuffix(initramfs, "/initramfs.img") {
+		t.Errorf("initramfs key %q regressed to the unversioned name", initramfs)
+	}
+}
+
+// TestRootfsKey_IndependentOfKernelVersion pins the invariant that makes
+// Exists work: the rootfs key must be derivable from prefix/tag/arch alone,
+// because Exists is called before any image is pulled or mounted and so has no
+// kernel version available.
+func TestRootfsKey_IndependentOfKernelVersion(t *testing.T) {
+	pub := New("", "", "compute/", "x86_64", "", "")
+
+	want := "compute/10.0/x86_64/rootfs.squashfs"
+	if got := pub.rootfsKey("10.0"); got != want {
+		t.Errorf("rootfsKey = %q, want %q", got, want)
+	}
+
+	// Whatever boot filenames a build happens to discover, the rootfs key is
+	// unchanged — otherwise --skip-if-exists could never match.
+	for _, kver := range []string{"6.12.0-55.el10_0.x86_64", "5.14.0-362.el9.x86_64"} {
+		rootfs, _, _ := pub.objectKeys("10.0", "vmlinuz-"+kver, "initramfs-"+kver+".img")
+		if rootfs != want {
+			t.Errorf("objectKeys rootfs = %q for kver %q, want %q", rootfs, kver, want)
+		}
 	}
 }
 
