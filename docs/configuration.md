@@ -319,11 +319,23 @@ The S3 publisher extracts the rootfs (SquashFS), kernel, and initramfs and uploa
 
 ```
 <prefix><tag>/<arch>/rootfs.squashfs
-<prefix><tag>/<arch>/vmlinuz
-<prefix><tag>/<arch>/initramfs.img
+<prefix><tag>/<arch>/vmlinuz-<kernel-version>
+<prefix><tag>/<arch>/initramfs-<kernel-version>.img
 ```
 
 `<tag>` is `meta.tags[0]` (the content tag in a manifest build). The `<arch>` segment is present for multi-arch manifest builds and omitted otherwise. The same layout is produced whether an image reaches S3 via a build-time `s3` publish block or via [`promote --to s3`](promote.md).
+
+The kernel and initramfs objects keep the exact filename they carry in the image's `/boot`, so the kernel version is visible in the object key and each distro's own convention is preserved verbatim:
+
+| Distro family | Kernel object | Initramfs object |
+|---|---|---|
+| RHEL / Rocky / Fedora | `vmlinuz-6.12.0-55.94.1.el10_0.x86_64` | `initramfs-6.12.0-55.94.1.el10_0.x86_64.img` |
+| Debian | `vmlinuz-6.1.0-18-amd64` | `initrd-6.1.0-18-amd64` |
+| Ubuntu | `vmlinuz-5.15.0-91-generic` | `initrd.img-5.15.0-91-generic` |
+
+This lets a consumer pin a node to a specific kernel build straight from the object key. It cannot collide, because each tag already gets its own directory. `rootfs.squashfs` deliberately keeps a fixed, version-independent name: `--skip-if-exists` and `promote` probe it before any image is pulled or mounted, so its key has to be derivable from `prefix`/`tag`/`arch` alone.
+
+> **Compatibility note:** builds before this change published bare `vmlinuz` and `initramfs.img`. Consumers that matched those exact names must glob `vmlinuz*` / `initramfs*` (or `initrd*`) instead.
 
 ## Manifests
 
