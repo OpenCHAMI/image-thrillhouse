@@ -61,7 +61,7 @@ func toSpecsMounts(in []container.BindMount) []specs.Mount {
 	}
 	out := make([]specs.Mount, 0, len(in))
 	for _, m := range in {
-		opts := []string{"rbind"}
+		opts := []string{"rbind", "z"}
 		if m.Readonly {
 			opts = append(opts, "ro")
 		}
@@ -599,6 +599,25 @@ func (c *Container) Delete() {
 			log.Warn("shutdown store", "error", err)
 		}
 	}
+}
+
+// Remount unmounts and remounts the container filesystem so host-side writes
+// directly to the backing upperdir become visible through the merged mount
+// point. It updates the container's recorded mount path in case it changed.
+func (c *Container) Remount() error {
+	log := slog.With("component", "buildah")
+	if n := killStrayProcesses(c.mountPath, log); n > 0 {
+		log.Info("killed stray container processes before remount", "count", n)
+	}
+	if err := c.Builder.Unmount(); err != nil {
+		return fmt.Errorf("unmount before remount: %w", err)
+	}
+	mp, err := c.Builder.Mount("")
+	if err != nil {
+		return fmt.Errorf("remount container: %w", err)
+	}
+	c.mountPath = mp
+	return nil
 }
 
 // MountPath returns the host path where the container filesystem is mounted.

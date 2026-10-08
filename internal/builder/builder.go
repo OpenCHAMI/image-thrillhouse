@@ -189,6 +189,13 @@ func (b *Builder) Build(ctx context.Context) error {
 		}
 	}
 
+	// Bake container images and inject other_files (tar) artifacts into the
+	// OS image. This runs before custom commands so the injected content is
+	// available to later build steps.
+	if err := b.injectArtifacts(ctx, c); err != nil {
+		return fmt.Errorf("inject artifacts: %w", err)
+	}
+
 	// Run custom commands
 	if err := b.runCommands(ctx, c); err != nil {
 		return fmt.Errorf("run commands: %w", err)
