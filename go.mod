@@ -1,6 +1,6 @@
 module github.com/openchami/image-thrillhouse
 
-go 1.26.5
+go 1.27.1
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.46.0
@@ -8,21 +8,16 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.3
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.23.3
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.111.0
-	github.com/aws/smithy-go v1.28.1
+	github.com/aws/smithy-go v1.28.2
 	github.com/docker/distribution v2.8.3+incompatible
-	github.com/mattn/go-shellwords v1.0.14
+	github.com/mattn/go-shellwords v1.0.16
 	github.com/opencontainers/runtime-spec v1.3.0
-	github.com/sirupsen/logrus v1.9.4
+	github.com/sirupsen/logrus v1.10.2
 	github.com/spf13/cobra v1.10.2
-	go.podman.io/buildah v1.45.0
-	go.podman.io/image/v5 v5.41.0
-	go.podman.io/storage v1.64.0
+	go.podman.io/buildah v1.45.1
+	go.podman.io/image/v5 v5.41.2
+	go.podman.io/storage v1.64.1
 	gopkg.in/yaml.v3 v3.0.1
-)
-
-require (
-	github.com/moby/moby/api v1.55.0 // indirect
-	github.com/moby/moby/client v0.5.1 // indirect
 )
 
 require (
@@ -96,6 +91,8 @@ require (
 	github.com/moby/buildkit v0.31.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.3.0 // indirect
+	github.com/moby/moby/api v1.55.0 // indirect
+	github.com/moby/moby/client v0.5.1 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/capability v0.4.0 // indirect
 	github.com/moby/sys/devices v0.1.0 // indirect
@@ -141,10 +138,10 @@ require (
 	go.opentelemetry.io/otel v1.44.0 // indirect
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
-	go.podman.io/common v0.69.0 // indirect
+	go.podman.io/common v0.69.2 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
