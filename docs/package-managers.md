@@ -2,9 +2,9 @@
 
 | Backend | Scratch builds | Parent builds | Groups / patterns | Modules | Configurable options |
 | --- | --- | --- | --- | --- | --- |
-| **DNF** (RHEL, Rocky, AlmaLinux, Fedora) | ✅ (installroot) | ✅ | ✅ groups | ✅ enable/install/disable | 6 options |
-| **Zypper** (openSUSE, SLES) | ✅ | ✅ | ⚠️ patterns only | ❌ | 6 options |
-| **APT** (Debian, Ubuntu) | ❌ — use mmdebstrap | ✅ | ❌ | ❌ | 3 options |
+| **DNF** (RHEL, Rocky, AlmaLinux, Fedora) | ✅ (installroot) | ✅ | ✅ groups | ✅ enable/install/disable | 8 options |
+| **Zypper** (openSUSE, SLES) | ✅ | ✅ | ⚠️ patterns only | ❌ | 7 options |
+| **APT** (Debian, Ubuntu) | ❌ — use mmdebstrap | ✅ | ❌ | ❌ | 4 options |
 | **mmdebstrap** (Debian, Ubuntu) | ✅ (Debian bootstrap) | ❌ | ❌ | ❌ | suite + mirror required |
 
 See [configuration.md](configuration.md#backend-options) for the full option list per backend.
@@ -24,3 +24,13 @@ DNF supports any RHEL-family release through the `releasever` option (e.g. `"9"`
 - **Most backends** (dnf, zypper, apt): repo files, GPG keys, `layer.files`, and `layer.directories` are written into the image *before* the install step, so the package manager sees them.
 - **mmdebstrap**: the bootstrap runs *first*, before any repo/file/key writes — mmdebstrap refuses to bootstrap into a non-empty target directory. Files, repos, and GPG keys configured in the layer are written after the bootstrap completes; they end up in the image and are available to `layer.actions.commands` and to apt at runtime, but they cannot influence the bootstrap itself. Use the `mirror`/`suite` options to control where mmdebstrap pulls from.
 - **DNF module operations** (`enable`/`disable`/`install`/`reset`) always run before package and group installs, in both scratch and parent modes, so an enabled stream takes effect for the installs that follow.
+
+## Metadata freshness and cache cleanup
+
+DNF and Zypper accept `refresh: "true"` to force metadata refresh before
+installation. APT always updates its indexes, and mmdebstrap fetches them while
+bootstrapping. DNF, Zypper, and APT accept `clean: "true"` to remove caches after
+the layer's install step; mmdebstrap already removes package lists and APT
+caches by default. Enable cleanup in each layer to avoid storing these caches
+in OCI layers. See [configuration.md](configuration.md#metadata-freshness-and-cache-cleanup)
+for options, timing, and an example.

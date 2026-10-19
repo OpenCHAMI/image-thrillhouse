@@ -20,10 +20,12 @@ import (
 // It supports Debian, Ubuntu, and their derivatives for parent image builds.
 //
 // Supported options:
+//   - clean: "true" or "false" (default: "false") - Clean archives and package lists after installs
 //   - install-recommends: "true" or "false" (default: "false") - Install recommended packages
 //   - install-suggests: "true" or "false" (default: "false") - Install suggested packages
 //   - allow-unauthenticated: "true" or "false" (default: "false") - Allow unauthenticated packages
 type AptBackend struct {
+	clean                bool
 	installRecommends    bool
 	installSuggests      bool
 	allowUnauthenticated bool
@@ -32,6 +34,7 @@ type AptBackend struct {
 // New creates an APT backend. See AptBackend for the supported options.
 func New(options map[string]string) *AptBackend {
 	backend := &AptBackend{
+		clean:                options["clean"] == "true",
 		installRecommends:    false,
 		installSuggests:      false,
 		allowUnauthenticated: false,
@@ -55,6 +58,7 @@ func New(options map[string]string) *AptBackend {
 // enforcement point for the option list documented on AptBackend.
 func (a *AptBackend) ValidateOptions(options map[string]string) error {
 	schema := map[string]cmdutil.OptionKind{
+		"clean":                 cmdutil.OptionBool,
 		"install-recommends":    cmdutil.OptionBool,
 		"install-suggests":      cmdutil.OptionBool,
 		"allow-unauthenticated": cmdutil.OptionBool,
@@ -135,6 +139,9 @@ func (a *AptBackend) InstallCommands(install config.Install) [][]string {
 		cmds = append(cmds, cmd)
 	}
 
+	if a.clean {
+		cmds = append(cmds, []string{"apt-get", "clean"}, []string{"rm", "-rf", "--", "/var/lib/apt/lists"})
+	}
 	return cmds
 }
 
