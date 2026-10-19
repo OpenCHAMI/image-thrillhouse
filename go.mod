@@ -1,6 +1,6 @@
 module github.com/openchami/image-thrillhouse
 
-go 1.27.1
+go 1.27.2
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.3
@@ -14,9 +14,9 @@ require (
 	github.com/opencontainers/runtime-spec v1.3.0
 	github.com/sirupsen/logrus v1.10.2
 	github.com/spf13/cobra v1.10.2
-	go.podman.io/buildah v1.45.1
+	go.podman.io/buildah v1.45.2
 	go.podman.io/image/v5 v5.41.2
-	go.podman.io/storage v1.64.1
+	go.podman.io/storage v1.64.2
 	gopkg.in/yaml.v3 v3.0.1
 )
 
