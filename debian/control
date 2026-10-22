@@ -15,7 +15,8 @@ Package: image-thrillhouse
 Architecture: any
 Depends: ${shlibs:Depends},
          ${misc:Depends},
-         buildah
+         buildah,
+         skopeo
 Recommends: squashfs-tools
 Suggests: podman
 Description: Go-based image builder wrapping buildah
