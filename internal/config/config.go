@@ -50,6 +50,16 @@ type EnvConfig struct {
 	Set  map[string]string `yaml:"set"`  // Environment variables to set with explicit values
 }
 
+// BindMount describes a host→container bind mount that can be configured in
+// the YAML config. Used by Command.Mounts to expose host paths to commands
+// without committing them into the image layer.
+type BindMount struct {
+	Source      string   `yaml:"source"`      // absolute host path (file or directory)
+	Destination string   `yaml:"destination"` // absolute container path
+	Readonly    bool     `yaml:"readonly"`    // if true, mount with the "ro" flag
+	Options     []string `yaml:"options"`     // additional mount options (e.g., "z", "Z")
+}
+
 // Layer defines how to build the image layer.
 // It specifies the package manager, repositories, files, and actions to perform.
 type Layer struct {
@@ -188,6 +198,7 @@ type Command struct {
 	Script  string          `yaml:"script"`  // Multi-line shell script to run
 	Ansible *AnsibleCommand `yaml:"ansible"` // Ansible playbook execution
 	Env     *EnvConfig      `yaml:"env"`     // Optional: Command-level environment variables
+	Mounts  []BindMount     `yaml:"mounts"`  // Optional: bind mounts for this command
 }
 
 // AnsibleCommand configures Ansible playbook execution inside the container.
