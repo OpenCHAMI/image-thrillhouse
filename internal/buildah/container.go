@@ -65,6 +65,8 @@ func toSpecsMounts(in []container.BindMount) []specs.Mount {
 		if m.Readonly {
 			opts = append(opts, "ro")
 		}
+		// Append any additional mount options (e.g., "z", "Z" for SELinux)
+		opts = append(opts, m.Options...)
 		out = append(out, specs.Mount{
 			Source:      m.Source,
 			Destination: m.Destination,

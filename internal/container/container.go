@@ -45,9 +45,10 @@ type RunOptions struct {
 // duration of one Run invocation. Use it when you want to expose host files
 // to the command without committing them into the image layer.
 type BindMount struct {
-	Source      string // absolute host path (file or directory)
-	Destination string // absolute container path
-	Readonly    bool   // if true, mount with the "ro" flag
+	Source      string   // absolute host path (file or directory)
+	Destination string   // absolute container path
+	Readonly    bool     // if true, mount with the "ro" flag
+	Options     []string // additional mount options (e.g., "z", "Z")
 }
 
 // RunOption is a functional option for Run/RunScript.
@@ -67,12 +68,15 @@ func WithEnv(kv ...string) RunOption {
 // invocation. Both paths should be absolute. Use this to expose payloads (a
 // playbook, a roles directory, a generated config dir) to a single Run
 // without copying them into the image layer.
-func WithBindMount(source, destination string, readonly bool) RunOption {
+// The options parameter accepts additional mount options like "z", "Z" for
+// SELinux relabeling
+func WithBindMount(source, destination string, readonly bool, options ...string) RunOption {
 	return func(o *RunOptions) {
 		o.Mounts = append(o.Mounts, BindMount{
 			Source:      source,
 			Destination: destination,
 			Readonly:    readonly,
+			Options:     options,
 		})
 	}
 }

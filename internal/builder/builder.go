@@ -678,11 +678,16 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 			return fmt.Errorf("resolve env for command %d: %w", i, err)
 		}
 
-		// Create run options with environment variables
+		// Create run options with environment variables and mounts
 		var opts []container.RunOption
 		if len(envVars) > 0 {
 			log.Debug("setting environment variables", "index", i, "count", len(envVars))
 			opts = append(opts, container.WithEnv(envVars...))
+		}
+
+		// Add bind mounts from config
+		for _, m := range cmd.Mounts {
+			opts = append(opts, container.WithBindMount(m.Source, m.Destination, m.Readonly, m.Options...))
 		}
 
 		switch cmd.Type() {

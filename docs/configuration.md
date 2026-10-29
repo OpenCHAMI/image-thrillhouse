@@ -196,6 +196,13 @@ There is no opt-out, on the same terms as ansible's roles and inventory trees (s
           #!/bin/bash
           echo "Setting up..."
           dnf clean all
+      - run: '/usr/local/bin/mycmd.sh'     # Command with mount
+        mounts:
+          source: /var/lib/sss
+          destination: /var/lib/sss
+          readonly: false
+          options:
+            - z
 ```
 
 #### Package removal
