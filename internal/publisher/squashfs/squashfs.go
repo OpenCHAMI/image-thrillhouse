@@ -42,8 +42,9 @@ func New(path string) *SquashfsPublisher {
 //	<path>/<name>-<tags[0]>.initramfs.img
 //
 // An image with no kernel installed (empty /lib/modules) still gets its
-// squashfs, with a warning in place of the boot files. A kernel that is present
-// but missing its vmlinuz or initramfs is an error.
+// squashfs, with a warning in place of the boot files. The publisher exports
+// boot artifacts already in the image; it does not create them. A kernel that
+// is present but missing its vmlinuz or initramfs is therefore an error.
 //
 // The bytes derive purely from the container mount, so one file per tag would be
 // N identical files differing only in filename. tags[0] is the identifier, same
@@ -100,12 +101,19 @@ func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, 
 	}
 
 	vmlinuz, initramfs := s.bootPaths(name, primary)
+	published := false
+	defer func() {
+		if !published {
+			removeArtifacts(log, output, vmlinuz, initramfs)
+		}
+	}()
 	if err := fsutil.CopyFile(boot.Vmlinuz, vmlinuz); err != nil {
 		return fmt.Errorf("copy vmlinuz: %w", err)
 	}
 	if err := fsutil.CopyFile(boot.Initramfs, initramfs); err != nil {
 		return fmt.Errorf("copy initramfs: %w", err)
 	}
+	published = true
 
 	log.Info("published squashfs", "squashfs", output, "vmlinuz", vmlinuz, "initramfs", initramfs,
 		"kernel_version", boot.KernelVersion)
@@ -117,6 +125,17 @@ func (s *SquashfsPublisher) Publish(ctx context.Context, c container.Container, 
 func (s *SquashfsPublisher) bootPaths(name, tag string) (vmlinuz, initramfs string) {
 	base := filepath.Join(s.path, fmt.Sprintf("%s-%s", name, tag))
 	return base + ".vmlinuz", base + ".initramfs.img"
+}
+
+// removeArtifacts removes a failed bootable publication so Exists cannot
+// mistake its rootfs for a complete artifact set on a later --skip-if-exists
+// run. It is only called after mksquashfs has successfully written a new rootfs.
+func removeArtifacts(log *slog.Logger, paths ...string) {
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			log.Warn("failed to remove incomplete squashfs artifact", "path", path, "error", err)
+		}
+	}
 }
 
 // Exists reports whether the squashfs output file for this (name, tags) pair
