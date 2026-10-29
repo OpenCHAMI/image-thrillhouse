@@ -340,7 +340,9 @@ publish:
     promote-only: true         # Optional: destination only; build never writes here
 ```
 
-The SquashFS publisher writes the image's kernel and initramfs next to the `.squashfs`, the same three artifacts the S3 publisher uploads. If the image has no kernel installed (empty `/lib/modules`), only the `.squashfs` is written and a warning is logged.
+The SquashFS publisher writes the image's kernel and initramfs next to the `.squashfs`, the same three artifacts the S3 publisher uploads. It exports existing boot files; it does not generate them. For a bootable image, the build must provide `/boot/vmlinuz-<version>` and a matching initramfs: `initramfs-<version>.img` (RHEL/Rocky/Fedora), `initrd-<version>` (Debian), or `initrd.img-<version>` (Ubuntu).
+
+If the image has no kernel installed (missing or empty `/lib/modules`), only the `.squashfs` is written and a warning is logged. If `/lib/modules` contains a kernel version but either boot file is missing, publishing fails with its expected path. Ensure the image's package installation and any kernel post-install hooks complete successfully before publishing.
 
 S3 publishing reads credentials from the `S3_ACCESS` and `S3_SECRET` environment variables.
 
