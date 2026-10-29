@@ -54,6 +54,7 @@ All option values are strings (`"true"` / `"false"` / etc.).
 | `install-recommends` | `"false"` | Install recommended packages |
 | `install-suggests` | `"false"` | Install suggested packages |
 | `allow-unauthenticated` | `"false"` | Allow unsigned packages |
+| `clean` | `"false"` | Run `apt-get clean` and remove package lists after the install step |
 
 **DNF (RHEL/Rocky/AlmaLinux/Fedora)**
 | Option | Default | Description |
@@ -63,6 +64,8 @@ All option values are strings (`"true"` / `"false"` / etc.).
 | `skip-broken` | `"false"` | Skip broken packages |
 | `allowerasing` | `"false"` | Allow erasing packages for dependencies |
 | `nobest` | `"false"` | Don't limit to best candidates |
+| `refresh` | `"false"` | Force metadata refresh (`--refresh`) for module, package, and group operations |
+| `clean` | `"false"` | Run `dnf clean all` after the install step, targeting the installroot for scratch builds |
 | `releasever` | — | Override RHEL/distro release version (e.g. `"9"`, `"10"`, `"40"`). **Required for scratch builds.** |
 
 **Zypper (openSUSE/SLES)**
@@ -73,6 +76,8 @@ All option values are strings (`"true"` / `"false"` / etc.).
 | `force-resolution` | `"false"` | Auto-resolve conflicts |
 | `auto-agree-with-licenses` | `"false"` | Auto-accept package licenses (`--auto-agree-with-licenses`) |
 | `allow-vendor-change` | `"false"` | Allow packages to change vendor (`--allow-vendor-change`) |
+| `refresh` | `"false"` | Run `zypper refresh --force` before installs (also forces the existing scratch refresh) |
+| `clean` | `"false"` | Run `zypper clean --all` after the install step, targeting the scratch root when applicable |
 
 **mmdebstrap (Debian/Ubuntu, scratch builds only)**
 | Option | Default | Description |
@@ -81,6 +86,38 @@ All option values are strings (`"true"` / `"false"` / etc.).
 | `mirror` | — | Package mirror URL (e.g. `"http://deb.debian.org/debian"`). **Required.** |
 | `variant` | `"minbase"` | Bootstrap variant |
 | `mode` | `"fakechroot"` | Execution mode |
+
+#### Metadata freshness and cache cleanup
+
+For DNF and Zypper, set `refresh: "true"` under `layer.manager.options` to force
+fresh metadata in the layer that needs it. APT already runs `apt-get update`
+before every install step. mmdebstrap fetches fresh lists while bootstrapping
+and [removes package lists and APT caches by default](https://manpages.debian.org/bookworm/mmdebstrap/mmdebstrap.1.en.html#cleanup),
+so it needs neither option.
+
+Enable `clean: "true"` for DNF, Zypper, or APT in **each layer** whose install
+caches should be discarded:
+
+```yaml
+layer:
+  manager:
+    name: dnf
+    options:
+      releasever: "9"
+      refresh: "true"
+      clean: "true"
+  actions:
+    install:
+      packages: [bash, coreutils]
+```
+
+Cleanup runs once after the layer's generated install commands succeed and
+before custom commands and image publication. This prevents caches created by
+that install step from entering its OCI layer. It cannot reclaim bytes already
+stored in parent layers, and custom commands that install more packages must
+clean their own caches. Cleanup does not remove installed packages or their
+package database. These options default to `"false"`; enabling cleanup trades
+cache reuse for smaller layers. A cleanup failure fails the build.
 
 ### `layer.repos`
 

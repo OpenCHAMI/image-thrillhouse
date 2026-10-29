@@ -27,9 +27,13 @@ import (
 //   - skip-broken: "true" or "false" (default: "false") - Skip uninstallable packages
 //   - allowerasing: "true" or "false" (default: "false") - Allow erasing of installed packages to resolve dependencies
 //   - nobest: "true" or "false" (default: "false") - Do not limit packages to best candidates
+//   - refresh: "true" or "false" (default: "false") - Force metadata refresh before installs
+//   - clean: "true" or "false" (default: "false") - Clean caches after the install step
 //   - releasever: string (optional) - Override the RHEL/distro release version (e.g., "9", "10")
 //   - macro.*: string (optional) - Custom RPM macros (e.g., macro._dbpath: "/var/lib/rpm")
 type DnfBackend struct {
+	refresh         bool
+	clean           bool
 	installWeakDeps bool
 	best            bool
 	skipBroken      bool
@@ -42,6 +46,8 @@ type DnfBackend struct {
 // New creates a DNF backend. See DnfBackend for the supported options.
 func New(options map[string]string) *DnfBackend {
 	backend := &DnfBackend{
+		refresh:         options["refresh"] == "true",
+		clean:           options["clean"] == "true",
 		installWeakDeps: true, // DNF default
 		best:            true, // DNF default
 		skipBroken:      false,
@@ -114,6 +120,9 @@ func (d *DnfBackend) InstallCommands(install config.Install) [][]string {
 		cmds = append(cmds, cmd)
 	}
 
+	if d.clean && len(cmds) > 0 {
+		cmds = append(cmds, d.cleanCommand(""))
+	}
 	return cmds
 }
 
@@ -174,6 +183,9 @@ func (d *DnfBackend) InstallRootCommands(install config.Install, rootPath string
 		cmds = append(cmds, cmd)
 	}
 
+	if d.clean && len(cmds) > 0 {
+		cmds = append(cmds, d.cleanCommand(rootPath))
+	}
 	return cmds
 }
 
@@ -186,6 +198,8 @@ func (d *DnfBackend) ValidateOptions(options map[string]string) error {
 		"skip-broken":       cmdutil.OptionBool,
 		"allowerasing":      cmdutil.OptionBool,
 		"nobest":            cmdutil.OptionBool,
+		"refresh":           cmdutil.OptionBool,
+		"clean":             cmdutil.OptionBool,
 		"releasever":        cmdutil.OptionAny,
 	}
 	if err := cmdutil.ValidateOptionSchema("dnf", options, schema); err != nil {
@@ -201,6 +215,9 @@ func (d *DnfBackend) ValidateOptions(options map[string]string) error {
 // addOptionFlags adds DNF option flags to a command based on configured options.
 // This is a helper method to avoid duplicating flag logic.
 func (d *DnfBackend) addOptionFlags(cmd []string) []string {
+	if d.refresh {
+		cmd = append(cmd, "--refresh")
+	}
 	if d.releaseVer != "" {
 		cmd = append(cmd, "--releasever", d.releaseVer)
 	}
@@ -220,6 +237,19 @@ func (d *DnfBackend) addOptionFlags(cmd []string) []string {
 		cmd = append(cmd, "--nobest")
 	}
 	return cmd
+}
+
+// cleanCommand targets the same root and release as the install, without
+// install-only flags or --refresh (cleaning must not fetch fresh metadata).
+func (d *DnfBackend) cleanCommand(rootPath string) []string {
+	cmd := []string{"dnf", "-q"}
+	if d.releaseVer != "" {
+		cmd = append(cmd, "--releasever", d.releaseVer)
+	}
+	if rootPath != "" {
+		cmd = append(cmd, "--installroot", rootPath)
+	}
+	return append(cmd, "clean", "all")
 }
 
 // RemovePackagesCommand delegates to the shared RPM removal helper. See

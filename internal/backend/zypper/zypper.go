@@ -27,8 +27,12 @@ import (
 //   - force-resolution: "true" or "false" (default: "false") - Force automatic resolution of conflicts
 //   - auto-agree-with-licenses: "true" or "false" (default: "false") - Automatically agree to package licenses
 //   - allow-vendor-change: "true" or "false" (default: "false") - Allow changing package vendors
+//   - refresh: "true" or "false" (default: "false") - Force repository metadata refresh
+//   - clean: "true" or "false" (default: "false") - Clean caches after the install step
 //   - macro.*: string (optional) - Custom RPM macros (e.g., macro._dbpath: "/var/lib/rpm")
 type ZypperBackend struct {
+	refresh               bool
+	clean                 bool
 	noRecommends          bool // Do not install recommended packages
 	noGpgChecks           bool // Skip GPG signature checks
 	forceResolution       bool // Force automatic resolution of conflicts
@@ -40,6 +44,8 @@ type ZypperBackend struct {
 // New creates a Zypper backend. See ZypperBackend for the supported options.
 func New(options map[string]string) *ZypperBackend {
 	backend := &ZypperBackend{
+		refresh:               options["refresh"] == "true",
+		clean:                 options["clean"] == "true",
 		noRecommends:          false,
 		noGpgChecks:           false,
 		forceResolution:       false,
@@ -103,6 +109,13 @@ func (z *ZypperBackend) InstallCommands(install config.Install) [][]string {
 		cmds = append(cmds, cmd)
 	}
 
+	if z.refresh && len(cmds) > 0 {
+		cmd := z.addGlobalFlags([]string{"zypper"})
+		cmds = append([][]string{append(cmd, "refresh", "--force")}, cmds...)
+	}
+	if z.clean && len(cmds) > 0 {
+		cmds = append(cmds, []string{"zypper", "clean", "--all"})
+	}
 	return cmds
 }
 
@@ -125,6 +138,9 @@ func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath str
 	refreshCmd = append(refreshCmd, "zypper", "--root", rootPath)
 	refreshCmd = z.addGlobalFlags(refreshCmd)
 	refreshCmd = append(refreshCmd, "refresh")
+	if z.refresh {
+		refreshCmd = append(refreshCmd, "--force")
+	}
 	cmds = append(cmds, refreshCmd)
 
 	if len(install.Packages) > 0 {
@@ -147,6 +163,9 @@ func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath str
 		cmds = append(cmds, cmd)
 	}
 
+	if z.clean {
+		cmds = append(cmds, []string{"zypper", "--root", rootPath, "clean", "--all"})
+	}
 	return cmds
 }
 
@@ -154,6 +173,8 @@ func (z *ZypperBackend) InstallRootCommands(install config.Install, rootPath str
 // enforcement point for the option list documented on ZypperBackend.
 func (z *ZypperBackend) ValidateOptions(options map[string]string) error {
 	schema := map[string]cmdutil.OptionKind{
+		"refresh":                  cmdutil.OptionBool,
+		"clean":                    cmdutil.OptionBool,
 		"no-recommends":            cmdutil.OptionBool,
 		"no-gpg-checks":            cmdutil.OptionBool,
 		"force-resolution":         cmdutil.OptionBool,
