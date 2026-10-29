@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -165,7 +166,7 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	// the published key always names the bytes actually uploaded, including
 	// the kernel version.
 	rootfsKey, vmlinuzKey, initramfsKey := s.objectKeys(
-		tag, filepath.Base(vmlinuzPath), filepath.Base(initramfsPath))
+		tag, filepath.Base(boot.Vmlinuz), filepath.Base(boot.Initramfs))
 
 	// Step 4: Upload rootfs
 	if err := s.uploadFile(ctx, uploader, squashfsPath, rootfsKey); err != nil {
