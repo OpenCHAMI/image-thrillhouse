@@ -5,6 +5,9 @@
 package squashfs
 
 import (
+	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -45,5 +48,26 @@ func TestSquashfsPublisher_Type(t *testing.T) {
 
 	if _, ok := interface{}(pub).(*SquashfsPublisher); !ok {
 		t.Error("New() did not return *SquashfsPublisher")
+	}
+}
+
+func TestRemoveArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	paths := []string{
+		filepath.Join(dir, "image.squashfs"),
+		filepath.Join(dir, "image.vmlinuz"),
+		filepath.Join(dir, "image.initramfs.img"),
+	}
+	for _, path := range paths {
+		if err := os.WriteFile(path, []byte("artifact"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	removeArtifacts(slog.Default(), paths...)
+	for _, path := range paths {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("artifact %s still exists; err = %v", path, err)
+		}
 	}
 }
