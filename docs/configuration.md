@@ -228,7 +228,7 @@ There is no opt-out, on the same terms as ansible's roles and inventory trees (s
         - man-pages
         - linux-firmware
     commands:
-      - run: systemctl enable myservice    # Single command
+      - run: systemctl enable myservice    # Single command, runs inside 'bash -c'
       - script: |                          # Multi-line script
           #!/bin/bash
           echo "Setting up..."
