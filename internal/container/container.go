@@ -152,7 +152,7 @@ type Container interface {
 
 	GetIsolation() define.Isolation
 
-	CommitToRegistry(ctx context.Context, ref string, tlsVerify bool) error
+	CommitToRegistry(ctx context.Context, refs []string, tlsVerify bool) error
 }
 
 // OutputWriter is an io.Writer that can buffer output and flush it with error context.

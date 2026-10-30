@@ -649,17 +649,26 @@ func (c *Container) GetIsolation() define.Isolation {
 
 // CommitToRegistry pushes straight to a remote registry, bypassing local
 // storage — cheaper in CI, where the local copy is never used again.
-func (c *Container) CommitToRegistry(ctx context.Context, ref string, tlsVerify bool) error {
-	imageRef, err := docker.ParseReference("//" + ref)
-	if err != nil {
-		return fmt.Errorf("parse registry ref: %w", err)
-	}
+func (c *Container) CommitToRegistry(ctx context.Context, refs []string, tlsVerify bool) error {
+	log := slog.With("component", "buildah")
+	now := time.Now()
 
-	_, _, _, err = c.Builder.Commit(ctx, imageRef, buildah.CommitOptions{
-		SystemContext: newSystemContext(tlsVerify),
-	})
-	if err != nil {
-		return fmt.Errorf("commit to registry: %w", err)
+	for _, r := range refs {
+		imageRef, err := docker.ParseReference("//" + r)
+		if err != nil {
+			return fmt.Errorf("parse registry ref: %w", err)
+		}
+		log.Info("Commit", "imageRef", r)
+		_, _, _, err = c.Builder.Commit(ctx, imageRef, buildah.CommitOptions{
+			SystemContext: newSystemContext(tlsVerify),
+			// Force commit to use the same timestamp for each tag so the image checksum
+			// will not change with multiple tags of the same underlying container
+			HistoryTimestamp: &now,
+			SourceDateEpoch:  &now,
+		})
+		if err != nil {
+			return fmt.Errorf("commit to registry: %w", err)
+		}
 	}
 	return nil
 }
