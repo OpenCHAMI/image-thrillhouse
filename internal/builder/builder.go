@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattn/go-shellwords"
 	"github.com/openchami/image-thrillhouse/internal/backend"
 	"github.com/openchami/image-thrillhouse/internal/config"
 	"github.com/openchami/image-thrillhouse/internal/container"
@@ -693,11 +692,8 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 		switch cmd.Type() {
 		case config.CommandRun:
 			log.Debug("executing run command", "index", i, "run", cmd.Run)
-			// Parse the command string into parts (handles quoting properly)
-			parts, err := shellwords.Parse(cmd.Run)
-			if err != nil {
-				return fmt.Errorf("parse command %q: %w", cmd.Run, err)
-			}
+			// Use bash to run commands so things like subcommands and pipes will work
+			parts := []string{"bash", "-c", cmd.Run}
 			if err := container.RunCmd(ctx, c, "builder", parts, container.RunModeContainer, opts...); err != nil {
 				return fmt.Errorf("run %s: %w", cmd.Run, err)
 			}
