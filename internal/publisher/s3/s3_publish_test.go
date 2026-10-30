@@ -47,13 +47,13 @@ func (f *fakeContainer) SetLabels(map[string]string) {}
 func (f *fakeContainer) CommitWithLabelsTags(context.Context, string, []string, map[string]string) (string, error) {
 	return "", nil
 }
-func (f *fakeContainer) GetID() string                                        { return "fake" }
-func (f *fakeContainer) GetParent() string                                    { return "" }
-func (f *fakeContainer) PulledParentID() string                               { return "" }
-func (f *fakeContainer) GetName() string                                      { return "fake" }
-func (f *fakeContainer) Delete()                                              {}
-func (f *fakeContainer) GetIsolation() define.Isolation                       { return define.IsolationDefault }
-func (f *fakeContainer) CommitToRegistry(context.Context, string, bool) error { return nil }
+func (f *fakeContainer) GetID() string                                          { return "fake" }
+func (f *fakeContainer) GetParent() string                                      { return "" }
+func (f *fakeContainer) PulledParentID() string                                 { return "" }
+func (f *fakeContainer) GetName() string                                        { return "fake" }
+func (f *fakeContainer) Delete()                                                {}
+func (f *fakeContainer) GetIsolation() define.Isolation                         { return define.IsolationDefault }
+func (f *fakeContainer) CommitToRegistry(context.Context, []string, bool) error { return nil }
 
 // uploadRecorder stands in for an S3-compatible endpoint and records the keys
 // that were written, so a test can assert the published object layout.

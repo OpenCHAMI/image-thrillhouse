@@ -88,14 +88,16 @@ func (f *fakeContainer) SetLabels(labels map[string]string) {
 	f.Events = append(f.Events, "setlabels")
 }
 
-func (f *fakeContainer) GetID() string                                                    { return "fake-id" }
-func (f *fakeContainer) GetParent() string                                                { return "scratch" }
-func (f *fakeContainer) PulledParentID() string                                           { return f.PulledParent }
-func (f *fakeContainer) GetName() string                                                  { return "fake" }
-func (f *fakeContainer) Delete()                                                          { f.Events = append(f.Events, "delete") }
-func (f *fakeContainer) MountPath() string                                                { return f.MountPathReturn }
-func (f *fakeContainer) GetIsolation() define.Isolation                                   { return define.IsolationDefault }
-func (f *fakeContainer) CommitToRegistry(ctx context.Context, ref string, tls bool) error { return nil }
+func (f *fakeContainer) GetID() string                  { return "fake-id" }
+func (f *fakeContainer) GetParent() string              { return "scratch" }
+func (f *fakeContainer) PulledParentID() string         { return f.PulledParent }
+func (f *fakeContainer) GetName() string                { return "fake" }
+func (f *fakeContainer) Delete()                        { f.Events = append(f.Events, "delete") }
+func (f *fakeContainer) MountPath() string              { return f.MountPathReturn }
+func (f *fakeContainer) GetIsolation() define.Isolation { return define.IsolationDefault }
+func (f *fakeContainer) CommitToRegistry(ctx context.Context, refs []string, tls bool) error {
+	return nil
+}
 
 // fakePublisher records Publish/Exists calls and lets the test control the
 // answers. Used by allExist tests so we can simulate "all present" / "first

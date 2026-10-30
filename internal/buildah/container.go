@@ -21,6 +21,8 @@ import (
 	"go.podman.io/buildah"
 	"go.podman.io/buildah/define"
 	"go.podman.io/image/v5/docker"
+	"go.podman.io/image/v5/docker/reference"
+	"go.podman.io/image/v5/transports/alltransports"
 	"go.podman.io/image/v5/types"
 	"go.podman.io/storage"
 
@@ -647,19 +649,38 @@ func (c *Container) GetIsolation() define.Isolation {
 	return define.IsolationDefault
 }
 
-// CommitToRegistry pushes straight to a remote registry, bypassing local
-// storage — cheaper in CI, where the local copy is never used again.
-func (c *Container) CommitToRegistry(ctx context.Context, ref string, tlsVerify bool) error {
-	imageRef, err := docker.ParseReference("//" + ref)
+// CommitToRegistry will commit to local storage then push all requested tags to the remote registry
+func (c *Container) CommitToRegistry(ctx context.Context, refs []string, tlsVerify bool) error {
+	log := slog.With("component", "buildah")
+
+	// Strip off registry name and replace with localhost for the commit ref
+	imageRef, err := docker.ParseReference("//" + refs[0])
 	if err != nil {
 		return fmt.Errorf("parse registry ref: %w", err)
 	}
-
-	_, _, _, err = c.Builder.Commit(ctx, imageRef, buildah.CommitOptions{
-		SystemContext: newSystemContext(tlsVerify),
-	})
+	name := fmt.Sprintf("localhost/%s", reference.Path(imageRef.DockerReference()))
+	localImgRef, err := alltransports.ParseImageName("containers-storage:" + name)
+	if err != nil {
+		return fmt.Errorf("parse local image ref: %w", err)
+	}
+	log.Info("Commit", "image", name)
+	_, _, _, err = c.Builder.Commit(ctx, localImgRef, buildah.CommitOptions{})
 	if err != nil {
 		return fmt.Errorf("commit to registry: %w", err)
+	}
+	for _, r := range refs {
+		ref, err := docker.ParseReference("//" + r)
+		if err != nil {
+			return fmt.Errorf("parse registry ref: %w", err)
+		}
+		log.Info("Push image", "ref", r)
+		_, _, err = buildah.Push(ctx, name, ref, buildah.PushOptions{
+			SystemContext: newSystemContext(tlsVerify),
+			Store:         c.Store,
+		})
+		if err != nil {
+			return fmt.Errorf("push to registry: %w", err)
+		}
 	}
 	return nil
 }

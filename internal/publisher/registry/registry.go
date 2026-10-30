@@ -58,14 +58,15 @@ func New(url string, tlsVerify bool) *RegistryPublisher {
 // container config and ignores the labels parameter.
 func (r *RegistryPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
 	log := slog.With("component", "publisher.registry")
+	var refs []string
 	for _, t := range tags {
-		ref := fmt.Sprintf("%s/%s:%s", r.url, name, t)
-		log.Info("pushing to registry", "ref", ref)
-		if err := c.CommitToRegistry(ctx, ref, r.tlsVerify); err != nil {
-			return fmt.Errorf("push %s: %w", ref, err)
-		}
-		log.Info("pushed to registry", "ref", ref)
+		refs = append(refs, fmt.Sprintf("%s/%s:%s", r.url, name, t))
 	}
+	log.Info("pushing to registry", "refs", refs)
+	if err := c.CommitToRegistry(ctx, refs, r.tlsVerify); err != nil {
+		return fmt.Errorf("push %v: %w", refs, err)
+	}
+	log.Info("pushed to registry", "refs", refs)
 	return nil
 }
 
