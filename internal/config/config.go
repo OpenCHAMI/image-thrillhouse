@@ -177,6 +177,7 @@ type Actions struct {
 // Install specifies packages, groups, and modules to install.
 // Not all package managers support all options (e.g., zypper doesn't support groups).
 type Install struct {
+	Commands       []string `yaml:"commands"`        // Commands to run while setting up the installation
 	Packages       []string `yaml:"packages"`        // Individual packages to install
 	Groups         []string `yaml:"groups"`          // Package groups to install (DNF only)
 	Modules        []Module `yaml:"modules"`         // DNF modules to enable/install (DNF only)

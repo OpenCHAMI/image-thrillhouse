@@ -85,6 +85,12 @@ func (z *ZypperBackend) ConfigFilePath() string {
 func (z *ZypperBackend) InstallCommands(install config.Install) [][]string {
 	var cmds [][]string
 
+	// Handle setup commands
+	for _, c := range install.Commands {
+		cmd := []string{"bash", "-c", c}
+		cmds = append(cmds, cmd)
+	}
+
 	if len(install.Modules) > 0 {
 		slog.With("component", "backend.zypper").Warn("zypper backend does not support modules, ignoring", "modules", install.Modules)
 	}

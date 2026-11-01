@@ -91,6 +91,12 @@ func (d *DnfBackend) ConfigFilePath() string {
 func (d *DnfBackend) InstallCommands(install config.Install) [][]string {
 	var cmds [][]string
 
+	// Handle setup commands like 'subscription-manager refresh'
+	for _, c := range install.Commands {
+		cmd := []string{"bash", "-c", c}
+		cmds = append(cmds, cmd)
+	}
+
 	// Handle module operations (enable, install, disable, reset)
 	for _, mod := range install.Modules {
 		cmd := make([]string, 0, 12)

@@ -214,6 +214,8 @@ There is no opt-out, on the same terms as ansible's roles and inventory trees (s
 ```yaml
   actions:
     install:
+      commands:                   # Commands to run before packages are installed
+        - 'subscription-manager refresh'
       packages:                   # Individual packages
         - vim
         - wget
