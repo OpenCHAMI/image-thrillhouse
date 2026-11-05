@@ -14,6 +14,7 @@ Source0:        %{name}-%{version}.tar.gz
 
 # BuildRequires intentionally left empty - Go is installed via GitHub Actions
 Requires:       buildah
+Requires:       skopeo
 Recommends:     squashfs-tools
 Suggests:       podman
 

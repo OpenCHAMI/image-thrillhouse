@@ -28,6 +28,7 @@ RUN go build -ldflags "-X main.version=v${VERSION}" -o image-thrillhouse ./cmd/i
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y \
     buildah \
+    skopeo \
     mmdebstrap \
     dnf \
     fakeroot \

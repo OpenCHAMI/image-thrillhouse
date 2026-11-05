@@ -148,6 +148,41 @@ func (l *Layer) Validate() error {
 	if err := l.Actions.Validate(); err != nil {
 		return err
 	}
+
+	// Validate container images to bake into the OS image
+	for i, img := range l.ContainerImages {
+		if err := img.Validate(); err != nil {
+			return fmt.Errorf("layer.container_images[%d]: %w", i, err)
+		}
+	}
+
+	// Validate other_files artifacts to inject
+	for i, of := range l.OtherFiles {
+		if err := of.Validate(); err != nil {
+			return fmt.Errorf("layer.other_files[%d]: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+// Validate checks a ContainerImage configuration for correctness.
+// Requirements:
+//   - image must be specified
+func (ci *ContainerImage) Validate() error {
+	if ci.Image == "" {
+		return fmt.Errorf("image is required")
+	}
+	return nil
+}
+
+// Validate checks an OtherFile configuration for correctness.
+// Requirements:
+//   - tar_file must be specified
+func (of *OtherFile) Validate() error {
+	if of.TarFile == "" {
+		return fmt.Errorf("tar_file is required")
+	}
 	return nil
 }
 
