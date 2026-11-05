@@ -177,11 +177,16 @@ type Actions struct {
 // Install specifies packages, groups, and modules to install.
 // Not all package managers support all options (e.g., zypper doesn't support groups).
 type Install struct {
-	Commands       []string `yaml:"commands"`        // Commands to run while setting up the installation
-	Packages       []string `yaml:"packages"`        // Individual packages to install
-	Groups         []string `yaml:"groups"`          // Package groups to install (DNF only)
-	Modules        []Module `yaml:"modules"`         // DNF modules to enable/install (DNF only)
-	RemovePackages []string `yaml:"remove_packages"` // Packages to remove after installation
+	PreInstall     []PreInstall `yaml:"pre_install"`     // Commands to run befoer the install operations
+	Packages       []string     `yaml:"packages"`        // Individual packages to install
+	Groups         []string     `yaml:"groups"`          // Package groups to install (DNF only)
+	Modules        []Module     `yaml:"modules"`         // DNF modules to enable/install (DNF only)
+	RemovePackages []string     `yaml:"remove_packages"` // Packages to remove after installation
+}
+
+// PreInstall represents the pre-install operations
+type PreInstall struct {
+	Run string `yaml:"run"` // Command to run as part of pre-install
 }
 
 // Module represents a DNF module operation.

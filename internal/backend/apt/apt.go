@@ -112,9 +112,12 @@ func (a *AptBackend) InstallCommands(install config.Install) [][]string {
 	// always update first
 	cmds = append(cmds, []string{"apt-get", "update", "-q"})
 
-	// Handle setup commands
-	for _, c := range install.Commands {
-		cmd := []string{"bash", "-c", c}
+	// Handle pre-install commands
+	for _, p := range install.PreInstall {
+		if p.Run == "" {
+			continue
+		}
+		cmd := []string{"bash", "-eo", "pipefail", "-c", p.Run}
 		cmds = append(cmds, cmd)
 	}
 

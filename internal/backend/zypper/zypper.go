@@ -85,9 +85,12 @@ func (z *ZypperBackend) ConfigFilePath() string {
 func (z *ZypperBackend) InstallCommands(install config.Install) [][]string {
 	var cmds [][]string
 
-	// Handle setup commands
-	for _, c := range install.Commands {
-		cmd := []string{"bash", "-c", c}
+	// Handle pre-install commands
+	for _, p := range install.PreInstall {
+		if p.Run == "" {
+			continue
+		}
+		cmd := []string{"bash", "-eo", "pipefail", "-c", p.Run}
 		cmds = append(cmds, cmd)
 	}
 
