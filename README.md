@@ -104,8 +104,13 @@ The `publish` section is a list, so you can fan out to multiple targets in one b
 publish:
   - type: local
   - type: squashfs
-    path: /output/images        # writes <meta.name>-<meta.tags[0]>.squashfs
+    path: /output/images        # writes <meta.name>-<meta.tags[0]>.{squashfs,vmlinuz,initramfs.img}
 ```
+
+For a bootable output, the built image must already contain a versioned kernel
+and initramfs in `/boot`. The publisher copies those artifacts; it does not
+generate missing boot files. An image with no installed kernel still produces a
+SquashFS file, while an incomplete kernel installation fails the publish step.
 
 For registry and S3 targets, see [docs/configuration.md#publish](docs/configuration.md#publish).
 
