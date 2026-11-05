@@ -198,6 +198,7 @@ Fields:
 - `contents_only` (optional, default `true`): true copies `src/.` into `path` (matches `cp -a src/. dest/`); false copies `src` itself as a subdirectory under `path` (matches Dockerfile `COPY src dest/` semantics)
 - `excludes` (optional): list of `.containerignore`-style patterns. Evaluated by the same matcher buildah uses internally, so the cache hash and the actual copy see the same file set. Common patterns: `"*.tmp"`, `cache`, `build/`
 **Caching:** the layer tag hash includes the contents and structure of `src` (filtered by `excludes`), plus host modes when `mode` is unset and host ownership when `preserve_ownership` is true and `owner` is empty. Editing a file under `src` invalidates the cache and triggers a rebuild; editing an excluded file does not. Mtimes are deliberately ignored so a fresh `git clone` doesn't invalidate every cache.
+- `exclude_from_tag` (optional, default `false`): Exclude the directory from the tag hash calculation while still copying the directory to the image.
 
 **`.git` is always excluded**, from both the copy and the tag, as if `"**/.git"` were the first entry in `excludes`. Git bookkeeping is per-checkout state rather than source: the index and reflogs are rewritten by every clone, fetch, and checkout, so hashing them would hand you a new tag and a rebuild with no source change behind it. Everything alongside it — `.gitignore`, `.gitkeep`, `.gitmodules`, `.gitattributes` — is content and is copied and hashed normally.
 

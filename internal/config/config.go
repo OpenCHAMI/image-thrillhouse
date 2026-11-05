@@ -112,6 +112,7 @@ type Directory struct {
 	PreserveOwnership bool     `yaml:"preserve_ownership"` // Optional: keep host ownership; mutually exclusive with Owner
 	Excludes          []string `yaml:"excludes"`           // Optional: .containerignore-style exclude patterns
 	ContentsOnly      *bool    `yaml:"contents_only"`      // Optional: default true. Copy src/. into path; false copies src as a subdir
+	ExcludeFromTag    bool     `yaml:"exclude_from_tag"`   // Optional: Exclude the directory from the tag hash
 }
 
 // gitExcludes drops git bookkeeping from both the copy and the tag hash.

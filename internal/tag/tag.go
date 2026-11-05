@@ -165,6 +165,9 @@ func hashDirectory(h io.Writer, dir config.Directory) error {
 	if dir.Src == "" {
 		return nil
 	}
+	if dir.ExcludeFromTag {
+		return nil
+	}
 
 	excludes := dir.EffectiveExcludes()
 	pm, err := fileutils.NewPatternMatcher(excludes)
