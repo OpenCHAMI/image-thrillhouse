@@ -47,7 +47,8 @@ func New(url string, tlsVerify bool) *RegistryPublisher {
 }
 
 // Publish pushes the container image to the configured registry.
-// Each tag is pushed as a separate image reference.
+// The first tag is pushed to the registry and additional tags
+// are re-tagged against the first tag to ensure the same manifest digest.
 //
 // Image references are formatted as: <url>/<name>:<tag>
 // For example, with url="registry.io/myrepo", name="rocky-base", tag="9.5":
@@ -58,15 +59,24 @@ func New(url string, tlsVerify bool) *RegistryPublisher {
 // container config and ignores the labels parameter.
 func (r *RegistryPublisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
 	log := slog.With("component", "publisher.registry")
-	var refs []string
-	for _, t := range tags {
-		refs = append(refs, fmt.Sprintf("%s/%s:%s", r.url, name, t))
+	if len(tags) == 0 {
+		return fmt.Errorf("publish %s: at least one tag is required", name)
 	}
-	log.Info("pushing to registry", "refs", refs)
-	if err := c.CommitToRegistry(ctx, refs, r.tlsVerify); err != nil {
-		return fmt.Errorf("push %v: %w", refs, err)
+	primary := fmt.Sprintf("%s/%s:%s", r.url, name, tags[0])
+	log.Info("pushing to registry", "ref", primary)
+	if err := c.CommitToRegistry(ctx, primary, r.tlsVerify); err != nil {
+		return fmt.Errorf("push %s: %w", primary, err)
 	}
-	log.Info("pushed to registry", "refs", refs)
+
+	// Retag server-side so every tag resolves to the same manifest digest.
+	for _, t := range tags[1:] {
+		ref := fmt.Sprintf("%s/%s:%s", r.url, name, t)
+		log.Info("tagging in registry", "src", primary, "ref", ref)
+		if err := Copy(ctx, primary, ref, r.tlsVerify); err != nil {
+			return fmt.Errorf("tag %s: %w", ref, err)
+		}
+	}
+	log.Info("pushed to registry", "name", name, "tags", tags)
 	return nil
 }
 
