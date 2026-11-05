@@ -693,7 +693,7 @@ func (b *Builder) runCommands(ctx context.Context, c container.Container) error 
 		case config.CommandRun:
 			log.Debug("executing run command", "index", i, "run", cmd.Run)
 			// Use bash to run commands so things like subcommands and pipes will work
-			parts := []string{"bash", "-c", cmd.Run}
+			parts := []string{"bash", "-eo", "pipefail", "-c", cmd.Run}
 			if err := container.RunCmd(ctx, c, "builder", parts, container.RunModeContainer, opts...); err != nil {
 				return fmt.Errorf("run %s: %w", cmd.Run, err)
 			}
