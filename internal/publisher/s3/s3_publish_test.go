@@ -79,9 +79,9 @@ func (u *uploadRecorder) keys() []string {
 	return out
 }
 
-// newFakeRootfs builds the minimum tree Publish inspects: a kernel module
-// directory (how the kernel version is discovered) plus the matching /boot
-// artifacts.
+// newFakeRootfs builds the minimum tree Publish inspects: the /boot kernel and
+// initramfs (the initramfs name is how the kernel version is discovered), plus
+// a matching kernel module directory as a real image would have.
 func newFakeRootfs(t *testing.T, kver, initramfsName string) string {
 	t.Helper()
 
@@ -109,15 +109,15 @@ func mustWrite(t *testing.T, path, content string) {
 	}
 }
 
-// TestPublish_UploadsKernelVersionedKeys is the end-to-end proof of the
-// feature: given an image whose /boot carries versioned kernel artifacts,
-// Publish must upload them under keys that keep that version, rather than
-// flattening them to "vmlinuz"/"initramfs.img" as the previous layout did.
+// TestPublish_UploadsGenericKeys is the end-to-end proof of the layout: given
+// an image whose /boot carries versioned kernel artifacts, Publish uploads
+// them under the generic names vmlinuz and initramfs.img, since the tag's
+// directory already identifies the image.
 //
 // It exercises the real Publish path (kernel discovery, initramfs discovery,
 // squashfs, upload) against a recording HTTP endpoint, so it would catch a
 // regression anywhere in that chain — not just in key construction.
-func TestPublish_UploadsKernelVersionedKeys(t *testing.T) {
+func TestPublish_UploadsGenericKeys(t *testing.T) {
 	if _, err := exec.LookPath("mksquashfs"); err != nil {
 		t.Skip("mksquashfs not installed; skipping end-to-end publish test")
 	}
@@ -130,7 +130,7 @@ func TestPublish_UploadsKernelVersionedKeys(t *testing.T) {
 	defer ts.Close()
 
 	// Mirrors Omnia's layout: the OS version is the tag and no arch segment is
-	// configured, so the kernel version must survive in the artifact filename.
+	// configured.
 	pub := New(ts.URL, "boot-images", "slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/", "", "access", "secret")
 
 	err := pub.Publish(context.Background(), &fakeContainer{mountPath: root}, "slurm", []string{"10.0"}, nil)
@@ -140,34 +140,19 @@ func TestPublish_UploadsKernelVersionedKeys(t *testing.T) {
 
 	base := "/boot-images/slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/10.0/"
 	want := []string{
-		base + "initramfs-" + kver + ".img",
+		base + "initramfs.img",
 		base + "rootfs.squashfs",
-		base + "vmlinuz-" + kver,
+		base + "vmlinuz",
 	}
-
-	got := rec.keys()
-	if len(got) != len(want) {
-		t.Fatalf("uploaded %d objects, want %d:\n got: %v\nwant: %v", len(got), len(want), got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("uploaded key[%d] = %q, want %q", i, got[i], want[i])
-		}
-	}
-
-	// Guard the specific regression: neither boot artifact may be published
-	// under the old unversioned name.
-	for _, k := range got {
-		if strings.HasSuffix(k, "/vmlinuz") || strings.HasSuffix(k, "/initramfs.img") {
-			t.Errorf("published unversioned boot artifact %q", k)
-		}
+	if got := rec.keys(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("uploaded keys =\n %v\nwant\n %v", got, want)
 	}
 }
 
-// TestPublish_PreservesDebianInitrdName confirms the key is taken from the
-// discovered file rather than a hardcoded RHEL-shaped name, so Debian/Ubuntu
-// images publish initrd.img-<kver> as they name it on disk.
-func TestPublish_PreservesDebianInitrdName(t *testing.T) {
+// TestPublish_NormalizesDebianInitrdName confirms Debian/Ubuntu images, whose
+// /boot names the initramfs initrd.img-<kver>, publish it as initramfs.img
+// like every other distro.
+func TestPublish_NormalizesDebianInitrdName(t *testing.T) {
 	if _, err := exec.LookPath("mksquashfs"); err != nil {
 		t.Skip("mksquashfs not installed; skipping end-to-end publish test")
 	}
@@ -185,14 +170,13 @@ func TestPublish_PreservesDebianInitrdName(t *testing.T) {
 		t.Fatalf("Publish returned error: %v", err)
 	}
 
-	want := "/boot-images/compute/bookworm/x86_64/initrd.img-" + kver
-	var found bool
-	for _, k := range rec.keys() {
-		if k == want {
-			found = true
-		}
+	base := "/boot-images/compute/bookworm/x86_64/"
+	want := []string{
+		base + "initramfs.img",
+		base + "rootfs.squashfs",
+		base + "vmlinuz",
 	}
-	if !found {
-		t.Errorf("expected Debian initrd published at %q, got %v", want, rec.keys())
+	if got := rec.keys(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("uploaded keys =\n %v\nwant\n %v", got, want)
 	}
 }
