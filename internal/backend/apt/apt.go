@@ -112,6 +112,15 @@ func (a *AptBackend) InstallCommands(install config.Install) [][]string {
 	// always update first
 	cmds = append(cmds, []string{"apt-get", "update", "-q"})
 
+	// Handle pre-install commands
+	for _, p := range install.PreInstall {
+		if p.Run == "" {
+			continue
+		}
+		cmd := []string{"bash", "-eo", "pipefail", "-c", p.Run}
+		cmds = append(cmds, cmd)
+	}
+
 	log := slog.With("component", "backend.apt")
 	if len(install.Groups) > 0 {
 		log.Warn("apt backend does not support package groups, ignoring", "groups", install.Groups)
