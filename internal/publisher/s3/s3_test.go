@@ -8,9 +8,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // recordingS3 stands in for an S3-compatible endpoint and records the object
@@ -291,22 +294,186 @@ func TestRootfsKey_IndependentOfKernelVersion(t *testing.T) {
 	}
 }
 
-func TestFindKernelVersion_Logic(t *testing.T) {
-	// Test the logic without actual filesystem
-	// In real scenario, we'd read /lib/modules/
-
-	kernelVersions := []string{
-		"5.14.0-362.24.1.el9_3.x86_64",
-		"6.1.0-18-amd64",
-		"5.15.0-91-generic",
+func TestInitramfsKernelVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		wantKver string
+		wantOK   bool
+	}{
+		{"initramfs-5.14.0-362.el9.x86_64.img", "5.14.0-362.el9.x86_64", true},
+		{"initrd-6.1.0-18-amd64", "6.1.0-18-amd64", true},
+		{"initrd.img-5.15.0-91-generic", "5.15.0-91-generic", true},
+		{"vmlinuz-5.14.0-362.el9.x86_64", "", false},
+		{"initramfs-.img", "", false},
+		{"initrd.img", "", false},
+		{"config-6.1.0-18-amd64", "", false},
 	}
 
-	for _, version := range kernelVersions {
-		if version == "" {
-			t.Error("Kernel version should not be empty")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kver, ok := initramfsKernelVersion(tt.name)
+			if kver != tt.wantKver || ok != tt.wantOK {
+				t.Errorf("initramfsKernelVersion(%q) = %q, %v; want %q, %v",
+					tt.name, kver, ok, tt.wantKver, tt.wantOK)
+			}
+		})
+	}
+}
+
+// writeBootFiles creates each named file under root/boot with the given
+// mtime offset from a fixed base, and a /lib/modules directory per kernel so
+// the tree resembles a multi-kernel image.
+func writeBootFiles(t *testing.T, root string, kvers []string, files map[string]time.Duration) {
+	t.Helper()
+	for _, kver := range kvers {
+		if err := os.MkdirAll(filepath.Join(root, "lib", "modules", kver), 0o755); err != nil {
+			t.Fatal(err)
 		}
-		if !strings.Contains(version, ".") {
-			t.Error("Kernel version should contain dots")
+	}
+	boot := filepath.Join(root, "boot")
+	if err := os.MkdirAll(boot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().Add(-time.Hour)
+	for name, age := range files {
+		p := filepath.Join(boot, name)
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mt := base.Add(age)
+		if err := os.Chtimes(p, mt, mt); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func assertBootInitramfs(t *testing.T, root, wantKver, wantName string) {
+	t.Helper()
+	path, kver, err := (&S3Publisher{}).findBootInitramfs(root)
+	if err != nil {
+		t.Fatalf("findBootInitramfs: %v", err)
+	}
+	if kver != wantKver {
+		t.Errorf("kernel version = %q, want %q", kver, wantKver)
+	}
+	if want := filepath.Join(root, "boot", wantName); path != want {
+		t.Errorf("path = %q, want %q", path, want)
+	}
+}
+
+// TestFindBootInitramfs covers the case /lib/modules can't disambiguate:
+// modules for several kernels are present. The highest kernel version must
+// win even when an older kernel's initramfs was rebuilt more recently, and
+// kdump and rescue images must be ignored even when they are newest.
+func TestFindBootInitramfs(t *testing.T) {
+	const (
+		oldKver = "5.14.0-362.el9.x86_64"
+		newKver = "5.14.0-427.el9.x86_64"
+	)
+	root := t.TempDir()
+	writeBootFiles(t, root, []string{oldKver, newKver}, map[string]time.Duration{
+		"vmlinuz-" + oldKver:                 0,
+		"vmlinuz-" + newKver:                 0,
+		"initramfs-" + newKver + ".img":      10 * time.Minute,
+		"initramfs-" + oldKver + ".img":      20 * time.Minute, // rebuilt later
+		"initramfs-" + oldKver + "kdump.img": 30 * time.Minute,
+		"vmlinuz-0-rescue-abc123":            0,
+		"initramfs-0-rescue-abc123.img":      40 * time.Minute,
+	})
+	assertBootInitramfs(t, root, newKver, "initramfs-"+newKver+".img")
+}
+
+// TestFindBootInitramfs_EqualMtimes is the regression for selection by
+// filename: with identical mtimes (common in image layers), 6.10 must beat
+// 6.9 even though "6.9" sorts after "6.10" as a string.
+func TestFindBootInitramfs_EqualMtimes(t *testing.T) {
+	const (
+		kver9  = "6.9.0-1-amd64"
+		kver10 = "6.10.0-1-amd64"
+	)
+	root := t.TempDir()
+	writeBootFiles(t, root, []string{kver9, kver10}, map[string]time.Duration{
+		"vmlinuz-" + kver9:     0,
+		"vmlinuz-" + kver10:    0,
+		"initrd.img-" + kver9:  0,
+		"initrd.img-" + kver10: 0,
+	})
+	assertBootInitramfs(t, root, kver10, "initrd.img-"+kver10)
+}
+
+// TestFindBootInitramfs_DefaultSymlink checks that a distro's default-kernel
+// symlink overrides version ordering, at either supported location.
+func TestFindBootInitramfs_DefaultSymlink(t *testing.T) {
+	const (
+		oldKver = "6.1.0-17-amd64"
+		newKver = "6.1.0-18-amd64"
+	)
+	for _, link := range defaultKernelLinks {
+		t.Run(link, func(t *testing.T) {
+			root := t.TempDir()
+			writeBootFiles(t, root, []string{oldKver, newKver}, map[string]time.Duration{
+				"vmlinuz-" + oldKver:    0,
+				"vmlinuz-" + newKver:    0,
+				"initrd.img-" + oldKver: 0,
+				"initrd.img-" + newKver: 0,
+			})
+			// Absolute target, as Debian writes it: only the basename may
+			// be used, never resolved on the host.
+			if err := os.Symlink("/boot/vmlinuz-"+oldKver, filepath.Join(root, link)); err != nil {
+				t.Fatal(err)
+			}
+			assertBootInitramfs(t, root, oldKver, "initrd.img-"+oldKver)
+		})
+	}
+}
+
+// TestFindBootInitramfs_DanglingDefault ignores a default symlink naming a
+// kernel that has no usable initramfs, falling back to version ordering.
+func TestFindBootInitramfs_DanglingDefault(t *testing.T) {
+	const kver = "6.1.0-18-amd64"
+	root := t.TempDir()
+	writeBootFiles(t, root, []string{kver}, map[string]time.Duration{
+		"vmlinuz-" + kver:    0,
+		"initrd.img-" + kver: 0,
+	})
+	if err := os.Symlink("boot/vmlinuz-6.1.0-99-amd64", filepath.Join(root, "vmlinuz")); err != nil {
+		t.Fatal(err)
+	}
+	assertBootInitramfs(t, root, kver, "initrd.img-"+kver)
+}
+
+func TestFindBootInitramfs_NoneFound(t *testing.T) {
+	root := t.TempDir()
+	// An initramfs without its kernel is not bootable and must not be chosen.
+	writeBootFiles(t, root, nil, map[string]time.Duration{"initramfs-6.1.0.img": 0})
+	if _, _, err := (&S3Publisher{}).findBootInitramfs(root); err == nil {
+		t.Error("expected error when no initramfs has a matching vmlinuz")
+	}
+}
+
+func TestCompareKernelVersions(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want int
+	}{
+		{"6.10.0", "6.9.0", 1},
+		{"6.9.0-1-amd64", "6.10.0-1-amd64", -1},
+		{"5.14.0-427.el9.x86_64", "5.14.0-362.24.1.el9_3.x86_64", 1},
+		{"5.14.0-362.24.1.el9_3.x86_64", "5.14.0-362.el9.x86_64", 1},
+		{"6.12.0-55.94.1.el10_0.x86_64", "6.12.0-55.94.1.el10_0.x86_64", 0},
+		{"6.1.0-18-amd64", "6.1.0-9-amd64", 1},
+		{"5.15.0-91-generic", "5.15.0-101-generic", -1},
+		{"6.1", "6.1.0", -1},
+		{"6.1~rc1", "6.1", -1},
+		{"6.1.0", "6.1.a", 1},
+		{"6.01", "6.1", -1}, // rpm-equal; falls back to string order
+	}
+	for _, tt := range tests {
+		if got := compareKernelVersions(tt.a, tt.b); got != tt.want {
+			t.Errorf("compareKernelVersions(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+		}
+		if got := compareKernelVersions(tt.b, tt.a); got != -tt.want {
+			t.Errorf("compareKernelVersions(%q, %q) = %d, want %d", tt.b, tt.a, got, -tt.want)
 		}
 	}
 }
