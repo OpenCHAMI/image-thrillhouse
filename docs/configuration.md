@@ -360,13 +360,15 @@ publish:
 
 Defaults to `false`, so existing configs keep publishing at build time. If filtering leaves a layer with no build-time targets, it falls back to `local` (same as declaring none) so child layers still have a parent image to build on.
 
-The S3 publisher extracts the rootfs (SquashFS), kernel, and initramfs and uploads them as a self-contained directory per tag:
+The S3 publisher extracts the rootfs (SquashFS) and every kernel and initramfs in the image's `/boot`, and uploads them as a self-contained directory per tag:
 
 ```
 <prefix><tag>/<arch>/rootfs.squashfs
-<prefix><tag>/<arch>/vmlinuz-<kernel-version>
-<prefix><tag>/<arch>/initramfs-<kernel-version>.img
+<prefix><tag>/<arch>/vmlinuz-<kernel-version>          # one per kernel
+<prefix><tag>/<arch>/initramfs-<kernel-version>.img    # one per initramfs
 ```
+
+The publisher does not try to work out which kernel the image boots by default; an image with modules or packages for several kernels publishes all of them, and the consumer picks one by key. Only regular files named `vmlinuz-*`, `initramfs-*`, `initrd-*` or `initrd.img-*` are uploaded, so symlinks and other `/boot` contents (`config-*`, `System.map-*`, boot loader files) are skipped. Rescue images (`vmlinuz-0-rescue-*`, `initramfs-0-rescue-*.img`) and kdump images (`initramfs-<kver>kdump.img`) are skipped too. Publishing fails if `/boot` holds no kernel or no initramfs.
 
 `<tag>` is `meta.tags[0]` (the content tag in a manifest build). The `<arch>` segment is present for multi-arch manifest builds and omitted otherwise. The same layout is produced whether an image reaches S3 via a build-time `s3` publish block or via [`promote --to s3`](promote.md).
 

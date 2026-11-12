@@ -80,8 +80,8 @@ func (u *uploadRecorder) keys() []string {
 }
 
 // newFakeRootfs builds the minimum tree Publish inspects: the /boot kernel and
-// initramfs (the initramfs name is how the kernel version is discovered), plus
-// a matching kernel module directory as a real image would have.
+// initramfs, plus a matching kernel module directory as a real image would
+// have.
 func newFakeRootfs(t *testing.T, kver, initramfsName string) string {
 	t.Helper()
 
@@ -114,8 +114,7 @@ func mustWrite(t *testing.T, path, content string) {
 // Publish must upload them under keys that keep that version, rather than
 // flattening them to "vmlinuz"/"initramfs.img" as the previous layout did.
 //
-// It exercises the real Publish path (kernel discovery, initramfs discovery,
-// squashfs, upload) against a recording HTTP endpoint, so it would catch a
+// It exercises the real Publish path (boot file discovery, squashfs, upload) against a recording HTTP endpoint, so it would catch a
 // regression anywhere in that chain — not just in key construction.
 func TestPublish_UploadsKernelVersionedKeys(t *testing.T) {
 	if _, err := exec.LookPath("mksquashfs"); err != nil {
@@ -194,5 +193,41 @@ func TestPublish_PreservesDebianInitrdName(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected Debian initrd published at %q, got %v", want, rec.keys())
+	}
+}
+
+// TestPublish_UploadsAllKernels covers images carrying more than one kernel:
+// every kernel and initramfs in /boot is published, rather than guessing which
+// one the image boots.
+func TestPublish_UploadsAllKernels(t *testing.T) {
+	if _, err := exec.LookPath("mksquashfs"); err != nil {
+		t.Skip("mksquashfs not installed; skipping end-to-end publish test")
+	}
+
+	kvers := []string{"5.14.0-362.el9.x86_64", "5.14.0-427.el9.x86_64"}
+	root := newFakeRootfs(t, kvers[0], "initramfs-"+kvers[0]+".img")
+	mustMkdirAll(t, filepath.Join(root, "lib", "modules", kvers[1]))
+	mustWrite(t, filepath.Join(root, "boot", "vmlinuz-"+kvers[1]), "fake kernel")
+	mustWrite(t, filepath.Join(root, "boot", "initramfs-"+kvers[1]+".img"), "fake initramfs")
+
+	rec := &uploadRecorder{}
+	ts := httptest.NewServer(rec)
+	defer ts.Close()
+
+	pub := New(ts.URL, "boot-images", "compute/", "x86_64", "access", "secret")
+	if err := pub.Publish(context.Background(), &fakeContainer{mountPath: root}, "compute", []string{"9.4"}, nil); err != nil {
+		t.Fatalf("Publish returned error: %v", err)
+	}
+
+	base := "/boot-images/compute/9.4/x86_64/"
+	want := []string{
+		base + "initramfs-" + kvers[0] + ".img",
+		base + "initramfs-" + kvers[1] + ".img",
+		base + "rootfs.squashfs",
+		base + "vmlinuz-" + kvers[0],
+		base + "vmlinuz-" + kvers[1],
+	}
+	if got := rec.keys(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("uploaded keys =\n %v\nwant\n %v", got, want)
 	}
 }

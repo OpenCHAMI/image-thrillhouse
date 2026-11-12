@@ -175,8 +175,8 @@ than silently overwriting one with the other.
 
 ## `--to s3` (materialize boot artifacts)
 
-Projects the OCI image into S3 as the three files a node needs to network-boot,
-laid out as a self-contained directory per tag:
+Projects the OCI image into S3 as the files a node needs to network-boot, laid
+out as a self-contained directory per tag:
 
 ```
 <prefix><release>/<arch>/rootfs.squashfs
@@ -184,13 +184,14 @@ laid out as a self-contained directory per tag:
 <prefix><release>/<arch>/initramfs-<kernel-version>.img
 ```
 
-The kernel and initramfs keep the filename they carry in the image's `/boot`, so
-the kernel version stays visible in the key and Debian/Ubuntu `initrd-<kver>` /
-`initrd.img-<kver>` naming is preserved as-is. See
+Every kernel and initramfs in the image's `/boot` is uploaded, so an image with
+several kernels publishes all of them. Each keeps the filename it carries in
+`/boot`, so the kernel version stays visible in the key and Debian/Ubuntu
+`initrd-<kver>` / `initrd.img-<kver>` naming is preserved as-is. See
 [configuration.md](configuration.md#publish) for the full layout table.
 
 `promote` pulls the content-tagged image, mounts its rootfs, creates the SquashFS,
-and extracts the kernel and initramfs — the same extraction the build-time S3
+and extracts the kernels and initramfs images — the same extraction the build-time S3
 publisher uses, so build-time and promote produce identical layouts. Because
 everything for a tag lives under one directory, a materialized release is
 self-contained and immutable: a different tag is a different directory, so no
