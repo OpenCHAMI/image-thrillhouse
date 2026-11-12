@@ -79,9 +79,9 @@ func (u *uploadRecorder) keys() []string {
 	return out
 }
 
-// newFakeRootfs builds the minimum tree Publish inspects: a kernel module
-// directory (how the kernel version is discovered) plus the matching /boot
-// artifacts.
+// newFakeRootfs builds the minimum tree Publish inspects: the /boot kernel and
+// initramfs (the initramfs name is how the kernel version is discovered), plus
+// a matching kernel module directory as a real image would have.
 func newFakeRootfs(t *testing.T, kver, initramfsName string) string {
 	t.Helper()
 

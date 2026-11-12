@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -93,7 +95,7 @@ func (s *S3Publisher) rootfsKey(tag string) string {
 // image's /boot, so the kernel version stays visible in the object key and the
 // distro's own naming convention is preserved verbatim: RHEL/Rocky/Fedora
 // publish initramfs-<kver>.img while Debian/Ubuntu publish initrd-<kver> or
-// initrd.img-<kver>. Callers pass the basenames discovered by findInitramfs
+// initrd.img-<kver>. Callers pass the basenames discovered by findLatestInitramfs
 // and the vmlinuz probe rather than a reconstructed name, so the key can never
 // disagree with the bytes that were uploaded.
 //
@@ -139,28 +141,24 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 
 	mountPath := c.MountPath()
 
-	// Step 1: Find kernel version
-	kernelVersion, err := s.findKernelVersion(mountPath)
-	if err != nil {
-		return fmt.Errorf("find kernel version: %w", err)
-	}
-	log.Info("found kernel version", "version", kernelVersion)
-
-	// Step 2: Find initramfs
-	initramfsPath, err := s.findInitramfs(mountPath, kernelVersion)
+	// Step 1: Find the newest initramfs; its kernel version picks the kernel.
+	// /lib/modules can't be trusted for this: images often carry modules for
+	// more than one kernel, and ReadDir order says nothing about which one
+	// the image actually boots.
+	initramfsPath, kernelVersion, err := s.findLatestInitramfs(mountPath)
 	if err != nil {
 		return fmt.Errorf("find initramfs: %w", err)
 	}
-	log.Info("found initramfs", "path", initramfsPath)
+	log.Info("found initramfs", "path", initramfsPath, "kernel_version", kernelVersion)
 
-	// Step 3: Find vmlinuz
+	// Step 2: Find vmlinuz
 	vmlinuzPath := filepath.Join(mountPath, "boot", fmt.Sprintf("vmlinuz-%s", kernelVersion))
 	if _, err := os.Stat(vmlinuzPath); err != nil {
 		return fmt.Errorf("vmlinuz not found at %s: %w", vmlinuzPath, err)
 	}
 	log.Info("found vmlinuz", "path", vmlinuzPath)
 
-	// Step 4: Create SquashFS image
+	// Step 3: Create SquashFS image
 	squashfsPath, err := s.createSquashFS(ctx, mountPath, name, tag)
 	if err != nil {
 		return fmt.Errorf("create squashfs: %w", err)
@@ -168,7 +166,7 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	defer os.Remove(squashfsPath)
 	log.Info("created squashfs", "path", squashfsPath)
 
-	// Step 5: Create S3 client
+	// Step 4: Create S3 client
 	client, err := s.createS3Client(ctx)
 	if err != nil {
 		return fmt.Errorf("create S3 client: %w", err)
@@ -182,19 +180,19 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	rootfsKey, vmlinuzKey, initramfsKey := s.objectKeys(
 		tag, filepath.Base(vmlinuzPath), filepath.Base(initramfsPath))
 
-	// Step 6: Upload rootfs
+	// Step 5: Upload rootfs
 	if err := s.uploadFile(ctx, uploader, squashfsPath, rootfsKey); err != nil {
 		return fmt.Errorf("upload rootfs: %w", err)
 	}
 	log.Info("uploaded rootfs", "key", rootfsKey)
 
-	// Step 7: Upload kernel
+	// Step 6: Upload kernel
 	if err := s.uploadFile(ctx, uploader, vmlinuzPath, vmlinuzKey); err != nil {
 		return fmt.Errorf("upload vmlinuz: %w", err)
 	}
 	log.Info("uploaded vmlinuz", "key", vmlinuzKey)
 
-	// Step 8: Upload initramfs
+	// Step 7: Upload initramfs
 	if err := s.uploadFile(ctx, uploader, initramfsPath, initramfsKey); err != nil {
 		return fmt.Errorf("upload initramfs: %w", err)
 	}
@@ -204,42 +202,71 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	return nil
 }
 
-// findKernelVersion finds the first available kernel version in /lib/modules
-func (s *S3Publisher) findKernelVersion(mountPath string) (string, error) {
-	modulesPath := filepath.Join(mountPath, "lib", "modules")
-	entries, err := os.ReadDir(modulesPath)
-	if err != nil {
-		return "", fmt.Errorf("read /lib/modules: %w", err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			return entry.Name(), nil
-		}
-	}
-
-	return "", fmt.Errorf("no kernel versions found in /lib/modules")
+// initramfsPatterns are the /boot initramfs naming conventions, as
+// prefix/suffix pairs around the kernel version: initramfs-<kver>.img
+// (RHEL/Rocky/Fedora), initrd-<kver> and initrd.img-<kver> (Debian/Ubuntu).
+var initramfsPatterns = []struct{ prefix, suffix string }{
+	{"initramfs-", ".img"},
+	{"initrd.img-", ""},
+	{"initrd-", ""},
 }
 
-// findInitramfs returns the path to the initramfs file for the given kernel
-// version, trying the RHEL/Rocky/Fedora and Debian/Ubuntu naming variants.
-func (s *S3Publisher) findInitramfs(mountPath, kernelVersion string) (string, error) {
-	bootPath := filepath.Join(mountPath, "boot")
+// initramfsKernelVersion extracts the kernel version from an initramfs
+// filename, reporting false if the name matches no known convention.
+func initramfsKernelVersion(name string) (string, bool) {
+	for _, p := range initramfsPatterns {
+		if strings.HasPrefix(name, p.prefix) && strings.HasSuffix(name, p.suffix) {
+			kver := strings.TrimSuffix(strings.TrimPrefix(name, p.prefix), p.suffix)
+			if kver != "" {
+				return kver, true
+			}
+		}
+	}
+	return "", false
+}
 
-	// initramfs-<version>.img (RHEL/Rocky/Fedora), initrd-<version> and
-	// initrd.img-<version> (Debian/Ubuntu variants).
-	for _, name := range []string{
-		fmt.Sprintf("initramfs-%s.img", kernelVersion),
-		fmt.Sprintf("initrd-%s", kernelVersion),
-		fmt.Sprintf("initrd.img-%s", kernelVersion),
-	} {
-		p := filepath.Join(bootPath, name)
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
+// findLatestInitramfs returns the most recently modified initramfs in /boot
+// along with the kernel version it was built for. The initramfs is regenerated
+// for whichever kernel was installed last, so it tracks the kernel the image
+// boots even when /lib/modules holds modules for several kernels.
+//
+// Only initramfs images with a matching vmlinuz-<kver> are considered, which
+// excludes kdump images (initramfs-<kver>kdump.img). Rescue images
+// (initramfs-0-rescue-<machine-id>.img) do have a matching vmlinuz but are a
+// generic fallback, so they are skipped explicitly.
+func (s *S3Publisher) findLatestInitramfs(mountPath string) (path, kernelVersion string, err error) {
+	bootPath := filepath.Join(mountPath, "boot")
+	entries, err := os.ReadDir(bootPath)
+	if err != nil {
+		return "", "", fmt.Errorf("read /boot: %w", err)
+	}
+
+	var bestName string
+	var bestTime time.Time
+	for _, entry := range entries {
+		name := entry.Name()
+		kver, ok := initramfsKernelVersion(name)
+		if !ok || strings.Contains(kver, "-rescue-") {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(bootPath, name))
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(bootPath, "vmlinuz-"+kver)); err != nil {
+			continue
+		}
+		// Break mtime ties by name so the choice is deterministic.
+		if bestName == "" || info.ModTime().After(bestTime) ||
+			(info.ModTime().Equal(bestTime) && name > bestName) {
+			bestName, bestTime, kernelVersion = name, info.ModTime(), kver
 		}
 	}
 
-	return "", fmt.Errorf("no initramfs found for kernel %s", kernelVersion)
+	if bestName == "" {
+		return "", "", fmt.Errorf("no initramfs with a matching vmlinuz found in /boot")
+	}
+	return filepath.Join(bootPath, bestName), kernelVersion, nil
 }
 
 // createSquashFS creates a SquashFS image in a temporary location

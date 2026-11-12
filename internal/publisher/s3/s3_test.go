@@ -8,9 +8,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // recordingS3 stands in for an S3-compatible endpoint and records the object
@@ -291,23 +294,101 @@ func TestRootfsKey_IndependentOfKernelVersion(t *testing.T) {
 	}
 }
 
-func TestFindKernelVersion_Logic(t *testing.T) {
-	// Test the logic without actual filesystem
-	// In real scenario, we'd read /lib/modules/
-
-	kernelVersions := []string{
-		"5.14.0-362.24.1.el9_3.x86_64",
-		"6.1.0-18-amd64",
-		"5.15.0-91-generic",
+func TestInitramfsKernelVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		wantKver string
+		wantOK   bool
+	}{
+		{"initramfs-5.14.0-362.el9.x86_64.img", "5.14.0-362.el9.x86_64", true},
+		{"initrd-6.1.0-18-amd64", "6.1.0-18-amd64", true},
+		{"initrd.img-5.15.0-91-generic", "5.15.0-91-generic", true},
+		{"vmlinuz-5.14.0-362.el9.x86_64", "", false},
+		{"initramfs-.img", "", false},
+		{"initrd.img", "", false},
+		{"config-6.1.0-18-amd64", "", false},
 	}
 
-	for _, version := range kernelVersions {
-		if version == "" {
-			t.Error("Kernel version should not be empty")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kver, ok := initramfsKernelVersion(tt.name)
+			if kver != tt.wantKver || ok != tt.wantOK {
+				t.Errorf("initramfsKernelVersion(%q) = %q, %v; want %q, %v",
+					tt.name, kver, ok, tt.wantKver, tt.wantOK)
+			}
+		})
+	}
+}
+
+// TestFindLatestInitramfs covers the case /lib/modules can't disambiguate:
+// modules for several kernels are present, and the newest initramfs (not the
+// first modules directory) must pick the kernel.
+func TestFindLatestInitramfs(t *testing.T) {
+	const (
+		oldKver = "5.14.0-362.el9.x86_64"
+		newKver = "5.14.0-427.el9.x86_64"
+	)
+	root := t.TempDir()
+	boot := filepath.Join(root, "boot")
+	for _, kver := range []string{oldKver, newKver} {
+		if err := os.MkdirAll(filepath.Join(root, "lib", "modules", kver), 0o755); err != nil {
+			t.Fatal(err)
 		}
-		if !strings.Contains(version, ".") {
-			t.Error("Kernel version should contain dots")
+	}
+	if err := os.MkdirAll(boot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Now().Add(-time.Hour)
+	files := []struct {
+		name string
+		age  time.Duration
+	}{
+		{"vmlinuz-" + oldKver, 0},
+		{"vmlinuz-" + newKver, 0},
+		{"initramfs-" + oldKver + ".img", 10 * time.Minute},
+		{"initramfs-" + newKver + ".img", 20 * time.Minute},
+		// Newer still, but must be ignored: kdump has no matching vmlinuz,
+		// and rescue images are a generic fallback.
+		{"initramfs-" + oldKver + "kdump.img", 30 * time.Minute},
+		{"vmlinuz-0-rescue-abc123", 0},
+		{"initramfs-0-rescue-abc123.img", 40 * time.Minute},
+	}
+	for _, f := range files {
+		p := filepath.Join(boot, f.name)
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
 		}
+		mt := base.Add(f.age)
+		if err := os.Chtimes(p, mt, mt); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pub := &S3Publisher{}
+	path, kver, err := pub.findLatestInitramfs(root)
+	if err != nil {
+		t.Fatalf("findLatestInitramfs: %v", err)
+	}
+	if kver != newKver {
+		t.Errorf("kernel version = %q, want %q", kver, newKver)
+	}
+	if want := filepath.Join(boot, "initramfs-"+newKver+".img"); path != want {
+		t.Errorf("path = %q, want %q", path, want)
+	}
+}
+
+func TestFindLatestInitramfs_NoneFound(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "boot"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// An initramfs without its kernel is not bootable and must not be chosen.
+	if err := os.WriteFile(filepath.Join(root, "boot", "initramfs-6.1.0.img"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := (&S3Publisher{}).findLatestInitramfs(root); err == nil {
+		t.Error("expected error when no initramfs has a matching vmlinuz")
 	}
 }
 
