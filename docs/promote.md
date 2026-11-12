@@ -180,14 +180,13 @@ laid out as a self-contained directory per tag:
 
 ```
 <prefix><release>/<arch>/rootfs.squashfs
-<prefix><release>/<arch>/vmlinuz-<kernel-version>
-<prefix><release>/<arch>/initramfs-<kernel-version>.img
+<prefix><release>/<arch>/vmlinuz
+<prefix><release>/<arch>/initramfs.img
 ```
 
-The kernel and initramfs keep the filename they carry in the image's `/boot`, so
-the kernel version stays visible in the key and Debian/Ubuntu `initrd-<kver>` /
-`initrd.img-<kver>` naming is preserved as-is. See
-[configuration.md](configuration.md#publish) for the full layout table.
+The kernel and initramfs get these generic names whatever their kernel version
+or distro naming in `/boot`; the directory already identifies the image. See
+[configuration.md](configuration.md#publish) for details.
 
 `promote` pulls the content-tagged image, mounts its rootfs, creates the SquashFS,
 and extracts the kernel and initramfs — the same extraction the build-time S3
@@ -203,8 +202,8 @@ image-thrillhouse promote \
   --layer rocky-base \
   --release release-0.0.1 \
   --to s3
-# → compute/release-0.0.1/x86_64/{rootfs.squashfs,vmlinuz-<kver>.x86_64,initramfs-<kver>.x86_64.img}
-# → compute/release-0.0.1/aarch64/{rootfs.squashfs,vmlinuz-<kver>.aarch64,initramfs-<kver>.aarch64.img}
+# → compute/release-0.0.1/x86_64/{rootfs.squashfs,vmlinuz,initramfs.img}
+# → compute/release-0.0.1/aarch64/{rootfs.squashfs,vmlinuz,initramfs.img}
 ```
 
 Multi-arch materializes each arch into its own `<arch>` segment, so there is no

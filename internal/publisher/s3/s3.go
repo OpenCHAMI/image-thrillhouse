@@ -87,36 +87,25 @@ func (s *S3Publisher) rootfsKey(tag string) string {
 // objectKeys returns the S3 keys for a tag's three boot artifacts, laid out as
 //
 //	<prefix><tag>/<arch>/rootfs.squashfs
-//	<prefix><tag>/<arch>/vmlinuz-<kernel-version>
-//	<prefix><tag>/<arch>/initramfs-<kernel-version>.img
+//	<prefix><tag>/<arch>/vmlinuz
+//	<prefix><tag>/<arch>/initramfs.img
 //
-// The kernel and initramfs keep the exact filename they carry inside the
-// image's /boot, so the kernel version stays visible in the object key and the
-// distro's own naming convention is preserved verbatim: RHEL/Rocky/Fedora
-// publish initramfs-<kver>.img while Debian/Ubuntu publish initrd-<kver> or
-// initrd.img-<kver>. Callers pass the basenames discovered by findBootInitramfs
-// and the vmlinuz probe rather than a reconstructed name, so the key can never
-// disagree with the bytes that were uploaded.
-//
-// Keeping the version in the key matters to consumers that must pin a node to
-// a specific kernel build (and matches image-builder, whose S3 layout also
-// carries the version); it costs nothing here because each tag already has its
-// own directory, so two kernel versions under one tag cannot collide.
-func (s *S3Publisher) objectKeys(tag, kernelName, initramfsName string) (rootfs, kernel, initramfs string) {
+// The kernel and initramfs get fixed, generic names regardless of the kernel
+// version or the distro's /boot naming convention (initramfs-<kver>.img,
+// initrd-<kver>, initrd.img-<kver>). Each tag already has its own directory,
+// so the path identifies the image and consumers can find its boot artifacts
+// without knowing which kernel it carries.
+func (s *S3Publisher) objectKeys(tag string) (rootfs, kernel, initramfs string) {
 	base := s.baseKey(tag)
-	return base + "rootfs.squashfs", base + kernelName, base + initramfsName
+	return base + "rootfs.squashfs", base + "vmlinuz", base + "initramfs.img"
 }
 
 // Publish creates a SquashFS image and uploads it to S3 along with kernel and initramfs.
 //
 // The upload structure is a self-contained directory per tag (see objectKeys):
 //   - s3://<bucket>/<prefix><tag>/<arch>/rootfs.squashfs
-//   - s3://<bucket>/<prefix><tag>/<arch>/vmlinuz-<kernel-version>
-//   - s3://<bucket>/<prefix><tag>/<arch>/initramfs-<kernel-version>.img
-//
-// The kernel and initramfs objects keep the filename they had in the image's
-// /boot, so the kernel version is part of the key and the distro's naming
-// convention (initramfs-*.img, initrd-*, initrd.img-*) is preserved.
+//   - s3://<bucket>/<prefix><tag>/<arch>/vmlinuz
+//   - s3://<bucket>/<prefix><tag>/<arch>/initramfs.img
 //
 // The <arch> segment is omitted when the publisher has no arch configured.
 //
@@ -170,11 +159,7 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 
 	uploader := manager.NewUploader(client)
 
-	// Key the kernel/initramfs objects off the discovered source filenames so
-	// the published key always names the bytes actually uploaded, including
-	// the kernel version.
-	rootfsKey, vmlinuzKey, initramfsKey := s.objectKeys(
-		tag, filepath.Base(vmlinuzPath), filepath.Base(initramfsPath))
+	rootfsKey, vmlinuzKey, initramfsKey := s.objectKeys(tag)
 
 	// Step 5: Upload rootfs
 	if err := s.uploadFile(ctx, uploader, squashfsPath, rootfsKey); err != nil {
@@ -186,13 +171,13 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	if err := s.uploadFile(ctx, uploader, vmlinuzPath, vmlinuzKey); err != nil {
 		return fmt.Errorf("upload vmlinuz: %w", err)
 	}
-	log.Info("uploaded vmlinuz", "key", vmlinuzKey)
+	log.Info("uploaded vmlinuz", "key", vmlinuzKey, "source", filepath.Base(vmlinuzPath))
 
 	// Step 7: Upload initramfs
 	if err := s.uploadFile(ctx, uploader, initramfsPath, initramfsKey); err != nil {
 		return fmt.Errorf("upload initramfs: %w", err)
 	}
-	log.Info("uploaded initramfs", "key", initramfsKey)
+	log.Info("uploaded initramfs", "key", initramfsKey, "source", filepath.Base(initramfsPath))
 
 	log.Info("published to s3")
 	return nil
