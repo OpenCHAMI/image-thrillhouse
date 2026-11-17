@@ -6,7 +6,14 @@
 
 # Build variables
 BINARY_NAME=image-thrillhouse
-VERSION=0.1.0
+# The version comes from git (see scripts/version.sh): the release tag when
+# building a tagged commit, otherwise the most recent tag plus "-debug".
+# GIT_VERSION is the string stamped into the binary (e.g. v0.0.27-debug);
+# VERSION is the package version derived from it (e.g. 0.0.27~debug), since
+# RPM forbids '-' in Version and '~' sorts a debug build before its release.
+# Override with `make GIT_VERSION=v1.2.3`.
+GIT_VERSION ?= $(shell sh scripts/version.sh 2>/dev/null || echo v0.0.0-debug)
+VERSION=$(subst -,~,$(patsubst v%,%,$(GIT_VERSION)))
 GO=go
 GOFLAGS=-v
 # Build tags, kept identical to debian/rules and image-thrillhouse.spec so a
@@ -21,8 +28,8 @@ GOFLAGS=-v
 #	make build BUILD_TAGS="$(BUILD_TAGS) containers_image_openpgp"
 BUILD_TAGS=exclude_graphdriver_btrfs exclude_graphdriver_devicemapper
 # Stamp the version into the binary so `image-thrillhouse version` reports
-# the same value as this Makefile — the single source of truth for VERSION.
-LDFLAGS=-ldflags "-X main.version=v$(VERSION)"
+# the git-derived GIT_VERSION.
+LDFLAGS=-ldflags "-X main.version=$(GIT_VERSION)"
 BUILD_DIR=.
 INSTALL_DIR=/usr/local/bin
 RPMBUILD_DIR=$(HOME)/rpmbuild
@@ -66,7 +73,7 @@ deb-source:
 
 # Build RPM package
 rpm: rpm-prep
-	rpmbuild -bb $(RPMBUILD_DIR)/SPECS/$(BINARY_NAME).spec
+	rpmbuild -bb --define "app_version $(GIT_VERSION)" $(RPMBUILD_DIR)/SPECS/$(BINARY_NAME).spec
 
 # Prepare RPM build environment
 rpm-prep:
@@ -75,11 +82,11 @@ rpm-prep:
 	cp -r * $(BINARY_NAME)-$(VERSION)/ 2>/dev/null || true
 	tar czf $(RPMBUILD_DIR)/SOURCES/$(BINARY_NAME)-$(VERSION).tar.gz $(BINARY_NAME)-$(VERSION)
 	rm -rf $(BINARY_NAME)-$(VERSION)
-	cp $(BINARY_NAME).spec $(RPMBUILD_DIR)/SPECS/
+	sed "s/^Version:.*/Version:        $(VERSION)/" $(BINARY_NAME).spec > $(RPMBUILD_DIR)/SPECS/$(BINARY_NAME).spec
 
 # Build RPM source package
 rpm-source: rpm-prep
-	rpmbuild -bs $(RPMBUILD_DIR)/SPECS/$(BINARY_NAME).spec
+	rpmbuild -bs --define "app_version $(GIT_VERSION)" $(RPMBUILD_DIR)/SPECS/$(BINARY_NAME).spec
 
 # Display help
 help:

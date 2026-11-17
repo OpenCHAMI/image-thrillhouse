@@ -4,12 +4,18 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
+# Version stamped into the binary: derived from git (the release tag, or the
+# most recent tag plus "-debug" for untagged commits — see scripts/version.sh).
+# Without a git checkout, fall back to the upstream part of the changelog
+# version (dropping the "-1" Debian revision).
+APP_VERSION := $(shell sh scripts/version.sh 2>/dev/null || echo v$$(dpkg-parsechangelog -SVersion | sed 's/-[^-]*$$//'))
+
 %:
 	dh $@
 
 override_dh_auto_build:
 	go build -v -tags "exclude_graphdriver_btrfs exclude_graphdriver_devicemapper" \
-		-ldflags "-X main.version=v$(shell dpkg-parsechangelog -SVersion)" \
+		-ldflags "-X main.version=$(APP_VERSION)" \
 		-o image-thrillhouse ./cmd/image-thrillhouse
 
 override_dh_auto_install:

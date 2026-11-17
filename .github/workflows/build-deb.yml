@@ -81,10 +81,12 @@ jobs:
               VERSION=${TAG#v}
               ;;
             *)
-              # PR / non-tag build: synthesize a version so the build can be
-              # validated without publishing a release.
-              TAG="v0.0.0-pr${{ github.event.number }}"
-              VERSION="0.0.0~pr${{ github.event.number }}"
+              # PR / non-tag build: the most recent release tag plus "-debug"
+              # (e.g. v0.0.27-debug), so the build can be validated without
+              # publishing a release. '~' replaces '-' in the package version
+              # since RPM forbids '-' there.
+              TAG=$(sh scripts/version.sh)
+              VERSION=$(echo "${TAG#v}" | tr '-' '~')
               ;;
           esac
           echo "tag=$TAG" >> $GITHUB_OUTPUT
@@ -185,10 +187,12 @@ jobs:
               VERSION=${TAG#v}
               ;;
             *)
-              # PR / non-tag build: synthesize a version so the build can be
-              # validated without publishing a release.
-              TAG="v0.0.0-pr${{ github.event.number }}"
-              VERSION="0.0.0~pr${{ github.event.number }}"
+              # PR / non-tag build: the most recent release tag plus "-debug"
+              # (e.g. v0.0.27-debug), so the build can be validated without
+              # publishing a release. '~' replaces '-' in the package version
+              # since RPM forbids '-' there.
+              TAG=$(sh scripts/version.sh)
+              VERSION=$(echo "${TAG#v}" | tr '-' '~')
               ;;
           esac
           echo "tag=$TAG" >> $GITHUB_OUTPUT
@@ -237,7 +241,7 @@ jobs:
           which go
           go version
           echo "Building for architecture: ${{ matrix.arch }}"
-          rpmbuild -bb --nodeps --target=${{ matrix.arch }} ~/rpmbuild/SPECS/image-thrillhouse.spec
+          rpmbuild -bb --nodeps --target=${{ matrix.arch }} --define "app_version ${{ steps.version.outputs.tag }}" ~/rpmbuild/SPECS/image-thrillhouse.spec
 
       - name: List generated packages
         run: |

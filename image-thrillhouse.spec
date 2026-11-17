@@ -3,6 +3,10 @@
 # SPDX-License-Identifier: MIT
 
 %global debug_package %{nil}
+# Version string stamped into the binary. The Makefile and CI pass the
+# git-derived value (e.g. v0.0.27 or v0.0.27-debug) with
+# --define "app_version ..."; the tarball has no .git to derive it from.
+%{!?app_version:%global app_version v%{version}}
 
 Name:           image-thrillhouse
 Version:        0.1.0
@@ -34,7 +38,7 @@ Features:
 %setup -q -n %{name}-%{version}
 
 %build
-go build -v -tags "exclude_graphdriver_btrfs exclude_graphdriver_devicemapper" -ldflags "-X main.version=v%{version}" -o %{name} ./cmd/image-thrillhouse
+go build -v -tags "exclude_graphdriver_btrfs exclude_graphdriver_devicemapper" -ldflags "-X main.version=%{app_version}" -o %{name} ./cmd/image-thrillhouse
 
 %install
 install -D -m 0755 %{name} %{buildroot}%{_bindir}/%{name}
