@@ -15,6 +15,7 @@ on:
       - 'go.sum'
       - 'Makefile'
       - 'Dockerfile'
+      - 'scripts/version.sh'
       - '.github/workflows/release-container.yml'
   workflow_dispatch:
 

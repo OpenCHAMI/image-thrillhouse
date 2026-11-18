@@ -17,6 +17,7 @@ on:
       - 'debian/**'
       - 'image-thrillhouse.spec'
       - 'scripts/gen-changelog.sh'
+      - 'scripts/version.sh'
       - '.github/workflows/build-packages.yml'
 
 permissions:
