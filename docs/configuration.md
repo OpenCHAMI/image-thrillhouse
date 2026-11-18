@@ -329,6 +329,7 @@ publish:
   - type: squashfs             # Create SquashFS image
     path: /output/images       # Output directory; file is written as
                                # <meta.name>-<meta.tags[0]>.squashfs
+    promote-only: true         # Optional: destination only; build never writes here
 
   - type: registry             # Push to container registry
     url: registry.example.com/myorg
@@ -339,6 +340,7 @@ publish:
     bucket: boot-images
     prefix: compute/
     promote-only: true         # Optional: destination only; build never writes here
+    promote-squashfs: false    # Optional: skip SquashFS during `promote --to s3` (default: true)
 ```
 
 S3 publishing reads credentials from the `S3_ACCESS` and `S3_SECRET` environment variables.
@@ -358,6 +360,9 @@ publish:
     bucket: boot-images
     prefix: compute/
     promote-only: true
+  - type: squashfs             # only `promote --to squashfs` writes here
+    path: /output/images
+    promote-only: true
 ```
 
 Defaults to `false`, so existing configs keep publishing at build time. If filtering leaves a layer with no build-time targets, it falls back to `local` (same as declaring none) so child layers still have a parent image to build on.
@@ -373,6 +378,30 @@ The S3 publisher extracts the rootfs (SquashFS), kernel, and initramfs and uploa
 `<tag>` is `meta.tags[0]` (the content tag in a manifest build). The `<arch>` segment is present for multi-arch manifest builds and omitted otherwise. The same layout is produced whether an image reaches S3 via a build-time `s3` publish block or via [`promote --to s3`](promote.md).
 
 All three objects have fixed, generic names. The publisher picks the image's kernel from `/boot` (`vmlinuz-<kver>`, `Image-<kver>` on SUSE aarch64, or an uncompressed `vmlinux-<kver>`) and uploads it as `vmlinuz`, and uploads its initramfs as `initramfs.img` whatever the distro calls it (`initramfs-<kver>.img` on RHEL / Rocky / Fedora, `initrd-<kver>` or `initrd.img-<kver>` on Debian / Ubuntu). Each tag gets its own directory, so the path identifies the image and consumers don't need to know the kernel version to find its boot files. The fixed `rootfs.squashfs` name also matters for `--skip-if-exists` and `promote`, which probe it before any image is pulled or mounted, so its key has to be derivable from `prefix`/`tag`/`arch` alone.
+
+### `promote-squashfs` (S3 only)
+
+`promote-squashfs: false` on an S3 publish block skips the SquashFS materialization
+during `promote --to s3`. Only the kernel and initramfs are uploaded; the
+`rootfs.squashfs` file is omitted.
+
+Use this when S3 is only for network boot (PXE) and you handle SquashFS
+distribution separately — for example, via a distinct `promote --to squashfs`
+step that writes a local filesystem image. This avoids storing duplicate rootfs
+data in S3 and speeds up the S3 promotion.
+
+```yaml
+publish:
+  - type: s3
+    url: https://s3.amazonaws.com
+    bucket: boot-images
+    prefix: compute/
+    promote-only: true
+    promote-squashfs: false
+```
+
+Defaults to `true`, so existing configs that promote to S3 continue to upload
+all three artifacts (rootfs/kernel/initramfs).
 
 ## Manifests
 

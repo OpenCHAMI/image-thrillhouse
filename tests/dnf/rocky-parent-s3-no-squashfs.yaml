@@ -1,0 +1,48 @@
+# Example showing S3 promotion without SquashFS materialization
+#
+# This configuration publishes to the registry on every build, and when
+# promoting to S3 it uploads only the kernel and initramfs (for network boot)
+# without creating the multi-gigabyte SquashFS image. A separate
+# `promote --to squashfs` handles local SquashFS creation when needed.
+#
+# Use cases:
+#   - S3 is only for PXE/network boot (kernel + initramfs)
+#   - SquashFS is distributed separately or created on-demand
+#   - Avoid storing duplicate rootfs data in S3
+#
+# Build and promote workflow:
+#   1. Build normally: image-thrillhouse build --config rocky-parent-s3-no-squashfs.yaml
+#      -> Registry receives the image
+#
+#   2. Promote to S3 (kernel + initramfs only):
+#      image-thrillhouse promote --manifest manifest.yaml --layer rocky-base --release release-0.0.1 --to s3
+#      -> S3 receives vmlinuz and initramfs.img only (no rootfs.squashfs)
+#
+#   3. Promote to local SquashFS separately when needed:
+#      image-thrillhouse promote --manifest manifest.yaml --layer rocky-base --release release-0.0.1 --to squashfs
+#      -> Local SquashFS file created at /output/rocky-parent-s3-no-squashfs-release-0.0.1.squashfs
+
+meta:
+  name: rocky-parent-s3-no-squashfs
+  tags:
+    - "9-s3-no-squashfs"
+  from: docker://rockylinux:9-minimal
+
+layer:
+  manager:
+    name: dnf
+  actions:
+    install:
+      packages:
+        - curl
+        - ca-certificates
+
+publish:
+  - type: registry
+    url: localhost/openchami
+  - type: s3
+    url: https://s3.amazonaws.com
+    bucket: boot-images
+    prefix: compute/
+    promote-only: true
+    promote-squashfs: false

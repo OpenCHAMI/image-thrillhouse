@@ -245,6 +245,14 @@ type Publish struct {
 	// rebuild uploading a rootfs nobody boots. Defaults to false, so existing
 	// configs keep publishing at build time.
 	PromoteOnly bool `yaml:"promote-only"`
+
+	// PromoteSquashfs controls whether the S3 publisher also materializes a
+	// SquashFS image during `promote --to s3`. When true (default), S3 promote
+	// uploads both boot artifacts (rootfs/kernel/initramfs) and a SquashFS image.
+	// When false, S3 promote skips the SquashFS materialization. This is useful
+	// when S3 is only for network boot and a separate `promote --to squashfs`
+	// handles local image creation.
+	PromoteSquashfs *bool `yaml:"promote-squashfs"`
 }
 
 // Used for switch-case so I can make things easier add in the future

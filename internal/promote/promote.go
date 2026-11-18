@@ -155,6 +155,9 @@ func RetagRegistry(ctx context.Context, src RegistrySource, release string, forc
 // object layout is keyed under. Labels are nil — the S3 publisher does not apply
 // OCI labels.
 //
+// Whether to include the SquashFS image is controlled by the S3 publisher's
+// promoteSquashfs field set at construction time.
+//
 // When force is false and the release is already materialized, it fails rather
 // than overwriting — probed via the publisher's Exists before the (expensive)
 // pull and squashfs.
@@ -188,5 +191,51 @@ func MaterializeToS3(ctx context.Context, src RegistrySource, dst publisher.Publ
 	}
 
 	log.Info("materialized to s3")
+	return nil
+}
+
+// MaterializeToSquashfs projects a registry image into a local SquashFS file
+// under a release tag. It pulls the content-tagged image, mounts it, and runs
+// the SquashFS publisher's extraction — a re-package of already-tested bytes,
+// never a rebuild.
+//
+// dst is a constructed SquashFS publisher carrying the target output directory;
+// name is passed through to Publish; release is the tag used in the filename
+// (<name>-<release>.squashfs). Labels are nil — the SquashFS publisher does not
+// apply OCI labels.
+//
+// When force is false and the release is already materialized, it fails rather
+// than overwriting — probed via the publisher's Exists before the (expensive)
+// pull and squashfs.
+func MaterializeToSquashfs(ctx context.Context, src RegistrySource, dst publisher.Publisher, name, release string, force bool) error {
+	log := slog.With("component", "promote", "source", src.Ref(), "release", release)
+
+	if !force {
+		exists, err := dst.Exists(ctx, name, []string{release})
+		if err != nil {
+			return fmt.Errorf("check destination: %w", err)
+		}
+		if exists {
+			return fmt.Errorf("release %q already materialized as squashfs (use --force to overwrite)", release)
+		}
+	}
+
+	log.Info("materializing registry image to squashfs")
+
+	// Pull + mount the tested image. NewContainer returns a generic
+	// container.Container whose MountPath() is all the SquashFS publisher needs,
+	// so it cannot tell (and does not care) that this rootfs came from a registry
+	// pull rather than a fresh build.
+	c, err := buildah.NewContainer(ctx, src.Ref(), src.TLSVerify)
+	if err != nil {
+		return fmt.Errorf("pull source image %s: %w", src.Ref(), err)
+	}
+	defer c.Delete()
+
+	if err := dst.Publish(ctx, c, name, []string{release}, nil); err != nil {
+		return fmt.Errorf("publish %q to squashfs: %w", release, err)
+	}
+
+	log.Info("materialized to squashfs")
 	return nil
 }

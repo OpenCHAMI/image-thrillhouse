@@ -1,0 +1,36 @@
+# Example showing squashfs with promote-only: true
+#
+# This configuration builds to the registry on every run, but only materializes
+# the SquashFS image when explicitly promoting a release. This is useful when:
+#   - OCI is your primary build/distribution medium
+#   - SquashFS is only needed for specific release artifacts
+#   - You want to avoid creating multi-gigabyte files on every rebuild
+#
+# Build and test workflow:
+#   1. Build normally: image-thrillhouse build --config rocky-parent-squashfs-promote-only.yaml
+#      -> Registry receives the image, no SquashFS file created
+#
+#   2. Promote when ready: image-thrillhouse promote --manifest manifest.yaml --layer rocky-base --release release-0.0.1 --to squashfs
+#      -> SquashFS file created at /output/rocky-parent-squashfs-release-0.0.1.squashfs
+
+meta:
+  name: rocky-parent-squashfs-promote
+  tags:
+    - "9-promote"
+  from: docker://rockylinux:9-minimal
+
+layer:
+  manager:
+    name: dnf
+  actions:
+    install:
+      packages:
+        - curl
+        - ca-certificates
+
+publish:
+  - type: registry
+    url: localhost/openchami
+  - type: squashfs
+    path: /output
+    promote-only: true

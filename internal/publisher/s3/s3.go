@@ -31,12 +31,13 @@ import (
 // S3Publisher uploads boot images to S3-compatible storage.
 // It creates a SquashFS rootfs and uploads it along with the kernel and initramfs.
 type S3Publisher struct {
-	endpoint  string // S3 endpoint URL
-	bucket    string // S3 bucket name
-	prefix    string // S3 key prefix
-	arch      string // target arch for the key layout ("" omits the arch segment)
-	accessKey string // AWS access key ID
-	secretKey string // AWS secret access key
+	endpoint        string // S3 endpoint URL
+	bucket          string // S3 bucket name
+	prefix          string // S3 key prefix
+	arch            string // target arch for the key layout ("" omits the arch segment)
+	accessKey       string // AWS access key ID
+	secretKey       string // AWS secret access key
+	promoteSquashfs bool   // whether to include SquashFS during promote (default: true)
 }
 
 // New creates a new S3Publisher with the specified configuration.
@@ -50,14 +51,16 @@ type S3Publisher struct {
 //     arch path segment (single-arch / non-manifest builds)
 //   - accessKey: AWS access key ID or S3-compatible access key
 //   - secretKey: AWS secret access key or S3-compatible secret
-func New(endpoint, bucket, prefix, arch, accessKey, secretKey string) *S3Publisher {
+//   - promoteSquashfs: whether to include SquashFS during promote (default: true)
+func New(endpoint, bucket, prefix, arch, accessKey, secretKey string, promoteSquashfs bool) *S3Publisher {
 	return &S3Publisher{
-		endpoint:  endpoint,
-		bucket:    bucket,
-		prefix:    prefix,
-		arch:      arch,
-		accessKey: accessKey,
-		secretKey: secretKey,
+		endpoint:        endpoint,
+		bucket:          bucket,
+		prefix:          prefix,
+		arch:            arch,
+		accessKey:       accessKey,
+		secretKey:       secretKey,
+		promoteSquashfs: promoteSquashfs,
 	}
 }
 
@@ -109,6 +112,9 @@ func (s *S3Publisher) objectKeys(tag string) (rootfs, kernel, initramfs string) 
 //
 // The <arch> segment is omitted when the publisher has no arch configured.
 //
+// Whether to create/upload the SquashFS image is controlled by the
+// promoteSquashfs field set at construction time.
+//
 // Note: Labels are not uploaded to S3 as they are only relevant for OCI images.
 func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name string, tags []string, labels map[string]string) error {
 	if len(tags) == 0 {
@@ -137,15 +143,7 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	log.Info("found initramfs", "path", initramfsPath, "kernel_version", kernelVersion)
 	log.Info("found vmlinuz", "path", vmlinuzPath)
 
-	// Step 2: Create SquashFS image
-	squashfsPath, err := s.createSquashFS(ctx, mountPath, name, tag)
-	if err != nil {
-		return fmt.Errorf("create squashfs: %w", err)
-	}
-	defer os.Remove(squashfsPath)
-	log.Info("created squashfs", "path", squashfsPath)
-
-	// Step 3: Create S3 client
+	// Step 2: Create S3 client
 	client, err := s.createS3Client(ctx)
 	if err != nil {
 		return fmt.Errorf("create S3 client: %w", err)
@@ -155,19 +153,30 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 
 	rootfsKey, vmlinuzKey, initramfsKey := s.objectKeys(tag)
 
-	// Step 4: Upload rootfs
-	if err := s.uploadFile(ctx, uploader, squashfsPath, rootfsKey); err != nil {
-		return fmt.Errorf("upload rootfs: %w", err)
-	}
-	log.Info("uploaded rootfs", "key", rootfsKey)
+	// Step 3: Create and upload rootfs (SquashFS) if enabled
+	if s.promoteSquashfs {
+		squashfsPath, err := s.createSquashFS(ctx, mountPath, name, tag)
+		if err != nil {
+			return fmt.Errorf("create squashfs: %w", err)
+		}
+		defer os.Remove(squashfsPath)
+		log.Info("created squashfs", "path", squashfsPath)
 
-	// Step 5: Upload kernel
+		if err := s.uploadFile(ctx, uploader, squashfsPath, rootfsKey); err != nil {
+			return fmt.Errorf("upload rootfs: %w", err)
+		}
+		log.Info("uploaded rootfs", "key", rootfsKey)
+	} else {
+		log.Info("skipping squashfs materialization (promote-squashfs=false)")
+	}
+
+	// Step 4: Upload kernel
 	if err := s.uploadFile(ctx, uploader, vmlinuzPath, vmlinuzKey); err != nil {
 		return fmt.Errorf("upload vmlinuz: %w", err)
 	}
 	log.Info("uploaded vmlinuz", "key", vmlinuzKey, "source", filepath.Base(vmlinuzPath))
 
-	// Step 6: Upload initramfs
+	// Step 5: Upload initramfs
 	if err := s.uploadFile(ctx, uploader, initramfsPath, initramfsKey); err != nil {
 		return fmt.Errorf("upload initramfs: %w", err)
 	}
