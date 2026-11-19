@@ -261,15 +261,23 @@ func writeBootFiles(t *testing.T, root string, kvers []string, files map[string]
 
 func assertBootInitramfs(t *testing.T, root, wantKver, wantName string) {
 	t.Helper()
-	path, kver, err := (&S3Publisher{}).findBootInitramfs(root)
+	assertBootFiles(t, root, wantKver, wantName, "vmlinuz-"+wantKver)
+}
+
+func assertBootFiles(t *testing.T, root, wantKver, wantInitramfs, wantKernel string) {
+	t.Helper()
+	initramfs, kernel, kver, err := (&S3Publisher{}).findBootInitramfs(root)
 	if err != nil {
 		t.Fatalf("findBootInitramfs: %v", err)
 	}
 	if kver != wantKver {
 		t.Errorf("kernel version = %q, want %q", kver, wantKver)
 	}
-	if want := filepath.Join(root, "boot", wantName); path != want {
-		t.Errorf("path = %q, want %q", path, want)
+	if want := filepath.Join(root, "boot", wantInitramfs); initramfs != want {
+		t.Errorf("initramfs path = %q, want %q", initramfs, want)
+	}
+	if want := filepath.Join(root, "boot", wantKernel); kernel != want {
+		t.Errorf("kernel path = %q, want %q", kernel, want)
 	}
 }
 
@@ -354,11 +362,115 @@ func TestFindBootInitramfs_DanglingDefault(t *testing.T) {
 	assertBootInitramfs(t, root, kver, "initrd.img-"+kver)
 }
 
+// TestFindBootInitramfs_SUSEAarch64 mirrors /boot on SLES aarch64: the
+// bootable kernel is Image-<kver> with no vmlinuz-<kver>, and /boot/vmlinuz
+// points at the gzipped ELF vmlinux-<kver>.gz. The Image file must be chosen,
+// never the vmlinux one, and the /boot/initrd symlink must be ignored.
+func TestFindBootInitramfs_SUSEAarch64(t *testing.T) {
+	const (
+		kver      = "6.4.0-150700.53.87-64kb"
+		otherKver = "6.4.0-150700.53.87-default"
+	)
+	root := t.TempDir()
+	writeBootFiles(t, root, []string{kver, otherKver}, map[string]time.Duration{
+		"Image-" + kver:           0,
+		"vmlinux-" + kver + ".gz": 0,
+		"initrd-" + kver:          0,
+		"config-" + kver:          0,
+		"System.map-" + kver:      0,
+	})
+	for link, target := range map[string]string{
+		"initrd":  "initrd-" + kver,
+		"vmlinuz": "vmlinux-" + kver + ".gz",
+	} {
+		if err := os.Symlink(target, filepath.Join(root, "boot", link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertBootFiles(t, root, kver, "initrd-"+kver, "Image-"+kver)
+}
+
+// TestFindBootInitramfs_SUSEDefaultSymlink checks that SUSE's
+// /boot/vmlinuz -> vmlinux-<kver>.gz link still selects the default kernel
+// over a higher version.
+func TestFindBootInitramfs_SUSEDefaultSymlink(t *testing.T) {
+	const (
+		oldKver = "6.4.0-150700.51.1-64kb"
+		newKver = "6.4.0-150700.53.87-64kb"
+	)
+	root := t.TempDir()
+	writeBootFiles(t, root, []string{oldKver, newKver}, map[string]time.Duration{
+		"Image-" + oldKver:           0,
+		"Image-" + newKver:           0,
+		"vmlinux-" + oldKver + ".gz": 0,
+		"vmlinux-" + newKver + ".gz": 0,
+		"initrd-" + oldKver:          0,
+		"initrd-" + newKver:          0,
+	})
+	if err := os.Symlink("vmlinux-"+oldKver+".gz", filepath.Join(root, "boot", "vmlinuz")); err != nil {
+		t.Fatal(err)
+	}
+	assertBootFiles(t, root, oldKver, "initrd-"+oldKver, "Image-"+oldKver)
+}
+
+// TestFindBootInitramfs_PrefersVmlinuz checks that vmlinuz-<kver> wins over
+// Image-<kver> when an image somehow carries both.
+func TestFindBootInitramfs_PrefersVmlinuz(t *testing.T) {
+	const kver = "6.12.0-55.el10.aarch64"
+	root := t.TempDir()
+	writeBootFiles(t, root, []string{kver}, map[string]time.Duration{
+		"vmlinuz-" + kver:            0,
+		"Image-" + kver:              0,
+		"initramfs-" + kver + ".img": 0,
+	})
+	assertBootInitramfs(t, root, kver, "initramfs-"+kver+".img")
+}
+
+// TestFindBootInitramfs_Vmlinux accepts an uncompressed vmlinux-<kver> kernel,
+// and checks that a default symlink pointing at it is honored.
+func TestFindBootInitramfs_Vmlinux(t *testing.T) {
+	const (
+		oldKver = "6.4.0-150700.51.1-default"
+		newKver = "6.4.0-150700.53.87-default"
+	)
+	root := t.TempDir()
+	writeBootFiles(t, root, []string{oldKver, newKver}, map[string]time.Duration{
+		"vmlinux-" + oldKver: 0,
+		"vmlinux-" + newKver: 0,
+		"initrd-" + oldKver:  0,
+		"initrd-" + newKver:  0,
+	})
+	assertBootFiles(t, root, newKver, "initrd-"+newKver, "vmlinux-"+newKver)
+
+	if err := os.Symlink("vmlinux-"+oldKver, filepath.Join(root, "boot", "vmlinuz")); err != nil {
+		t.Fatal(err)
+	}
+	assertBootFiles(t, root, oldKver, "initrd-"+oldKver, "vmlinux-"+oldKver)
+}
+
+// TestFindBootInitramfs_KernelPreference checks the kernelPrefixes order when
+// an image carries more than one kernel name for the same version.
+func TestFindBootInitramfs_KernelPreference(t *testing.T) {
+	const kver = "6.4.0-150700.53.87-64kb"
+	root := t.TempDir()
+	writeBootFiles(t, root, []string{kver}, map[string]time.Duration{
+		"Image-" + kver:   0,
+		"vmlinux-" + kver: 0,
+		"initrd-" + kver:  0,
+	})
+	assertBootFiles(t, root, kver, "initrd-"+kver, "Image-"+kver)
+}
+
 func TestFindBootInitramfs_NoneFound(t *testing.T) {
 	root := t.TempDir()
-	// An initramfs without its kernel is not bootable and must not be chosen.
-	writeBootFiles(t, root, nil, map[string]time.Duration{"initramfs-6.1.0.img": 0})
-	if _, _, err := (&S3Publisher{}).findBootInitramfs(root); err == nil {
+	// An initramfs without its kernel is not bootable and must not be chosen,
+	// and a gzipped vmlinux is not a bootable kernel.
+	writeBootFiles(t, root, nil, map[string]time.Duration{
+		"initramfs-6.1.0.img":   0,
+		"initrd-6.4.0-64kb":     0,
+		"vmlinux-6.4.0-64kb.gz": 0,
+	})
+	if _, _, _, err := (&S3Publisher{}).findBootInitramfs(root); err == nil {
 		t.Error("expected error when no initramfs has a matching vmlinuz")
 	}
 }

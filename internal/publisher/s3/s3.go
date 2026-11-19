@@ -130,20 +130,14 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	mountPath := c.MountPath()
 
 	// Step 1: Pick the kernel the image boots and find its initramfs.
-	initramfsPath, kernelVersion, err := s.findBootInitramfs(mountPath)
+	initramfsPath, vmlinuzPath, kernelVersion, err := s.findBootInitramfs(mountPath)
 	if err != nil {
 		return fmt.Errorf("find initramfs: %w", err)
 	}
 	log.Info("found initramfs", "path", initramfsPath, "kernel_version", kernelVersion)
-
-	// Step 2: Find vmlinuz
-	vmlinuzPath := filepath.Join(mountPath, "boot", fmt.Sprintf("vmlinuz-%s", kernelVersion))
-	if _, err := os.Stat(vmlinuzPath); err != nil {
-		return fmt.Errorf("vmlinuz not found at %s: %w", vmlinuzPath, err)
-	}
 	log.Info("found vmlinuz", "path", vmlinuzPath)
 
-	// Step 3: Create SquashFS image
+	// Step 2: Create SquashFS image
 	squashfsPath, err := s.createSquashFS(ctx, mountPath, name, tag)
 	if err != nil {
 		return fmt.Errorf("create squashfs: %w", err)
@@ -151,7 +145,7 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 	defer os.Remove(squashfsPath)
 	log.Info("created squashfs", "path", squashfsPath)
 
-	// Step 4: Create S3 client
+	// Step 3: Create S3 client
 	client, err := s.createS3Client(ctx)
 	if err != nil {
 		return fmt.Errorf("create S3 client: %w", err)
@@ -161,19 +155,19 @@ func (s *S3Publisher) Publish(ctx context.Context, c container.Container, name s
 
 	rootfsKey, vmlinuzKey, initramfsKey := s.objectKeys(tag)
 
-	// Step 5: Upload rootfs
+	// Step 4: Upload rootfs
 	if err := s.uploadFile(ctx, uploader, squashfsPath, rootfsKey); err != nil {
 		return fmt.Errorf("upload rootfs: %w", err)
 	}
 	log.Info("uploaded rootfs", "key", rootfsKey)
 
-	// Step 6: Upload kernel
+	// Step 5: Upload kernel
 	if err := s.uploadFile(ctx, uploader, vmlinuzPath, vmlinuzKey); err != nil {
 		return fmt.Errorf("upload vmlinuz: %w", err)
 	}
 	log.Info("uploaded vmlinuz", "key", vmlinuzKey, "source", filepath.Base(vmlinuzPath))
 
-	// Step 7: Upload initramfs
+	// Step 6: Upload initramfs
 	if err := s.uploadFile(ctx, uploader, initramfsPath, initramfsKey); err != nil {
 		return fmt.Errorf("upload initramfs: %w", err)
 	}
@@ -206,21 +200,53 @@ func initramfsKernelVersion(name string) (string, bool) {
 	return "", false
 }
 
+// kernelPrefixes are the /boot names of a bootable kernel, as prefixes of the
+// kernel version, in order of preference: vmlinuz-<kver> on most distros and
+// architectures, Image-<kver> on SUSE aarch64, which ships no vmlinuz-<kver>,
+// and the uncompressed vmlinux-<kver>. The name must match exactly, so the
+// gzipped vmlinux-<kver>.gz, which isn't bootable, never counts as a kernel.
+var kernelPrefixes = []string{"vmlinuz-", "Image-", "vmlinux-"}
+
+// findKernel returns the path of the bootable kernel for kver in bootPath,
+// reporting false if there is none.
+func findKernel(bootPath, kver string) (string, bool) {
+	for _, prefix := range kernelPrefixes {
+		p := filepath.Join(bootPath, prefix+kver)
+		if _, err := os.Stat(p); err == nil {
+			return p, true
+		}
+	}
+	return "", false
+}
+
 // defaultKernelLinks are the symlinks some distros maintain to the kernel the
 // image boots by default (Debian/Ubuntu's linux-base keeps /vmlinuz, or
-// /boot/vmlinuz when /boot is a separate filesystem). Paths are relative to the
-// image root.
+// /boot/vmlinuz when /boot is a separate filesystem; SUSE keeps /boot/vmlinuz).
+// Paths are relative to the image root.
 var defaultKernelLinks = []string{"vmlinuz", "boot/vmlinuz"}
 
+// defaultLinkTargetPatterns are the target names, as prefix/suffix pairs around
+// the kernel version, a default-kernel symlink may point at. Besides the
+// bootable kernel names, SUSE aarch64 points /boot/vmlinuz at the gzipped ELF
+// vmlinux-<kver>.gz. That file isn't bootable and is never uploaded, but it
+// still names the default kernel version. The .gz pattern must come before
+// the bare vmlinux- one, or ".gz" would end up in the version.
+var defaultLinkTargetPatterns = []struct{ prefix, suffix string }{
+	{"vmlinuz-", ""},
+	{"Image-", ""},
+	{"vmlinux-", ".gz"},
+	{"vmlinux-", ""},
+}
+
 // findBootInitramfs picks the kernel the image boots and returns its initramfs
-// path along with the kernel version. /lib/modules can't be used for this:
-// images often carry modules for several kernels, and directory order says
-// nothing about which one is the default.
+// and kernel paths along with the kernel version. /lib/modules can't be used
+// for this: images often carry modules for several kernels, and directory
+// order says nothing about which one is the default.
 //
-// Candidates are /boot initramfs images with a matching vmlinuz-<kver>, which
-// excludes kdump images (initramfs-<kver>kdump.img). Rescue images
-// (initramfs-0-rescue-<machine-id>.img) do have a matching vmlinuz but are a
-// generic fallback, so they are skipped explicitly.
+// Candidates are /boot initramfs images with a matching kernel (see
+// kernelPrefixes), which excludes kdump images (initramfs-<kver>kdump.img).
+// Rescue images (initramfs-0-rescue-<machine-id>.img) do have a matching
+// vmlinuz but are a generic fallback, so they are skipped explicitly.
 //
 // Among the candidates, the kernel a default-kernel symlink points at wins.
 // Otherwise the highest kernel version wins, compared the way RPM compares
@@ -228,17 +254,18 @@ var defaultKernelLinks = []string{"vmlinuz", "boot/vmlinuz"}
 // manager install leaves as the default. File modification times are
 // deliberately ignored: rebuilding an older kernel's initramfs would otherwise
 // make it look like the default.
-func (s *S3Publisher) findBootInitramfs(mountPath string) (path, kernelVersion string, err error) {
+func (s *S3Publisher) findBootInitramfs(mountPath string) (initramfsPath, kernelPath, kernelVersion string, err error) {
 	bootPath := filepath.Join(mountPath, "boot")
 	entries, err := os.ReadDir(bootPath)
 	if err != nil {
-		return "", "", fmt.Errorf("read /boot: %w", err)
+		return "", "", "", fmt.Errorf("read /boot: %w", err)
 	}
 
 	// candidates maps kernel version to initramfs filename. Patterns are
 	// tried in initramfsPatterns order, so if one kernel somehow has
 	// initramfs files under two conventions, the first convention wins.
 	candidates := map[string]string{}
+	kernels := map[string]string{}
 	for _, entry := range entries {
 		name := entry.Name()
 		kver, ok := initramfsKernelVersion(name)
@@ -249,20 +276,23 @@ func (s *S3Publisher) findBootInitramfs(mountPath string) (path, kernelVersion s
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(bootPath, "vmlinuz-"+kver)); err != nil {
+		kernel, ok := findKernel(bootPath, kver)
+		if !ok {
 			continue
 		}
+		kernels[kver] = kernel
 		if prev, ok := candidates[kver]; !ok || initramfsPatternRank(name) < initramfsPatternRank(prev) {
 			candidates[kver] = name
 		}
 	}
 	if len(candidates) == 0 {
-		return "", "", fmt.Errorf("no initramfs with a matching vmlinuz found in /boot")
+		return "", "", "", fmt.Errorf("no initramfs with a matching kernel (%s<kver>) found in /boot",
+			strings.Join(kernelPrefixes, "<kver> or "))
 	}
 
 	if kver, ok := defaultKernelVersion(mountPath); ok {
 		if name, ok := candidates[kver]; ok {
-			return filepath.Join(bootPath, name), kver, nil
+			return filepath.Join(bootPath, name), kernels[kver], kver, nil
 		}
 	}
 
@@ -271,7 +301,7 @@ func (s *S3Publisher) findBootInitramfs(mountPath string) (path, kernelVersion s
 			kernelVersion = kver
 		}
 	}
-	return filepath.Join(bootPath, candidates[kernelVersion]), kernelVersion, nil
+	return filepath.Join(bootPath, candidates[kernelVersion]), kernels[kernelVersion], kernelVersion, nil
 }
 
 // initramfsPatternRank returns the index of the first initramfsPatterns entry
@@ -286,8 +316,8 @@ func initramfsPatternRank(name string) int {
 }
 
 // defaultKernelVersion reports the kernel version named by the first
-// default-kernel symlink (see defaultKernelLinks) that points at a
-// vmlinuz-<kver> file. Only the link target's name is used, so an absolute
+// default-kernel symlink (see defaultKernelLinks) whose target matches
+// defaultLinkTargetPatterns. Only the link target's name is used, so an absolute
 // target inside the image is never resolved against the host filesystem.
 func defaultKernelVersion(mountPath string) (string, bool) {
 	for _, link := range defaultKernelLinks {
@@ -295,8 +325,13 @@ func defaultKernelVersion(mountPath string) (string, bool) {
 		if err != nil {
 			continue
 		}
-		if kver, ok := strings.CutPrefix(filepath.Base(target), "vmlinuz-"); ok && kver != "" {
-			return kver, true
+		name := filepath.Base(target)
+		for _, p := range defaultLinkTargetPatterns {
+			if strings.HasPrefix(name, p.prefix) && strings.HasSuffix(name, p.suffix) {
+				if kver := strings.TrimSuffix(strings.TrimPrefix(name, p.prefix), p.suffix); kver != "" {
+					return kver, true
+				}
+			}
 		}
 	}
 	return "", false
