@@ -17,7 +17,8 @@ on:
       - 'debian/**'
       - 'image-thrillhouse.spec'
       - 'scripts/gen-changelog.sh'
-      - '.github/workflows/build-deb.yml'
+      - 'scripts/version.sh'
+      - '.github/workflows/build-packages.yml'
 
 permissions:
   contents: write
@@ -134,6 +135,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container:
       image: rockylinux:9
+      # rockylinux:9 sets no PATH in its image config. Once setup-go adds to
+      # GITHUB_PATH, the runner builds each step's PATH from the added entries
+      # plus the container's configured PATH, which leaves only Go's bin dir and
+      # fails later steps with `exec: "sh": executable file not found in $PATH`.
+      env:
+        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     strategy:
       matrix:
         include:

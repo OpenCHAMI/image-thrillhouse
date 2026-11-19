@@ -140,7 +140,7 @@ image-thrillhouse/
 
 ## Building distribution packages locally
 
-The CI in [`.github/workflows/build-deb.yml`](../.github/workflows/build-deb.yml) is the source of truth for release builds, but you can also build locally.
+The CI in [`.github/workflows/build-packages.yml`](../.github/workflows/build-packages.yml) is the source of truth for release builds, but you can also build locally.
 
 **Debian / Ubuntu** — see [`debian/README.md`](../debian/README.md) for full instructions:
 
