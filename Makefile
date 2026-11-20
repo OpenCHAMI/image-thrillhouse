@@ -7,13 +7,19 @@
 # Build variables
 BINARY_NAME=image-thrillhouse
 # The version comes from git (see scripts/version.sh): the release tag when
-# building a tagged commit, otherwise the most recent tag plus "-debug".
-# GIT_VERSION is the string stamped into the binary (e.g. v0.0.27-debug);
-# VERSION is the package version derived from it (e.g. 0.0.27~debug), since
-# RPM forbids '-' in Version and '~' sorts a debug build before its release.
+# building a tagged commit, otherwise `git describe` output.
+# GIT_VERSION is the string stamped into the binary (e.g. v0.0.27-3-gabc1234);
+# VERSION is the package version derived from it (e.g. 0.0.27+3.gabc1234),
+# since RPM forbids '-' in Version and '+' sorts the build after its tag.
 # Override with `make GIT_VERSION=v1.2.3`.
-GIT_VERSION ?= $(shell sh scripts/version.sh 2>/dev/null || echo v0.0.0-debug)
-VERSION=$(subst -,~,$(patsubst v%,%,$(GIT_VERSION)))
+#
+# Both are simply expanded (:=) so the scripts run once per make invocation
+# rather than on every reference. `?=` would always define a recursively
+# expanded variable, hence the explicit origin check.
+ifeq ($(origin GIT_VERSION),undefined)
+GIT_VERSION := $(shell sh scripts/version.sh || echo v0.0.0-dev)
+endif
+VERSION := $(shell sh scripts/version.sh --package $(GIT_VERSION))
 GO=go
 GOFLAGS=-v
 # Build tags, kept identical to debian/rules and image-thrillhouse.spec so a

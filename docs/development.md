@@ -26,7 +26,7 @@ go build -tags containers_image_openpgp ./...
 go test  -tags containers_image_openpgp ./...
 ```
 
-**Version stamping:** `image-thrillhouse version` reports the value injected at build time via `-ldflags "-X main.version=…"`. The version is derived from git by `scripts/version.sh`: a tagged commit reports its tag (e.g. `v0.0.27`), and any other commit reports the most recent tag with a `-debug` suffix (e.g. `v0.0.27-debug`). `make build`, `make rpm`, `debian/rules`, the Dockerfile and CI all use it; a bare `go build` produces a binary that reports `dev`.
+**Version stamping:** `image-thrillhouse version` reports the value injected at build time via `-ldflags "-X main.version=…"`. The version is derived from git by `scripts/version.sh`: a tagged commit reports its tag (e.g. `v0.0.27`), and any other commit reports `git describe` output (e.g. `v0.0.27-3-gabc1234`: 3 commits past `v0.0.27`, at commit `abc1234`). Packages built from an untagged commit get the version `0.0.27+3.gabc1234` (`scripts/version.sh --package`), which sorts after the `v0.0.27` release and before the next one in both dpkg and rpm. `make build`, `make rpm`, `debian/rules`, the Dockerfile and CI all use it; a bare `go build` produces a binary that reports `dev`.
 
 ### Build a local container
 

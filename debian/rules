@@ -4,11 +4,11 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
-# Version stamped into the binary: derived from git (the release tag, or the
-# most recent tag plus "-debug" for untagged commits — see scripts/version.sh).
+# Version stamped into the binary: derived from git (the release tag, or
+# `git describe` output for untagged commits — see scripts/version.sh).
 # Without a git checkout, fall back to the upstream part of the changelog
 # version (dropping the "-1" Debian revision).
-APP_VERSION := $(shell sh scripts/version.sh 2>/dev/null || echo v$$(dpkg-parsechangelog -SVersion | sed 's/-[^-]*$$//'))
+APP_VERSION := $(shell sh scripts/version.sh || echo v$$(dpkg-parsechangelog -SVersion | sed 's/-[^-]*$$//'))
 
 %:
 	dh $@

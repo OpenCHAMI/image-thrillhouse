@@ -82,12 +82,12 @@ jobs:
               VERSION=${TAG#v}
               ;;
             *)
-              # PR / non-tag build: the most recent release tag plus "-debug"
-              # (e.g. v0.0.27-debug), so the build can be validated without
-              # publishing a release. '~' replaces '-' in the package version
-              # since RPM forbids '-' there.
+              # PR / non-tag build: `git describe` output (e.g.
+              # v0.0.27-3-gabc1234), so the build can be validated without
+              # publishing a release. The package version (e.g.
+              # 0.0.27+3.gabc1234) sorts after the tag; see scripts/version.sh.
               TAG=$(sh scripts/version.sh)
-              VERSION=$(echo "${TAG#v}" | tr '-' '~')
+              VERSION=$(sh scripts/version.sh --package "$TAG")
               ;;
           esac
           echo "tag=$TAG" >> $GITHUB_OUTPUT
@@ -194,12 +194,12 @@ jobs:
               VERSION=${TAG#v}
               ;;
             *)
-              # PR / non-tag build: the most recent release tag plus "-debug"
-              # (e.g. v0.0.27-debug), so the build can be validated without
-              # publishing a release. '~' replaces '-' in the package version
-              # since RPM forbids '-' there.
+              # PR / non-tag build: `git describe` output (e.g.
+              # v0.0.27-3-gabc1234), so the build can be validated without
+              # publishing a release. The package version (e.g.
+              # 0.0.27+3.gabc1234) sorts after the tag; see scripts/version.sh.
               TAG=$(sh scripts/version.sh)
-              VERSION=$(echo "${TAG#v}" | tr '-' '~')
+              VERSION=$(sh scripts/version.sh --package "$TAG")
               ;;
           esac
           echo "tag=$TAG" >> $GITHUB_OUTPUT

@@ -15,7 +15,8 @@ WORKDIR /src
 COPY . .
 # Version stamped into the binary, e.g. v0.0.27. When unset it is derived
 # from the .git directory in the build context (see scripts/version.sh): the
-# release tag, or the most recent tag plus "-debug" for untagged commits.
+# release tag, or `git describe` output (e.g. v0.0.27-3-gabc1234) for
+# untagged commits.
 # Override with `docker build --build-arg VERSION=v1.2.3`.
 ARG VERSION=
 # No `go mod tidy` here: it rewrites go.mod/go.sum during the image build, so
@@ -26,7 +27,7 @@ ARG VERSION=
 # spec stamp it. Without it the containerised binary reported "dev", which made
 # `image-thrillhouse version` useless for identifying what an image was built by.
 RUN git config --global --add safe.directory /src && \
-    VERSION="${VERSION:-$(sh scripts/version.sh || echo v0.0.0-debug)}" && \
+    VERSION="${VERSION:-$(sh scripts/version.sh || echo v0.0.0-dev)}" && \
     go build -ldflags "-X main.version=${VERSION}" -o image-thrillhouse ./cmd/image-thrillhouse/
 
 FROM debian:bookworm-slim

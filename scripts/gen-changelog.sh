@@ -47,6 +47,34 @@ emit_bullet() {
   done
 }
 
+# Untagged HEAD: add a top entry for the snapshot version (e.g.
+# 0.0.27+3.gabc1234, see scripts/version.sh) so the built package carries a
+# version that sorts after the release it is based on.
+head_tag=$(sh "$(dirname "$0")/version.sh")
+if ! git show-ref -q --verify "refs/tags/${head_tag}"; then
+  VERSION=$(sh "$(dirname "$0")/version.sh" --package "$head_tag")
+  name=$(git log -1 --format='%an' HEAD)
+  email="<$(git log -1 --format='%ae' HEAD)>"
+  date_rfc=$(git log -1 --format='%aD' HEAD)
+  date_rpm=$(git log -1 --format='%ad' --date='format:%a %b %d %Y' HEAD)
+  prev=$(git describe --tags --abbrev=0 --match='v[0-9]*.[0-9]*.[0-9]*' HEAD)
+  body=$(git log --reverse --pretty='%s' "${prev}..HEAD")
+
+  {
+    echo "${PKG} (${VERSION}-1) unstable; urgency=medium"
+    echo
+    emit_bullet "  * " <<< "$body"
+    echo
+    printf ' -- %s %s  %s\n\n' "$name" "$email" "$date_rfc"
+  } >> "$deb_out"
+
+  {
+    printf '* %s %s %s - %s-1\n' "$date_rpm" "$name" "$email" "$VERSION"
+    emit_bullet "- " <<< "$body"
+    echo
+  } >> "$rpm_out"
+fi
+
 while IFS= read -r TAG; do
   VERSION="${TAG#v}"
 
