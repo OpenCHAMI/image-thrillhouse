@@ -7,8 +7,9 @@
 # Version stamped into the binary: derived from git (the release tag, or
 # `git describe` output for untagged commits — see scripts/version.sh).
 # Without a git checkout, fall back to the upstream part of the changelog
-# version (dropping the "-1" Debian revision).
-APP_VERSION := $(shell sh scripts/version.sh || echo v$$(dpkg-parsechangelog -SVersion | sed 's/-[^-]*$$//'))
+# version (dropping the "-1" Debian revision), converted back to the form a
+# git checkout would report (0.0.27+3.gabc1234 -> v0.0.27-3-gabc1234).
+APP_VERSION := $(shell sh scripts/version.sh || sh scripts/version.sh --from-package "$$(dpkg-parsechangelog -SVersion | sed 's/-[^-]*$$//')")
 
 %:
 	dh $@
