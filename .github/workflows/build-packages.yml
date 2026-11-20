@@ -99,6 +99,19 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
 
+      # dpkg takes the package version from the top changelog entry, which
+      # gen-changelog.sh writes for untagged HEADs too (e.g.
+      # 0.0.27+3.gabc1234-1). Fail rather than ship a non-release .deb under
+      # the release's name and version.
+      - name: Check changelog version
+        run: |
+          EXPECTED="${{ steps.version.outputs.version }}-1"
+          ACTUAL=$(dpkg-parsechangelog -SVersion)
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::debian/changelog version $ACTUAL != expected $EXPECTED"
+            exit 1
+          fi
+
       - name: Build Debian package
         env:
           DEB_BUILD_OPTIONS: nocheck

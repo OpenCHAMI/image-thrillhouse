@@ -19,9 +19,10 @@
 # and rpm, so an untagged build upgrades the release it is based on and is
 # itself superseded by the next release. Any other '-' becomes '~'.
 #
-# Exits non-zero (printing nothing) outside a git work tree, so callers that
-# can build from a release tarball (debian/rules) can fall back to another
-# source of truth. POSIX sh: CI runs this under sh in minimal containers.
+# Exits non-zero (printing nothing) unless the source tree is itself the top
+# level of a git work tree, so callers that can build from a release tarball
+# (debian/rules) can fall back to another source of truth. POSIX sh: CI runs
+# this under sh in minimal containers.
 set -eu
 
 package=
@@ -32,7 +33,11 @@ fi
 
 git_version() {
   cd "$(dirname "$0")/.."
-  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 1
+  # Require this checkout to be the work tree's top level, not merely inside
+  # one: a release tarball unpacked within some other repo (a packaging repo,
+  # a git-managed home directory) must fall back too, not stamp that repo's
+  # tags.
+  [ "$(git rev-parse --show-toplevel 2>/dev/null)" = "$(pwd -P)" ] || exit 1
 
   match='v[0-9]*.[0-9]*.[0-9]*'
   if ! git describe --tags --match "$match" HEAD 2>/dev/null; then
