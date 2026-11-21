@@ -167,7 +167,7 @@ var renderCmd = &cobra.Command{
 //
 //	go build -ldflags "-X main.version=<version>"
 //
-// (see the Makefile, which passes its VERSION variable through). The default
+// (see the Makefile and scripts/version.sh, which derive it from git tags). The default
 // here only shows up for plain `go build` / `go run` invocations.
 var version = "dev"
 

@@ -3,6 +3,11 @@
 # SPDX-License-Identifier: MIT
 
 %global debug_package %{nil}
+# Version string stamped into the binary. The Makefile and CI pass the
+# git-derived value (e.g. v0.0.27 or v0.0.27-3-gabc1234) with
+# --define "app_version ..."; the tarball has no .git to derive it from.
+# Otherwise (e.g. rebuilding the SRPM) %%build derives it from Version, in
+# the same form: 0.0.27+3.gabc1234 -> v0.0.27-3-gabc1234.
 
 Name:           image-thrillhouse
 Version:        0.1.0
@@ -34,7 +39,8 @@ Features:
 %setup -q -n %{name}-%{version}
 
 %build
-go build -v -tags "exclude_graphdriver_btrfs exclude_graphdriver_devicemapper" -ldflags "-X main.version=v%{version}" -o %{name} ./cmd/image-thrillhouse
+APP_VERSION="%{?app_version}%{!?app_version:$(sh scripts/version.sh --from-package %{version})}"
+go build -v -tags "exclude_graphdriver_btrfs exclude_graphdriver_devicemapper" -ldflags "-X main.version=${APP_VERSION}" -o %{name} ./cmd/image-thrillhouse
 
 %install
 install -D -m 0755 %{name} %{buildroot}%{_bindir}/%{name}

@@ -31,6 +31,9 @@ jobs:
   build-deb:
     name: Build Debian Package (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    # Same value for every matrix leg; create-release names artifacts with it.
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     container:
       image: debian:13
     strategy:
@@ -79,15 +82,17 @@ jobs:
           case "$GITHUB_REF" in
             refs/tags/*)
               TAG=${GITHUB_REF#refs/tags/}
-              VERSION=${TAG#v}
               ;;
             *)
-              # PR / non-tag build: synthesize a version so the build can be
-              # validated without publishing a release.
-              TAG="v0.0.0-pr${{ github.event.number }}"
-              VERSION="0.0.0~pr${{ github.event.number }}"
+              # PR / non-tag build: `git describe` output (e.g.
+              # v0.0.27-3-gabc1234), so the build can be validated without
+              # publishing a release.
+              TAG=$(sh scripts/version.sh)
               ;;
           esac
+          # Package version: 0.0.27+3.gabc1234 sorts after the v0.0.27 tag,
+          # 0.0.28~rc1 before v0.0.28; see scripts/version.sh.
+          VERSION=$(sh scripts/version.sh --package "$TAG")
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
@@ -96,6 +101,19 @@ jobs:
         run: bash scripts/gen-changelog.sh
         env:
           GITHUB_ACTOR: ${{ github.actor }}
+
+      # dpkg takes the package version from the top changelog entry, which
+      # gen-changelog.sh writes for untagged HEADs too (e.g.
+      # 0.0.27+3.gabc1234-1). Fail rather than ship a non-release .deb under
+      # the release's name and version.
+      - name: Check changelog version
+        run: |
+          EXPECTED="${{ steps.version.outputs.version }}-1"
+          ACTUAL=$(dpkg-parsechangelog -SVersion)
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::debian/changelog version $ACTUAL != expected $EXPECTED"
+            exit 1
+          fi
 
       - name: Build Debian package
         env:
@@ -189,15 +207,17 @@ jobs:
           case "$GITHUB_REF" in
             refs/tags/*)
               TAG=${GITHUB_REF#refs/tags/}
-              VERSION=${TAG#v}
               ;;
             *)
-              # PR / non-tag build: synthesize a version so the build can be
-              # validated without publishing a release.
-              TAG="v0.0.0-pr${{ github.event.number }}"
-              VERSION="0.0.0~pr${{ github.event.number }}"
+              # PR / non-tag build: `git describe` output (e.g.
+              # v0.0.27-3-gabc1234), so the build can be validated without
+              # publishing a release.
+              TAG=$(sh scripts/version.sh)
               ;;
           esac
+          # Package version: 0.0.27+3.gabc1234 sorts after the v0.0.27 tag,
+          # 0.0.28~rc1 before v0.0.28; see scripts/version.sh.
+          VERSION=$(sh scripts/version.sh --package "$TAG")
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
@@ -244,7 +264,7 @@ jobs:
           which go
           go version
           echo "Building for architecture: ${{ matrix.arch }}"
-          rpmbuild -bb --nodeps --target=${{ matrix.arch }} ~/rpmbuild/SPECS/image-thrillhouse.spec
+          rpmbuild -bb --nodeps --target=${{ matrix.arch }} --define "app_version ${{ steps.version.outputs.tag }}" ~/rpmbuild/SPECS/image-thrillhouse.spec
 
       - name: List generated packages
         run: |
@@ -279,36 +299,28 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
-      - name: Extract version from tag
-        id: version
-        run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          VERSION=${TAG#v}
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
       - name: Download Debian packages (amd64)
         uses: actions/download-artifact@v8
         with:
-          name: debian-package-${{ steps.version.outputs.version }}-amd64
+          name: debian-package-${{ needs.build-deb.outputs.version }}-amd64
           path: ./packages
 
       - name: Download Debian packages (arm64)
         uses: actions/download-artifact@v8
         with:
-          name: debian-package-${{ steps.version.outputs.version }}-arm64
+          name: debian-package-${{ needs.build-deb.outputs.version }}-arm64
           path: ./packages
 
       - name: Download RPM packages (x86_64)
         uses: actions/download-artifact@v8
         with:
-          name: rpm-package-${{ steps.version.outputs.version }}-x86_64
+          name: rpm-package-${{ needs.build-deb.outputs.version }}-x86_64
           path: ./packages
 
       - name: Download RPM packages (aarch64)
         uses: actions/download-artifact@v8
         with:
-          name: rpm-package-${{ steps.version.outputs.version }}-aarch64
+          name: rpm-package-${{ needs.build-deb.outputs.version }}-aarch64
           path: ./packages
 
       - name: List all packages
@@ -320,7 +332,8 @@ jobs:
         with:
           files: ./packages/*
           draft: false
-          prerelease: false
+          # v0.0.28-rc1 and the like are published as pre-releases.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
           fail_on_unmatched_files: true
         env:

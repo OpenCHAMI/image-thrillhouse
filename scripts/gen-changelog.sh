@@ -26,8 +26,17 @@ else
   fallback_email="$(git config --get user.email 2>/dev/null || echo "noreply@localhost")"
 fi
 
-if ! git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -q .; then
-  echo "gen-changelog: no release tags (v[0-9]+.[0-9]+.[0-9]+) found" >&2
+# Only the release tags in HEAD's history: building an older tag, or a
+# maintenance branch, must not put a newer release at the top of the
+# changelog, where dpkg would take it as the package version. With
+# versionsort.suffix=-, a pre-release (v0.0.28-rc1) sorts before its release.
+release_tags() {
+  git -c versionsort.suffix=- tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
+    --merged HEAD --sort=-version:refname
+}
+
+if ! release_tags | grep -q .; then
+  echo "gen-changelog: no release tags (v[0-9]+.[0-9]+.[0-9]+) found in HEAD's history" >&2
   exit 1
 fi
 
@@ -47,8 +56,41 @@ emit_bullet() {
   done
 }
 
+# Untagged or dirty HEAD: add a top entry for the snapshot version (e.g.
+# 0.0.27+3.gabc1234, see scripts/version.sh) so the built package carries a
+# version that sorts after the release it is based on, rather than that
+# release's.
+head_tag=$(sh "$(dirname "$0")/version.sh")
+if ! git show-ref -q --verify "refs/tags/${head_tag}"; then
+  VERSION=$(sh "$(dirname "$0")/version.sh" --package "$head_tag")
+  name=$(git log -1 --format='%an' HEAD)
+  email="<$(git log -1 --format='%ae' HEAD)>"
+  date_rfc=$(git log -1 --format='%aD' HEAD)
+  date_rpm=$(git log -1 --format='%ad' --date='format:%a %b %d %Y' HEAD)
+  prev=$(git describe --tags --abbrev=0 --match='v[0-9]*.[0-9]*.[0-9]*' HEAD)
+  body=$(git log --reverse --pretty='%s' "${prev}..HEAD")
+  case "$head_tag" in
+    *-dirty) body="${body:+$body
+}Built with uncommitted changes" ;;
+  esac
+
+  {
+    echo "${PKG} (${VERSION}-1) unstable; urgency=medium"
+    echo
+    emit_bullet "  * " <<< "$body"
+    echo
+    printf ' -- %s %s  %s\n\n' "$name" "$email" "$date_rfc"
+  } >> "$deb_out"
+
+  {
+    printf '* %s %s %s - %s-1\n' "$date_rpm" "$name" "$email" "$VERSION"
+    emit_bullet "- " <<< "$body"
+    echo
+  } >> "$rpm_out"
+fi
+
 while IFS= read -r TAG; do
-  VERSION="${TAG#v}"
+  VERSION=$(sh "$(dirname "$0")/version.sh" --package "$TAG")
 
   name=$(git for-each-ref --format='%(taggername)' "refs/tags/${TAG}")
   email=$(git for-each-ref --format='%(taggeremail)' "refs/tags/${TAG}")
@@ -89,7 +131,7 @@ while IFS= read -r TAG; do
     emit_bullet "- " <<< "$body"
     echo
   } >> "$rpm_out"
-done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname)
+done < <(release_tags)
 
 mkdir -p "$(dirname "$DEB_CHANGELOG")"
 mv "$deb_out" "$DEB_CHANGELOG"

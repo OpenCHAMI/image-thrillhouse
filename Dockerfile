@@ -13,9 +13,12 @@ RUN apt-get update && apt-get install -y \
     gcc
 WORKDIR /src
 COPY . .
-# Keep in sync with the Makefile's VERSION; override with
-# `docker build --build-arg VERSION=x.y.z`.
-ARG VERSION=0.1.0
+# Version stamped into the binary, e.g. v0.0.27. When unset it is derived
+# from the .git directory in the build context (see scripts/version.sh): the
+# release tag, or `git describe` output (e.g. v0.0.27-3-gabc1234) for
+# untagged commits.
+# Override with `docker build --build-arg VERSION=v1.2.3`.
+ARG VERSION=
 # No `go mod tidy` here: it rewrites go.mod/go.sum during the image build, so
 # the container could silently resolve a different dependency set than the one
 # committed to the repo. Build from the checked-in module graph instead.
@@ -23,7 +26,9 @@ ARG VERSION=0.1.0
 # The version is stamped the same way the Makefile, debian/rules and the RPM
 # spec stamp it. Without it the containerised binary reported "dev", which made
 # `image-thrillhouse version` useless for identifying what an image was built by.
-RUN go build -ldflags "-X main.version=v${VERSION}" -o image-thrillhouse ./cmd/image-thrillhouse/
+RUN git config --global --add safe.directory /src && \
+    VERSION="${VERSION:-$(sh scripts/version.sh || echo v0.0.0-dev)}" && \
+    go build -ldflags "-X main.version=${VERSION}" -o image-thrillhouse ./cmd/image-thrillhouse/
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y \
