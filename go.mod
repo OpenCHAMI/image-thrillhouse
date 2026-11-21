@@ -1,6 +1,6 @@
 module github.com/openchami/image-thrillhouse
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.8
@@ -8,14 +8,14 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.16
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.23.22
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.9
-	github.com/aws/smithy-go v1.28.8
+	github.com/aws/smithy-go v1.28.9
 	github.com/docker/distribution v2.8.3+incompatible
 	github.com/opencontainers/runtime-spec v1.3.0
 	github.com/sirupsen/logrus v1.10.2
 	github.com/spf13/cobra v1.10.2
-	go.podman.io/buildah v1.46.0
-	go.podman.io/image/v5 v5.42.0
-	go.podman.io/storage v1.65.0
+	go.podman.io/buildah v1.46.1
+	go.podman.io/image/v5 v5.42.1
+	go.podman.io/storage v1.65.1
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -144,7 +144,7 @@ require (
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260825221802-da73d73af1c5 // indirect
