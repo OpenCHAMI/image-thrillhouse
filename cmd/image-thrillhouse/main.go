@@ -196,10 +196,14 @@ is copied to the release tag (blobs already exist, so only a new tag is written)
 the release tag, laid out as <prefix><release>/<arch>/. Pulls the content-tagged
 image and re-extracts it — a re-package of tested bytes, not a rebuild.
 
---to is repeatable (--to registry --to s3), and each requested type promotes to
-every matching publish block the layer declares — so a layer with one registry
-and two s3 blocks reaches all three destinations in one invocation. A requested
-type the layer has no block for is skipped; destinations are attempted
+--to squashfs: write a local SquashFS image at <path>/<name>-<release>.squashfs.
+Pulls the content-tagged image and runs mksquashfs on the rootfs — a re-package
+of tested bytes, not a rebuild. Requires path on the publish block.
+
+--to is repeatable (--to registry --to s3 --to squashfs), and each requested type
+promotes to every matching publish block the layer declares — so a layer with one
+registry and two s3 blocks reaches all three destinations in one invocation. A
+requested type the layer has no block for is skipped; destinations are attempted
 independently and a failure of one does not withhold the others, but any failure
 makes the command exit non-zero.
 
@@ -310,7 +314,12 @@ func newS3Publisher(p config.Publish, arch string) (*s3pub.S3Publisher, error) {
 	if accessKey == "" || secretKey == "" {
 		return nil, fmt.Errorf("s3 publisher requires S3_ACCESS and S3_SECRET environment variables")
 	}
-	return s3pub.New(p.URL, p.Bucket, p.Prefix, arch, accessKey, secretKey), nil
+	// Default to true (include squashfs) when the field is unset
+	promoteSquashfs := true
+	if p.PromoteSquashfs != nil {
+		promoteSquashfs = *p.PromoteSquashfs
+	}
+	return s3pub.New(p.URL, p.Bucket, p.Prefix, arch, accessKey, secretKey, promoteSquashfs), nil
 }
 
 // resolveTargetTypes validates --to and de-duplicates it, preserving the order
@@ -323,8 +332,8 @@ func resolveTargetTypes(flags []string) ([]string, error) {
 	out := make([]string, 0, len(flags))
 	seen := make(map[string]struct{}, len(flags))
 	for _, t := range flags {
-		if t != "registry" && t != "s3" {
-			return nil, fmt.Errorf("--to %q is not supported (use registry or s3)", t)
+		if t != "registry" && t != "s3" && t != "squashfs" {
+			return nil, fmt.Errorf("--to %q is not supported (use registry, s3, or squashfs)", t)
 		}
 		if _, dup := seen[t]; dup {
 			continue
@@ -681,6 +690,30 @@ func promoteLayer(ctx context.Context, dag *manifest.DAG, cliVars map[string]int
 				log.Error("promote failed", "layer", t.concrete, "arch", t.arch, "dest", s3Dest, "error", err)
 				failures = append(failures, fmt.Errorf("arch %s -> %s: %w", t.arch, s3Dest, err))
 			}
+		case "squashfs":
+			log.Info("promote resolved",
+				"mode", "squashfs",
+				"layer", t.concrete,
+				"content_tag", t.src.Tag,
+				"source", t.src.Ref(),
+				"release", releaseTag,
+				"path", t.block.Path,
+				"force", forcePromote,
+				"dry_run", dryRun,
+			)
+			if dryRun {
+				continue
+			}
+			if t.block.Path == "" {
+				log.Error("promote failed", "layer", t.concrete, "arch", t.arch, "dest", "squashfs", "error", "squashfs publisher requires path")
+				failures = append(failures, fmt.Errorf("arch %s -> squashfs: squashfs publisher requires path", t.arch))
+				continue
+			}
+			dst := squashfs.New(t.block.Path)
+			if err := promote.MaterializeToSquashfs(ctx, t.src, dst, t.cfg.Meta.Name, releaseTag, forcePromote); err != nil {
+				log.Error("promote failed", "layer", t.concrete, "arch", t.arch, "dest", "squashfs", "error", err)
+				failures = append(failures, fmt.Errorf("arch %s -> squashfs %s: %w", t.arch, t.block.Path, err))
+			}
 		}
 	}
 	if len(failures) > 0 {
@@ -791,7 +824,7 @@ func init() {
 	// StringArray, not StringSlice: a declared default would be *appended* to
 	// rather than replaced by the flag, so `--to s3` would silently mean
 	// "registry and s3". The registry default is applied in resolveTargetTypes.
-	promoteCmd.Flags().StringArrayVar(&toTypes, "to", nil, "promotion target: registry (retag) or s3 (materialize); repeatable (default registry)")
+	promoteCmd.Flags().StringArrayVar(&toTypes, "to", nil, "promotion target: registry (retag), s3 (materialize), or squashfs (materialize); repeatable (default registry)")
 	promoteCmd.Flags().BoolVar(&forcePromote, "force", false, "overwrite an existing release (registry tag or s3 objects) instead of failing")
 	promoteCmd.Flags().BoolVar(&dryRun, "dry-run", false, "resolve and print actions without contacting the target")
 

@@ -131,7 +131,7 @@ func TestPublish_UploadsGenericKeys(t *testing.T) {
 
 	// Mirrors Omnia's layout: the OS version is the tag and no arch segment is
 	// configured.
-	pub := New(ts.URL, "boot-images", "slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/", "", "access", "secret")
+	pub := New(ts.URL, "boot-images", "slurm_control_node_rhel_10_0_x86_64/rhel-slurm-imgth/", "", "access", "secret", true)
 
 	err := pub.Publish(context.Background(), &fakeContainer{mountPath: root}, "slurm", []string{"10.0"}, nil)
 	if err != nil {
@@ -164,7 +164,7 @@ func TestPublish_NormalizesDebianInitrdName(t *testing.T) {
 	ts := httptest.NewServer(rec)
 	defer ts.Close()
 
-	pub := New(ts.URL, "boot-images", "compute/", "x86_64", "access", "secret")
+	pub := New(ts.URL, "boot-images", "compute/", "x86_64", "access", "secret", true)
 
 	if err := pub.Publish(context.Background(), &fakeContainer{mountPath: root}, "compute", []string{"bookworm"}, nil); err != nil {
 		t.Fatalf("Publish returned error: %v", err)

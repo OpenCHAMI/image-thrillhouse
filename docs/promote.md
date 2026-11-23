@@ -12,7 +12,7 @@ human-readable release tag — e.g. `release-0.0.1` — **without rebuilding it*
 Manifest builds publish images to an OCI registry under a content-addressed tag
 (the layer's deterministic hash; see [Manifests](configuration.md#manifests)).
 That tag is perfect for caching and reproducibility but not for humans. `promote`
-takes the tested content-tagged image and gives it a release tag. It has two
+takes the tested content-tagged image and gives it a release tag. It has three
 targets:
 
 - **`--to registry`** (default) — retag within the registry: copy the
@@ -21,6 +21,9 @@ targets:
 - **`--to s3`** — project the image into S3 boot artifacts (rootfs / kernel /
   initramfs) under the release tag, for network boot. Pulls the content-tagged
   image and re-extracts it — a re-package of tested bytes, never a rebuild.
+- **`--to squashfs`** — write a local SquashFS image at `<path>/<name>-<release>.squashfs`.
+  Pulls the content-tagged image and runs `mksquashfs` on the rootfs — a re-package
+  of tested bytes, never a rebuild. Requires `path` on the publish block.
 
 The OCI registry is the source of truth in both cases. `promote` recomputes the
 layer's content tag from the manifest, so it must run from the **same checkout**
@@ -34,13 +37,14 @@ image-thrillhouse promote \
   [--layer <logical-name>] \
   [--arch <arch>] \
   --release <tag> \
-  [--to registry|s3]... \
+  [--to registry|s3|squashfs]... \
   [--force] [--dry-run]
 ```
 
 The source is always the layer's own `registry` [publish block](configuration.md#publish)
 (URL + `meta.name`) — the layer must have one, or promote fails. For `--to s3`
-the layer must also have an `s3` publish block (bucket + prefix).
+the layer must also have an `s3` publish block (bucket + prefix). For `--to squashfs`
+the layer must also have a `squashfs` publish block (path).
 
 ### Multiple targets and multiple destinations
 
@@ -62,14 +66,17 @@ publish:
     url: https://s3-b.example.com
     bucket: boot-images-b
     promote-only: true
+  - type: squashfs
+    path: /local/artifacts
+    promote-only: true
 ```
 
 ```
 image-thrillhouse promote --manifest manifest.yaml --layer compute \
-  --release v1.2.3 --arch x86_64 --to registry --to s3
+  --release v1.2.3 --arch x86_64 --to registry --to s3 --to squashfs
 ```
 
-writes all four destinations. Omitting `--to` keeps the historical default of
+writes all five destinations. Omitting `--to` keeps the historical default of
 `registry` only. Repeating the same target (`--to s3 --to s3`) promotes once;
 so do two publish blocks that are field-for-field identical.
 
@@ -77,9 +84,10 @@ A requested type the layer declares no block for is **skipped**, not failed:
 
 ```
 # layer publishes only to a registry
-image-thrillhouse promote ... --to registry --to s3
-# registry → promote
-# s3       → skip (no matching publisher)
+image-thrillhouse promote ... --to registry --to s3 --to squashfs
+# registry   → promote
+# s3         → skip (no matching publisher)
+# squashfs   → skip (no matching publisher)
 ```
 
 A *missing* publisher is a skip; a publisher that is configured but invalid,
@@ -114,7 +122,7 @@ copy, which is not supported.
 publish block of a requested target type. So which layers reach S3 is a *config*
 decision, not something the pipeline enumerates: put a
 [`promote-only`](configuration.md#promote-only) `s3` block on your release
-targets, and `promote --to s3` picks exactly those up.
+targets, and `promote --to s3` or `promote --to squashfs` picks exactly those up.
 
 ```
 # one command releases every bootable image in the manifest, all arches:
@@ -218,10 +226,61 @@ Error: release "release-0.0.1" already materialized in s3 (use --force to overwr
 
 Pass `--force` to re-materialize and overwrite the objects.
 
+### Skipping SquashFS materialization for S3
+
+By default `--to s3` uploads all three boot artifacts (rootfs/kernel/initramfs).
+To upload only the kernel and initramfs — skipping the SquashFS image — set
+`promote-squashfs: false` on the S3 publish block:
+
+```yaml
+publish:
+  - type: s3
+    url: https://s3.amazonaws.com
+    bucket: boot-images
+    prefix: compute/
+    promote-only: true
+    promote-squashfs: false
+```
+
+This is useful when S3 is only for network boot (PXE) and a separate
+`promote --to squashfs` handles local image creation. The S3 destination will
+receive only `vmlinuz` and `initramfs.img`; the `rootfs.squashfs` upload is
+skipped.
+
 > Cross-arch note: materializing every arch in one invocation pulls and mounts
 > each arch's image on the host running `promote`. If your environment can't pull
 > a foreign-arch image, run `promote --to s3 --arch <arch>` on a host of that arch
 > (each arch's build machine is a natural fit).
+
+## `--to squashfs` (materialize local image)
+
+Writes a local SquashFS image at `<path>/<name>-<release>.squashfs`, where `<path>`
+comes from the `squashfs` publish block and `<name>` is `meta.name`.
+
+`promote` pulls the content-tagged image, mounts its rootfs, and runs `mksquashfs`
+to create the filesystem image — the same extraction the build-time SquashFS
+publisher uses, so build-time and promote produce identical output. Because each
+tag gets its own filename, a materialized release is self-contained and immutable:
+a different tag is a different file, so no object is shared across tags for a
+later build to overwrite.
+
+```
+image-thrillhouse promote \
+  --manifest manifests/rocky.yaml \
+  --layer rocky-base \
+  --release release-0.0.1 \
+  --to squashfs
+# → /output/images/rocky-base-release-0.0.1.squashfs
+```
+
+By default promote **fails if the release is already materialized** (checked via
+`stat` on the output file before the pull, so it's cheap):
+
+```
+Error: release "release-0.0.1" already materialized as squashfs (use --force to overwrite)
+```
+
+Pass `--force` to re-materialize and overwrite the file.
 
 ## Flags
 
@@ -231,7 +290,7 @@ Pass `--force` to re-materialize and overwrite the objects.
 | `--layer` | Logical layer to promote. Omit to promote every layer declaring a block for a `--to` type. |
 | `--arch` | Target arch for a multi-arch manifest. Omit to promote every arch. |
 | `--release` | The release tag to write (required), e.g. `release-0.0.1`. |
-| `--to` | `registry` (retag) and/or `s3` (materialize boot artifacts). Repeatable; each type promotes to every matching publish block. Defaults to `registry`. |
+| `--to` | `registry` (retag), `s3` (materialize boot artifacts), or `squashfs` (materialize local image). Repeatable; each type promotes to every matching publish block. Defaults to `registry`. |
 | `--force` | Overwrite an existing release if it already exists (registry tag, or s3 objects); otherwise promote fails. |
 | `--dry-run` | Resolve and print what would happen, without contacting the target. |
 | `--var-file`, `--var` | Same var inputs as `build`, so the recomputed content tag matches what was built. |
@@ -244,11 +303,12 @@ Pass `--force` to re-materialize and overwrite the objects.
   layer's `registry` publish block.
 - **S3** (`--to s3`): credentials come from the `S3_ACCESS` and `S3_SECRET`
   environment variables, same as the build-time S3 publisher.
+- **SquashFS** (`--to squashfs`): no authentication required; writes to local filesystem.
 
 ## Notes and limitations
 
-- **OCI is the source of truth.** Both targets read the content-tagged image from
-  the registry. There is no S3→S3 or S3→registry path.
+- **OCI is the source of truth.** All targets read the content-tagged image from
+  the registry. There is no S3→S3, S3→registry, or squashfs→registry path.
 - **`--to registry` is a same-repo retag**, not a copy between repositories, and
   not a manifest list — multi-arch tags each arch's separate image. With several
   registry publish blocks, each is retagged within itself; there is no
@@ -256,3 +316,5 @@ Pass `--force` to re-materialize and overwrite the objects.
 - **Same checkout.** The content tag is recomputed from the manifest, so promote
   must see the same manifest, var files, and referenced content that produced the
   build.
+- **`mksquashfs` required.** `--to squashfs` requires the `mksquashfs` command
+  (from `squashfs-tools`) to be available on PATH.

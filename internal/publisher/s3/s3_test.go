@@ -47,7 +47,7 @@ func TestExists_ProbesOnlyPrimaryTag(t *testing.T) {
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
-	p := New(ts.URL, "test-bucket", "img/", "x86_64", "access", "secret")
+	p := New(ts.URL, "test-bucket", "img/", "x86_64", "access", "secret", true)
 
 	ok, err := p.Exists(context.Background(), "test-image", []string{"1.0", "latest"})
 	if err != nil {
@@ -68,7 +68,7 @@ func TestExists_MissingPrimaryTag(t *testing.T) {
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
-	p := New(ts.URL, "test-bucket", "img/", "x86_64", "access", "secret")
+	p := New(ts.URL, "test-bucket", "img/", "x86_64", "access", "secret", true)
 
 	ok, err := p.Exists(context.Background(), "test-image", []string{"1.0"})
 	if err != nil {
@@ -81,46 +81,50 @@ func TestExists_MissingPrimaryTag(t *testing.T) {
 
 func TestNew(t *testing.T) {
 	tests := []struct {
-		name      string
-		endpoint  string
-		bucket    string
-		prefix    string
-		arch      string
-		accessKey string
-		secretKey string
+		name            string
+		endpoint        string
+		bucket          string
+		prefix          string
+		arch            string
+		accessKey       string
+		secretKey       string
+		promoteSquashfs bool
 	}{
 		{
-			name:      "AWS S3",
-			endpoint:  "https://s3.amazonaws.com",
-			bucket:    "boot-images",
-			prefix:    "compute/",
-			arch:      "x86_64",
-			accessKey: "AKIAIOSFODNN7EXAMPLE",
-			secretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+			name:            "AWS S3",
+			endpoint:        "https://s3.amazonaws.com",
+			bucket:          "boot-images",
+			prefix:          "compute/",
+			arch:            "x86_64",
+			accessKey:       "AKIAIOSFODNN7EXAMPLE",
+			secretKey:       "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+			promoteSquashfs: true,
 		},
 		{
-			name:      "MinIO",
-			endpoint:  "http://localhost:9000",
-			bucket:    "images",
-			prefix:    "test/",
-			arch:      "aarch64",
-			accessKey: "minioadmin",
-			secretKey: "minioadmin",
+			name:            "MinIO",
+			endpoint:        "http://localhost:9000",
+			bucket:          "images",
+			prefix:          "test/",
+			arch:            "aarch64",
+			accessKey:       "minioadmin",
+			secretKey:       "minioadmin",
+			promoteSquashfs: true,
 		},
 		{
-			name:      "custom S3, no arch",
-			endpoint:  "https://s3.example.com",
-			bucket:    "boot",
-			prefix:    "",
-			arch:      "",
-			accessKey: "access",
-			secretKey: "secret",
+			name:            "custom S3, no arch",
+			endpoint:        "https://s3.example.com",
+			bucket:          "boot",
+			prefix:          "",
+			arch:            "",
+			accessKey:       "access",
+			secretKey:       "secret",
+			promoteSquashfs: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pub := New(tt.endpoint, tt.bucket, tt.prefix, tt.arch, tt.accessKey, tt.secretKey)
+			pub := New(tt.endpoint, tt.bucket, tt.prefix, tt.arch, tt.accessKey, tt.secretKey, tt.promoteSquashfs)
 			if pub == nil {
 				t.Fatal("New() returned nil")
 			}
@@ -142,12 +146,15 @@ func TestNew(t *testing.T) {
 			if pub.secretKey != tt.secretKey {
 				t.Errorf("secretKey = %v, want %v", pub.secretKey, tt.secretKey)
 			}
+			if pub.promoteSquashfs != tt.promoteSquashfs {
+				t.Errorf("promoteSquashfs = %v, want %v", pub.promoteSquashfs, tt.promoteSquashfs)
+			}
 		})
 	}
 }
 
 func TestS3Publisher_Type(t *testing.T) {
-	pub := New("https://s3.amazonaws.com", "bucket", "prefix/", "x86_64", "key", "secret")
+	pub := New("https://s3.amazonaws.com", "bucket", "prefix/", "x86_64", "key", "secret", true)
 
 	if _, ok := interface{}(pub).(*S3Publisher); !ok {
 		t.Error("New() did not return *S3Publisher")
@@ -176,7 +183,7 @@ func TestObjectKeys(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pub := New("", "", tt.prefix, tt.arch, "", "")
+			pub := New("", "", tt.prefix, tt.arch, "", "", true)
 			rootfs, kernel, initramfs := pub.objectKeys(tt.tag)
 			if want := tt.want + "rootfs.squashfs"; rootfs != want {
 				t.Errorf("rootfs = %q, want %q", rootfs, want)
@@ -195,7 +202,7 @@ func TestObjectKeys(t *testing.T) {
 // be derivable from prefix/tag/arch alone, because Exists is called before any
 // image is pulled or mounted, and must match what Publish writes.
 func TestRootfsKey(t *testing.T) {
-	pub := New("", "", "compute/", "x86_64", "", "")
+	pub := New("", "", "compute/", "x86_64", "", "", true)
 
 	want := "compute/10.0/x86_64/rootfs.squashfs"
 	if got := pub.rootfsKey("10.0"); got != want {
